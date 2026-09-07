@@ -1,0 +1,44 @@
+name: diag
+
+# Temporary. Answers one question: can GITHUB_TOKEN create a release here?
+# The release job reports Contents: write and still gets a 403, which should
+# not be possible, so this reproduces it in isolation with the API response
+# visible instead of swallowed by the gh CLI.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: What does the token think it can do
+        run: |
+          echo "--- token scopes as reported by the API ---"
+          curl -sS -D - -o /dev/null \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            https://api.github.com/repos/${{ github.repository }} \
+            | grep -iE "^x-(oauth|accepted|ratelimit-resource)" || true
+
+      - name: Try creating a draft release, showing the full response
+        run: |
+          set +e
+          code=$(curl -sS -o /tmp/body.json -w '%{http_code}' \
+            -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/${{ github.repository }}/releases \
+            -d '{"tag_name":"diag-probe","draft":true,"name":"diag"}')
+          echo "HTTP $code"
+          cat /tmp/body.json
+          if [ "$code" = "201" ]; then
+            id=$(jq -r .id /tmp/body.json)
+            echo "cleaning up draft $id"
+            curl -sS -X DELETE -H "Authorization: Bearer $GH_TOKEN" \
+              "https://api.github.com/repos/${{ github.repository }}/releases/$id"
+          fi
