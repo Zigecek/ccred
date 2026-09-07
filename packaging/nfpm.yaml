@@ -1,0 +1,47 @@
+# yaml-language-server: $schema=https://nfpm.goreleaser.com/schema.json
+#
+# Built from the musl-static artifact, so the package has no glibc floor and
+# installs on anything from oldstable to current. There is no TLS and no NSS
+# lookup in this binary, so static musl costs nothing here.
+#
+# Deliberately no maintainer scripts. A postinst must not install the systemd
+# user timer: the package installs as root, the timer belongs to one user's
+# session, and ~/.claude may not exist yet. Scheduling stays an explicit
+# `ccred schedule install` run by the person who wants it.
+
+name: ccred
+arch: ${CCRED_DEB_ARCH}
+platform: linux
+version: ${CCRED_VERSION}
+version_schema: semver
+section: utils
+priority: optional
+maintainer: Jan Kozohorský <honza007cz@hotmail.com>
+description: |
+  Save, list and switch between named sets of local Claude Code credentials.
+  Unofficial; not affiliated with or endorsed by Anthropic PBC.
+vendor: Jan Kozohorský
+homepage: https://github.com/Zigecek/ccred
+license: MIT OR Apache-2.0
+
+depends: []
+
+contents:
+  - src: ./dist/ccred
+    dst: /usr/bin/ccred
+    file_info:
+      mode: 0755
+
+  - src: ./LICENSE-MIT
+    dst: /usr/share/doc/ccred/LICENSE-MIT
+  - src: ./LICENSE-APACHE
+    dst: /usr/share/doc/ccred/LICENSE-APACHE
+  - src: ./README.md
+    dst: /usr/share/doc/ccred/README.md
+  - src: ./TRADEMARKS.md
+    dst: /usr/share/doc/ccred/TRADEMARKS.md
+
+deb:
+  compression: xz
+  fields:
+    Bug-Tracker: https://github.com/Zigecek/ccred/issues

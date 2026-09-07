@@ -1,0 +1,53 @@
+# Security
+
+## Reporting
+
+Report a vulnerability privately through GitHub's
+[security advisory form](https://github.com/Zigecek/ccred/security/advisories/new)
+rather than a public issue. Expect an acknowledgement within a week.
+
+## What this tool touches
+
+`ccred` reads and writes Claude Code's credential files, which contain OAuth
+access and refresh tokens for your Anthropic account.
+
+- Profiles live in `~/.ccred/profiles/<name>/`, mode `0600` on Unix.
+- On Windows the files inherit the profile directory's ACL, which is what
+  Claude Code itself relies on. Explicit ACL hardening is not implemented yet.
+- On macOS, Claude Code normally keeps credentials in the Keychain. `ccred`
+  does not read the Keychain yet, so on that platform it only sees the
+  plaintext fallback file. This is a known gap, not a claim of support.
+
+## Design rules
+
+These are enforced in code and in CI, not merely intended.
+
+- **`Secret` has no `Display` implementation.** `println!("{}", token)` is a
+  compile error rather than a runtime leak. `Debug` prints a length and a
+  fingerprint.
+- **`Secret::expose()` is the only route to a raw token**, and CI fails if it
+  is called outside the modules whose job is handling one.
+- **Error kinds are persisted, never rendered messages**, because a message can
+  echo its input and its input can be a token.
+- **A test runs every command down every failure path** and asserts that
+  nothing token-shaped reaches stdout, stderr or on-disk metadata.
+- **No write replaces valid credentials with invalid ones**, and no write moves
+  a refresh window backwards.
+- **Account identity is checked separately from validity.** Two different
+  accounts can both be valid with advancing windows, so the window rule cannot
+  catch a cross-account write.
+
+## What `ccred` does not do
+
+It never contacts an OAuth endpoint. Keeping profiles alive works by running
+the real `claude` binary against a profile's own credential store, so the
+token exchange happens through Claude Code's code path, lock and client
+identity. Re-implementing it would risk single-use refresh token replay
+detection, and unrecognised refresh traffic from a server address has been
+reported to end in a block that only a manual login clears.
+
+## Scope
+
+Anyone who can already run code as your user can read these files, exactly as
+they can read Claude Code's own. `ccred` does not defend against that and does
+not claim to; it defends against its own mistakes losing your credentials.

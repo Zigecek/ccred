@@ -19,6 +19,17 @@ It also keeps idle profiles alive. An account you have not used for a couple of
 weeks has an expired refresh token and needs a manual login; `ccred` refreshes
 profiles on a schedule to prevent that.
 
+## Install
+
+Nothing is published yet. The intended channels, and the reasoning behind which
+ones are worth maintaining, are in [docs/install.md](docs/install.md).
+
+Building from source:
+
+```sh
+cargo install --path .
+```
+
 ## Usage
 
 ```
@@ -87,7 +98,8 @@ Inspect a real credentials file without printing any secret:
 cargo run --example check_roundtrip -- ~/.claude/.credentials.json
 ```
 
-Conventions live in [CLAUDE.md](CLAUDE.md).
+Conventions live in [CLAUDE.md](CLAUDE.md); the threat model and the rules CI
+enforces are in [SECURITY.md](SECURITY.md).
 
 ## License
 

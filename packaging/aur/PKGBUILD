@@ -1,0 +1,37 @@
+# Maintainer: Jan Kozohorsky <honza007cz@hotmail.com>
+#
+# The -bin suffix is required by AUR naming rules for a prebuilt binary.
+# Checksums are filled in by `updpkgsums` at release time; .SRCINFO is
+# regenerated with `makepkg --printsrcinfo > .SRCINFO` and must be committed,
+# because the AUR rejects a push without it.
+
+pkgname=ccred-bin
+_pkgname=ccred
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='Save, list and switch between named sets of local Claude Code credentials (unofficial)'
+arch=('x86_64' 'aarch64')
+url='https://github.com/Zigecek/ccred'
+license=('MIT' 'Apache-2.0')
+provides=("$_pkgname")
+conflicts=("$_pkgname")
+depends=()
+# The binary is already stripped, and stripping again would discard the
+# cargo-auditable dependency manifest that makes `cargo audit bin` work.
+options=('!strip' '!debug')
+
+_url="$url/releases/download/v$pkgver"
+source_x86_64=("$_pkgname-$pkgver-x86_64.tar.gz::$_url/$_pkgname-x86_64-unknown-linux-musl.tar.gz")
+source_aarch64=("$_pkgname-$pkgver-aarch64.tar.gz::$_url/$_pkgname-aarch64-unknown-linux-musl.tar.gz")
+sha256sums_x86_64=('SKIP')
+sha256sums_aarch64=('SKIP')
+
+package() {
+  local _dir="$srcdir/$_pkgname-${CARCH}-unknown-linux-musl"
+  cd "$_dir" 2>/dev/null || cd "$srcdir"
+
+  install -Dm755 "$_pkgname" "$pkgdir/usr/bin/$_pkgname"
+  install -Dm644 LICENSE-MIT "$pkgdir/usr/share/licenses/$pkgname/LICENSE-MIT"
+  install -Dm644 LICENSE-APACHE "$pkgdir/usr/share/licenses/$pkgname/LICENSE-APACHE"
+  install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+}

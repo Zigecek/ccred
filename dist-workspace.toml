@@ -1,0 +1,44 @@
+[workspace]
+members = ["cargo:."]
+
+[dist]
+cargo-dist-version = "0.32.0"
+ci = "github"
+
+# No "npm" installer on purpose. cargo-dist's npm package downloads the binary
+# during `npm install`, which fails under `npm ci --ignore-scripts`, cannot
+# install offline, and leaves provenance covering the fetcher rather than the
+# binary. Per-platform packages are generated instead -- see npm/README.md.
+installers = ["shell", "powershell", "homebrew"]
+tap = "Zigecek/homebrew-ccred"
+formula = "ccred"
+
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-unknown-linux-musl",
+    "aarch64-unknown-linux-musl",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+]
+
+hosting = "github"
+pr-run-mode = "plan"
+install-path = "CARGO_HOME"
+
+# A self-updater in a tool that holds credentials is extra attack surface for
+# very little convenience.
+install-updater = false
+
+# Supply chain
+github-attestations = true
+# Embeds the dependency tree in the binary, so `cargo audit bin ccred` works on
+# something a user actually downloaded.
+cargo-auditable = true
+cargo-cyclonedx = true
+msvc-crt-static = true
+checksum = "sha256"
+
+[dist.github-action-commits]
+"actions/checkout" = "3d3c42e5aac5ba805825da76410c181273ba90b1"      # v7.0.1
