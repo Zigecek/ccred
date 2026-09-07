@@ -2,4 +2,4 @@
 
 pub mod repo;
 
-pub use repo::{ProfileMeta, ProfileRepo, SaveOutcome};
+pub use repo::{ProfileMeta, ProfileRepo, RefreshState, SaveOutcome};

@@ -7,7 +7,7 @@ use clap::Parser;
 
 use ccred::cli::{Cli, Command};
 use ccred::error::ExitCode;
-use ccred::ops::{Ctx, doctor, simple, switch};
+use ccred::ops::{Ctx, doctor, refresh, simple, switch};
 use ccred::validate::validate_profile_name;
 
 fn main() {
@@ -83,6 +83,32 @@ fn run(cli: &Cli) -> ccred::Result<ExitCode> {
             simple::remove(&ctx, &name)?;
             println!("removed profile '{name}'");
             Ok(ExitCode::Ok)
+        }
+
+        Some(Command::Refresh {
+            if_older_than,
+            all: _,
+            claude_path,
+        }) => {
+            let opts = refresh::RefreshOptions {
+                if_older_than_ms: if_older_than.map(|h| i64::from(h) * 3_600_000),
+                claude_path: claude_path.clone(),
+                ..Default::default()
+            };
+            let report = refresh::refresh(&ctx, &opts)?;
+            if cli.json {
+                print_json(&report);
+            } else {
+                print_refresh(&report);
+            }
+            // A scheduler must be able to tell "nothing to do" from "a person
+            // is needed". Transient trouble stays at 0 on purpose, so a lost
+            // network connection does not paint the unit red.
+            Ok(if report.needs_attention() {
+                ExitCode::NeedsLogin
+            } else {
+                ExitCode::Ok
+            })
         }
 
         Some(Command::Doctor) => {
@@ -173,6 +199,35 @@ fn print_list(rows: &[simple::ProfileRow]) {
         );
         if let Some(note) = &r.note {
             println!("  {:width$}  {note}", "");
+        }
+    }
+}
+
+fn print_refresh(r: &refresh::RefreshReport) {
+    if r.status.starts_with("skipped") {
+        println!("{}", r.status);
+        return;
+    }
+    if r.profiles.is_empty() {
+        println!("no profiles to refresh");
+        return;
+    }
+    for p in &r.profiles {
+        let window = match (p.window_days_before, p.window_days_after) {
+            (Some(before), Some(after)) if after != before => {
+                format!("{before}d -> {after}d")
+            }
+            (Some(before), _) => format!("{before}d left"),
+            _ => "-".to_string(),
+        };
+        println!(
+            "{:<16} {:<14} {}",
+            p.name,
+            format!("{:?}", p.decision),
+            window
+        );
+        if let Some(detail) = &p.detail {
+            println!("                 {detail}");
         }
     }
 }

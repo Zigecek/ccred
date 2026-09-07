@@ -10,6 +10,7 @@
 //! a compile error or a loud failure, never a silently discarded token.
 
 pub mod atomic;
+pub mod claude_cli;
 pub mod cli;
 pub mod error;
 pub mod journal;

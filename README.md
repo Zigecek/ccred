@@ -3,8 +3,8 @@
 Save, list and switch between named sets of local Claude Code credentials.
 
 **Status: early development.** The commands below work on Linux and Windows.
-The scheduled refresh and macOS Keychain support are not implemented yet, and
-nothing is published to any registry so far.
+Installing the background schedule and macOS Keychain support are not done yet,
+and nothing is published to any registry so far.
 
 > **Unofficial and independent.** Not affiliated with, endorsed by, or sponsored
 > by Anthropic PBC. See [TRADEMARKS.md](TRADEMARKS.md).
@@ -27,6 +27,7 @@ ccred list                saved profiles and how much refresh window each has
 ccred save <name>         store the account that is logged in, under a name
 ccred switch <name>       make a saved profile the active account
 ccred rm <name>           delete a profile
+ccred refresh             keep stored profiles from expiring
 ccred doctor              check for anything quietly wrong
 ```
 
@@ -34,6 +35,12 @@ Add `--json` to any of them for machine-readable output.
 
 A bare `ccred <name>` is deliberately not a switch alias -- a profile called
 `list` would then be unreachable -- so it prints a hint instead of guessing.
+
+`refresh` is safe to run more often than needed. It records when it last ran
+and exits successfully without doing anything if that was recent, so a
+scheduler that double-fires -- systemd catching up, launchd coalescing, a
+Windows task with both a boot trigger and a schedule -- costs nothing. The
+real rate limit lives in the command, not the schedule.
 
 Switching refuses to run while Claude Code is open. A live session holds the
 old account in memory and would write its next refreshed token into what is by

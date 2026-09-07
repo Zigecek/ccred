@@ -35,6 +35,28 @@ use crate::validate::{ProfileName, validate_profile_name};
 /// How many timestamped backups to keep per profile.
 const BACKUPS_KEPT: usize = 10;
 
+/// How a profile's automatic refresh is going.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct RefreshState {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_attempt_ms: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_success_ms: Option<i64>,
+    #[serde(default)]
+    pub consecutive_failures: u32,
+    /// Set by the backoff. Nothing is attempted before this time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_attempt_after_ms: Option<i64>,
+    /// Which invocation last actually moved the refresh window on this
+    /// machine. Learned by observation, so a build where the cheap probe is
+    /// enough never pays for the expensive one twice.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub working_probe: Option<String>,
+    /// Latched when a human is needed. Cleared by a successful `save`.
+    #[serde(default)]
+    pub needs_login: bool,
+}
+
 /// Metadata `ccred` keeps about a profile. Claude Code never reads this.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProfileMeta {
@@ -45,6 +67,8 @@ pub struct ProfileMeta {
     pub last_synced_at_ms: Option<i64>,
     #[serde(default)]
     pub account: AccountIdentity,
+    #[serde(default)]
+    pub refresh: RefreshState,
     #[serde(flatten)]
     pub extra: JsonMap,
 }
@@ -57,6 +81,7 @@ impl ProfileMeta {
             created_at_ms: now,
             last_synced_at_ms: Some(now),
             account,
+            refresh: RefreshState::default(),
             extra: JsonMap::new(),
         }
     }
@@ -136,6 +161,25 @@ impl ProfileRepo {
     /// The profile's own credential store.
     pub fn store(&self, name: &ProfileName) -> crate::Result<FileStore> {
         Ok(FileStore::new(self.paths.profile_dir(name)?))
+    }
+
+    /// Read-modify-write of a profile's metadata.
+    ///
+    /// Used by the refresh loop to record attempts and backoff without
+    /// touching the credentials themselves.
+    pub fn update_meta<F>(&self, name: &ProfileName, edit: F) -> crate::Result<()>
+    where
+        F: FnOnce(&mut ProfileMeta),
+    {
+        let Some(mut meta) = self.meta(name)? else {
+            return Err(CcredError::ProfileNotFound(name.as_str().to_string()));
+        };
+        edit(&mut meta);
+        let bytes = serde_json::to_vec_pretty(&meta).map_err(|source| CcredError::Json {
+            path: self.meta_path(name).unwrap_or_default(),
+            source,
+        })?;
+        write_atomic(&self.meta_path(name)?, &bytes, true)
     }
 
     /// The profile's stored `oauthAccount` blob, if it has one.
@@ -245,6 +289,11 @@ impl ProfileRepo {
             Some(mut m) => {
                 m.account = account.identity.clone();
                 m.last_synced_at_ms = Some(now);
+                // A successful save is the human intervention the refresh loop
+                // was waiting for, so the latch and the backoff both clear.
+                m.refresh.needs_login = false;
+                m.refresh.consecutive_failures = 0;
+                m.refresh.next_attempt_after_ms = None;
                 m
             }
             None => ProfileMeta::new(name, account.identity.clone(), now),

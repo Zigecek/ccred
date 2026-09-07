@@ -295,3 +295,62 @@ fn an_interrupted_switch_is_healed_on_the_next_command() {
     sb.run(&["switch", "personal"]);
     assert!(!journal.exists(), "a switch must clear the journal");
 }
+
+#[test]
+fn refresh_leaves_healthy_profiles_alone_and_never_spawns() {
+    // Every profile here has a long window, so nothing should be launched --
+    // which also means this passes on a machine with no `claude` installed.
+    let sb = Sandbox::new();
+    sb.run(&["save", "work"]);
+    sb.login_b();
+    sb.run(&["save", "personal"]);
+
+    let (out, err, code) = sb.run(&["refresh"]);
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("work"), "{out}");
+    assert!(
+        out.contains("SkipFresh") || out.contains("MirrorActive"),
+        "nothing should have been refreshed:
+{out}"
+    );
+}
+
+#[test]
+fn refresh_rate_limits_itself_so_over_firing_is_harmless() {
+    // Schedulers double-fire: systemd catches up, launchd coalesces, a Windows
+    // task can have both a boot trigger and a schedule. The command has to be
+    // safe to call too often.
+    let sb = Sandbox::new();
+    sb.run(&["save", "work"]);
+
+    let (_, _, code) = sb.run(&["refresh"]);
+    assert_eq!(code, 0);
+
+    let (out, _, code) = sb.run(&["refresh", "--if-older-than", "24"]);
+    assert_eq!(code, 0, "an over-fire must not be an error");
+    assert!(out.contains("skipped"), "{out}");
+}
+
+#[test]
+fn refresh_output_never_prints_a_token() {
+    let sb = Sandbox::new();
+    sb.run(&["save", "work"]);
+
+    for args in [
+        vec!["refresh"],
+        vec!["refresh", "--json"],
+        vec!["refresh", "--claude-path", "/definitely/not/here"],
+    ] {
+        let out = sb.cmd(&args);
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            !text.contains("sk-ant-"),
+            "`{args:?}` leaked:
+{text}"
+        );
+    }
+}

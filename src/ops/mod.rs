@@ -5,6 +5,7 @@
 //! contain a token -- in one place.
 
 pub mod doctor;
+pub mod refresh;
 pub mod simple;
 pub mod switch;
 

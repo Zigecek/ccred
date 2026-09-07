@@ -47,6 +47,22 @@ pub enum Command {
     #[command(alias = "remove")]
     Rm { name: String },
 
+    /// Refresh stored profiles so idle accounts do not expire.
+    ///
+    /// Safe to run more often than needed: it checks when it last ran and
+    /// exits successfully without doing anything if that was recent.
+    Refresh {
+        /// Do nothing if the last run was more recent than this many hours.
+        #[arg(long, value_name = "HOURS")]
+        if_older_than: Option<u32>,
+        /// Accepted for symmetry with schedulers; all profiles are the default.
+        #[arg(long)]
+        all: bool,
+        /// Path to the claude binary, when it is not on PATH.
+        #[arg(long, value_name = "PATH")]
+        claude_path: Option<std::path::PathBuf>,
+    },
+
     /// Check for anything that is quietly wrong.
     Doctor,
 
