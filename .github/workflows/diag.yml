@@ -1,9 +1,10 @@
 name: diag
 
-# Temporary. Answers one question: can GITHUB_TOKEN create a release here?
-# The release job reports Contents: write and still gets a 403, which should
-# not be possible, so this reproduces it in isolation with the API response
-# visible instead of swallowed by the gh CLI.
+# Temporary. The release job reports Contents: write and still gets 403 from
+# `gh release create`, while a raw POST to the same endpoint with the same
+# token returns 201. This mirrors the release job exactly -- checkout
+# included, since the previous attempt failed for the unrelated reason of not
+# being in a git repository -- to find the actual difference.
 
 on:
   workflow_dispatch:
@@ -17,39 +18,26 @@ jobs:
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      - name: What does the token think it can do
-        run: |
-          echo "--- token scopes as reported by the API ---"
-          curl -sS -D - -o /dev/null \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            https://api.github.com/repos/${{ github.repository }} \
-            | grep -iE "^x-(oauth|accepted|ratelimit-resource)" || true
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      # Isolates the one remaining difference: the release job uses the gh
-      # CLI, this previously used curl. Same endpoint, same token.
-      - name: Try it through the gh CLI, the way the release job does
+      - name: gh release create, exactly as the release job calls it
         run: |
           set +e
-          gh release create diag-gh-probe --draft --notes "diag" --title diag
-          echo "gh exit: $?"
-          gh release delete diag-gh-probe --yes 2>/dev/null
-          echo "--- which token does gh think it is using ---"
-          gh auth status 2>&1 | sed 's/gho_[A-Za-z0-9]*/<redacted>/'
+          echo "diag notes" > notes.txt
+          gh release create diag-probe             --target "${{ github.sha }}"             --title "diag"             --notes-file notes.txt
+          echo "GH_EXIT=$?"
+          gh release delete diag-probe --yes --cleanup-tag 2>/dev/null
 
-      - name: Try creating a draft release, showing the full response
+      - name: the same request through the raw API
         run: |
           set +e
-          code=$(curl -sS -o /tmp/body.json -w '%{http_code}' \
-            -X POST \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            https://api.github.com/repos/${{ github.repository }}/releases \
-            -d '{"tag_name":"diag-probe","draft":true,"name":"diag"}')
-          echo "HTTP $code"
-          cat /tmp/body.json
+          code=$(curl -sS -o /tmp/b.json -w '%{http_code}' -X POST             -H "Authorization: Bearer $GH_TOKEN"             -H "Accept: application/vnd.github+json"             https://api.github.com/repos/${{ github.repository }}/releases             -d "{\"tag_name\":\"diag-probe-api\",\"target_commitish\":\"${{ github.sha }}\",\"name\":\"diag\",\"body\":\"diag\"}")
+          echo "CURL_HTTP=$code"
+          head -c 300 /tmp/b.json
           if [ "$code" = "201" ]; then
-            id=$(jq -r .id /tmp/body.json)
-            echo "cleaning up draft $id"
-            curl -sS -X DELETE -H "Authorization: Bearer $GH_TOKEN" \
-              "https://api.github.com/repos/${{ github.repository }}/releases/$id"
+            id=$(jq -r .id /tmp/b.json)
+            curl -sS -X DELETE -H "Authorization: Bearer $GH_TOKEN"               "https://api.github.com/repos/${{ github.repository }}/releases/$id"
+            curl -sS -X DELETE -H "Authorization: Bearer $GH_TOKEN"               "https://api.github.com/repos/${{ github.repository }}/git/refs/tags/diag-probe-api"
           fi
