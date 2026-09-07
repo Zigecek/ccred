@@ -25,6 +25,17 @@ jobs:
             https://api.github.com/repos/${{ github.repository }} \
             | grep -iE "^x-(oauth|accepted|ratelimit-resource)" || true
 
+      # Isolates the one remaining difference: the release job uses the gh
+      # CLI, this previously used curl. Same endpoint, same token.
+      - name: Try it through the gh CLI, the way the release job does
+        run: |
+          set +e
+          gh release create diag-gh-probe --draft --notes "diag" --title diag
+          echo "gh exit: $?"
+          gh release delete diag-gh-probe --yes 2>/dev/null
+          echo "--- which token does gh think it is using ---"
+          gh auth status 2>&1 | sed 's/gho_[A-Za-z0-9]*/<redacted>/'
+
       - name: Try creating a draft release, showing the full response
         run: |
           set +e
