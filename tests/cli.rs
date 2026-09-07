@@ -1,0 +1,297 @@
+//! End-to-end tests against the built binary.
+//!
+//! These drive a throwaway home directory, so they exercise the real argument
+//! parsing, the real file layout and the real exit codes.
+
+use std::path::Path;
+use std::process::Command;
+
+use assert_cmd::prelude::*;
+use tempfile::TempDir;
+
+/// Distinctive strings so a leak test can prove exactly what did not appear.
+const TOKEN_A: &str = "sk-ant-oat01-SENTINELACCESSAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+const REFRESH_A: &str = "sk-ant-ort01-SENTINELREFRESHAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+const TOKEN_B: &str = "sk-ant-oat01-SENTINELACCESSBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
+const REFRESH_B: &str = "sk-ant-ort01-SENTINELREFRESHBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
+
+/// Far in the future, so tests never depend on the clock.
+const FAR_FUTURE: i64 = 4_102_444_800_000;
+
+struct Sandbox {
+    home: TempDir,
+}
+
+impl Sandbox {
+    fn new() -> Self {
+        let home = TempDir::new().unwrap();
+        std::fs::create_dir_all(home.path().join(".claude")).unwrap();
+        let sb = Sandbox { home };
+        sb.login_a();
+        sb
+    }
+
+    fn path(&self) -> &Path {
+        self.home.path()
+    }
+
+    fn write_login(&self, access: &str, refresh: &str, expiry: i64, email: &str, uuid: &str) {
+        std::fs::write(
+            self.path().join(".claude").join(".credentials.json"),
+            format!(
+                r#"{{"claudeAiOauth":{{"accessToken":"{access}","refreshToken":"{refresh}",
+                   "expiresAt":{FAR_FUTURE},"refreshTokenExpiresAt":{expiry},
+                   "scopes":["user:inference"],"subscriptionType":"max",
+                   "rateLimitTier":"tier"}},"organizationUuid":"org"}}"#
+            ),
+        )
+        .unwrap();
+        std::fs::write(
+            self.path().join(".claude.json"),
+            format!(
+                r#"{{"numStartups":42,
+                   "projects":{{"/some/code":{{"hasTrustDialogAccepted":true}}}},
+                   "mcpServers":{{"srv":{{"command":"x"}}}},
+                   "oauthAccount":{{"accountUuid":"{uuid}","emailAddress":"{email}",
+                   "organizationName":"Org","profileFetchedAt":1788000000000}}}}"#
+            ),
+        )
+        .unwrap();
+    }
+
+    fn login_a(&self) {
+        self.write_login(
+            TOKEN_A,
+            REFRESH_A,
+            FAR_FUTURE,
+            "alice@example.com",
+            "uuid-a",
+        );
+    }
+
+    fn login_b(&self) {
+        self.write_login(
+            TOKEN_B,
+            REFRESH_B,
+            FAR_FUTURE + 86_400_000, // a LONGER window, like the real near-miss
+            "bob@example.com",
+            "uuid-b",
+        );
+    }
+
+    fn cmd(&self, args: &[&str]) -> std::process::Output {
+        Command::cargo_bin("ccred")
+            .unwrap()
+            .args(args)
+            .env("HOME", self.path())
+            .env("USERPROFILE", self.path())
+            .env_remove("CCRED_HOME")
+            .env_remove("CLAUDE_CONFIG_DIR")
+            .output()
+            .unwrap()
+    }
+
+    fn run(&self, args: &[&str]) -> (String, String, i32) {
+        let out = self.cmd(args);
+        (
+            String::from_utf8_lossy(&out.stdout).to_string(),
+            String::from_utf8_lossy(&out.stderr).to_string(),
+            out.status.code().unwrap_or(-1),
+        )
+    }
+
+    fn config_json(&self) -> serde_json::Value {
+        let raw = std::fs::read(self.path().join(".claude.json")).unwrap();
+        serde_json::from_slice(&raw).unwrap()
+    }
+}
+
+#[test]
+fn save_list_switch_round_trip() {
+    let sb = Sandbox::new();
+
+    let (out, _, code) = sb.run(&["save", "work"]);
+    assert_eq!(code, 0, "save failed: {out}");
+    assert!(out.contains("alice@example.com"), "{out}");
+
+    sb.login_b();
+    let (out, _, _) = sb.run(&["save", "personal"]);
+    assert!(out.contains("bob@example.com"), "{out}");
+
+    let (out, _, _) = sb.run(&["list"]);
+    assert!(out.contains("work"), "{out}");
+    assert!(out.contains("personal"), "{out}");
+
+    let (out, _, code) = sb.run(&["switch", "work"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("switched to 'work'"), "{out}");
+
+    let (out, _, _) = sb.run(&["current"]);
+    assert!(out.contains("alice@example.com"), "{out}");
+}
+
+/// The regression test for a real near-miss: after logging in as a second
+/// account the pointer still named the first one, and a scheduled sync was
+/// minutes from storing the wrong credentials.
+#[test]
+fn a_pointer_that_disagrees_with_the_live_account_is_reported() {
+    let sb = Sandbox::new();
+    sb.run(&["save", "work"]);
+    sb.login_b();
+
+    let (out, _, _) = sb.run(&["current"]);
+    assert!(out.contains("WARNING"), "no warning in: {out}");
+    assert!(out.contains("bob@example.com"), "{out}");
+
+    let (out, _, code) = sb.run(&["doctor"]);
+    assert_eq!(code, 7, "doctor should fail loudly: {out}");
+    assert!(out.contains("FAIL"), "{out}");
+}
+
+#[test]
+fn storing_a_different_account_into_an_existing_profile_is_refused() {
+    let sb = Sandbox::new();
+    sb.run(&["save", "work"]);
+    let before = std::fs::read(sb.path().join(".ccred/profiles/work/.credentials.json")).unwrap();
+
+    sb.login_b();
+    let (_, err, code) = sb.run(&["save", "work"]);
+    assert_eq!(code, 7, "expected an unsafe-write exit: {err}");
+    assert!(err.contains("belongs to"), "{err}");
+
+    let after = std::fs::read(sb.path().join(".ccred/profiles/work/.credentials.json")).unwrap();
+    assert_eq!(before, after, "the profile must not have been touched");
+}
+
+/// The highest-value security test: no command, on any path, may print a token.
+#[test]
+fn no_command_ever_prints_a_token() {
+    let sb = Sandbox::new();
+    sb.run(&["save", "work"]);
+    sb.login_b();
+    sb.run(&["save", "personal"]);
+
+    let invocations: &[&[&str]] = &[
+        &["current"],
+        &["current", "--json"],
+        &["list"],
+        &["list", "--json"],
+        &["doctor"],
+        &["doctor", "--json"],
+        &["save", "work"], // fails: account mismatch
+        &["switch", "work"],
+        &["switch", "nope"],      // fails: not found
+        &["switch", "../../etc"], // fails: invalid name
+        &["rm", "personal"],
+        &["stray-argument"], // fails: unknown command
+    ];
+
+    for args in invocations {
+        let out = sb.cmd(args);
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        for secret in [TOKEN_A, REFRESH_A, TOKEN_B, REFRESH_B] {
+            assert!(
+                !text.contains(secret),
+                "`ccred {}` leaked a token:\n{text}",
+                args.join(" ")
+            );
+        }
+        assert!(
+            !text.contains("sk-ant-"),
+            "`ccred {}` printed something token-shaped:\n{text}",
+            args.join(" ")
+        );
+    }
+}
+
+#[test]
+fn a_bare_profile_name_suggests_switch_instead_of_guessing() {
+    let sb = Sandbox::new();
+    sb.run(&["save", "work"]);
+
+    let (_, err, code) = sb.run(&["work"]);
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("ccred switch work"), "{err}");
+}
+
+#[test]
+fn switching_preserves_unrelated_config_state() {
+    let sb = Sandbox::new();
+    sb.run(&["save", "work"]);
+    sb.login_b();
+    sb.run(&["save", "personal"]);
+    sb.run(&["switch", "work"]);
+
+    let cfg = sb.config_json();
+    assert_eq!(cfg["numStartups"], 42, "unrelated key was lost");
+    assert_eq!(cfg["mcpServers"]["srv"]["command"], "x");
+    assert_eq!(
+        cfg["projects"]["/some/code"]["hasTrustDialogAccepted"],
+        true
+    );
+    assert_eq!(cfg["oauthAccount"]["emailAddress"], "alice@example.com");
+    // A field outside our projection must survive the round trip.
+    assert_eq!(cfg["oauthAccount"]["profileFetchedAt"], 1788000000000_i64);
+}
+
+#[test]
+fn guards_report_distinct_exit_codes() {
+    let sb = Sandbox::new();
+    sb.run(&["save", "work"]);
+
+    // Removing the active profile is refused.
+    let (_, err, code) = sb.run(&["rm", "work"]);
+    assert_eq!(code, 7, "{err}");
+
+    // An unknown profile is a lookup failure, not an unsafe write.
+    let (_, _, code) = sb.run(&["switch", "nope"]);
+    assert_eq!(code, 3);
+
+    // Path traversal is rejected by name validation.
+    let (_, err, code) = sb.run(&["switch", "../../etc"]);
+    assert_eq!(code, 3, "{err}");
+    assert!(err.contains("invalid profile name"), "{err}");
+}
+
+#[test]
+fn json_output_is_machine_readable() {
+    let sb = Sandbox::new();
+    sb.run(&["save", "work"]);
+
+    let (out, _, _) = sb.run(&["list", "--json"]);
+    let rows: serde_json::Value = serde_json::from_str(&out).expect("list --json must parse");
+    assert_eq!(rows[0]["name"], "work");
+    assert_eq!(rows[0]["active"], true);
+
+    let (out, _, _) = sb.run(&["current", "--json"]);
+    let cur: serde_json::Value = serde_json::from_str(&out).expect("current --json must parse");
+    assert_eq!(cur["active_profile"], "work");
+    assert_eq!(cur["logged_in"], true);
+}
+
+#[test]
+fn an_interrupted_switch_is_healed_on_the_next_command() {
+    let sb = Sandbox::new();
+    sb.run(&["save", "work"]);
+    sb.login_b();
+    sb.run(&["save", "personal"]);
+
+    // Simulate a crash before the pointer was updated.
+    let journal = sb.path().join(".ccred/state/switch.journal");
+    std::fs::write(
+        &journal,
+        r#"{"from":"personal","to":"work","phase":"live_creds_written",
+            "started_at_ms":1788000000000,"pid":999999}"#,
+    )
+    .unwrap();
+
+    sb.run(&["current"]); // read-only: leaves it alone
+    assert!(journal.exists(), "a read-only command must not heal");
+
+    sb.run(&["switch", "personal"]);
+    assert!(!journal.exists(), "a switch must clear the journal");
+}

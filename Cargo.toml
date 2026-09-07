@@ -1,0 +1,50 @@
+[package]
+name = "ccred"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Save, list and switch between named sets of local Claude Code credentials."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/Zigecek/ccred"
+homepage = "https://github.com/Zigecek/ccred"
+readme = "README.md"
+keywords = ["cli", "credentials", "profiles", "oauth", "accounts"]
+categories = ["command-line-utilities", "authentication"]
+exclude = ["/.github", "/packaging", "/npm", "/docs", "/tests/snapshots"]
+
+[[bin]]
+name = "ccred"
+path = "src/main.rs"
+
+[lib]
+name = "ccred"
+path = "src/lib.rs"
+
+[dependencies]
+clap = { version = "4", default-features = false, features = [
+    "std", "derive", "help", "usage", "error-context", "suggestions", "wrap_help",
+] }
+# preserve_order keeps unknown keys in their original order so the
+# round-trip is byte-stable
+serde_json = { version = "1", features = ["preserve_order"] }
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+zeroize = "1"
+sha2 = "0.10"
+hex = "0.4"
+
+[dev-dependencies]
+tempfile = "3"
+assert_cmd = "2"
+serde_json = { version = "1", features = ["preserve_order"] }
+predicates = "3"
+# lock tests only: setting a directory's mtime
+filetime = "0.2"
+
+[profile.release]
+opt-level = "s"
+lto = "thin"
+codegen-units = 1
+strip = "debuginfo"
+# Deliberately on in release too: this is a security tool.
+overflow-checks = true

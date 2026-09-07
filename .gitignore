@@ -1,0 +1,12 @@
+/target
+**/*.rs.bk
+*.pdb
+
+# Never commit anything that could carry tokens.
+*.credentials.json
+.credentials.json
+*.lkg
+/scratch
+
+# Working design docs stay local: they carry account e-mails and host details.
+/docs/plans/
