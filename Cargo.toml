@@ -2,7 +2,9 @@
 name = "ccred"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.85"
+# let-chains (`if let ... && ...`) are used throughout; they were
+# stabilised for edition 2024 in 1.88, and CI checks this floor.
+rust-version = "1.88"
 description = "Save, list and switch between named sets of local Claude Code credentials."
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/Zigecek/ccred"
