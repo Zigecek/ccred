@@ -59,8 +59,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist
-          gh release download "$TAG" --pattern "ccred-${{ matrix.target }}.tar.gz" --output - \
-            | tar xz -C dist --strip-components=1
+          gh release download "$TAG" --pattern "ccred-${{ matrix.target }}.tar.xz" --output - \
+            | tar xJ -C dist --strip-components=1
           test -f dist/ccred
 
       - name: Build the package

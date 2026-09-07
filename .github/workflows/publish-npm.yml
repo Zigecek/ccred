@@ -38,14 +38,14 @@ jobs:
           set -euo pipefail
           mkdir -p artifacts dist
           gh release download "${GITHUB_REF_NAME}" --dir artifacts \
-            --pattern '*.tar.gz' --pattern '*.zip'
+            --pattern '*.tar.xz' --pattern '*.zip'
           # dist names each archive after its target triple; unpack each into a
           # directory of the same name, which is what gen-npm.mjs expects.
-          for f in artifacts/*.tar.gz; do
+          for f in artifacts/*.tar.xz; do
             [ -e "$f" ] || continue
-            name=$(basename "$f" .tar.gz)
+            name=$(basename "$f" .tar.xz)
             mkdir -p "dist/$name"
-            tar xzf "$f" -C "dist/$name" --strip-components=1
+            tar xJf "$f" -C "dist/$name" --strip-components=1
           done
           for f in artifacts/*.zip; do
             [ -e "$f" ] || continue
