@@ -65,6 +65,9 @@ pub enum CcredError {
     )]
     AccountUnverifiable { profile: String, stored: String },
 
+    #[error("scheduler: {0}")]
+    Schedule(String),
+
     #[error("I/O error at {path}")]
     Io {
         path: PathBuf,
@@ -112,6 +115,7 @@ impl CcredError {
             CcredError::ProfileNotFound(_) => ExitCode::NotFound,
             CcredError::AccountMismatch { .. } => ExitCode::Unsafe,
             CcredError::AccountUnverifiable { .. } => ExitCode::Unsafe,
+            CcredError::Schedule(_) => ExitCode::Misconfigured,
             CcredError::Io { .. } => ExitCode::Internal,
             CcredError::Json { .. } => ExitCode::Unsafe,
         }

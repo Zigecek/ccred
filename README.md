@@ -3,8 +3,8 @@
 Save, list and switch between named sets of local Claude Code credentials.
 
 **Status: early development.** The commands below work on Linux and Windows.
-Installing the background schedule and macOS Keychain support are not done yet,
-and nothing is published to any registry so far.
+macOS is written but unverified -- no Mac was available -- and nothing is
+published to any registry so far.
 
 > **Unofficial and independent.** Not affiliated with, endorsed by, or sponsored
 > by Anthropic PBC. See [TRADEMARKS.md](TRADEMARKS.md).
@@ -28,6 +28,8 @@ ccred save <name>         store the account that is logged in, under a name
 ccred switch <name>       make a saved profile the active account
 ccred rm <name>           delete a profile
 ccred refresh             keep stored profiles from expiring
+ccred schedule install    run that refresh automatically, twice a week
+ccred schedule status     is it registered, and when does it next run
 ccred doctor              check for anything quietly wrong
 ```
 
@@ -41,6 +43,16 @@ and exits successfully without doing anything if that was recent, so a
 scheduler that double-fires -- systemd catching up, launchd coalescing, a
 Windows task with both a boot trigger and a schedule -- costs nothing. The
 real rate limit lives in the command, not the schedule.
+
+`ccred schedule install --dry-run` prints the exact unit file, plist or task
+XML it would register, without writing anything.
+
+Installing verifies its own work: right after registering, it asks the
+scheduler when the job will next run, and if the answer is "never" it undoes
+the installation and says so. Each platform has a way to accept a schedule
+that silently never fires -- a systemd timer with `Persistent=` on a monotonic
+trigger, a launchd `Weekday` out of range, a Windows task left with the
+default refusal to start on battery -- and all of them look installed.
 
 Switching refuses to run while Claude Code is open. A live session holds the
 old account in memory and would write its next refreshed token into what is by

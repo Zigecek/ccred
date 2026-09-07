@@ -5,9 +5,9 @@
 
 use clap::Parser;
 
-use ccred::cli::{Cli, Command};
+use ccred::cli::{Cli, Command, ScheduleAction};
 use ccred::error::ExitCode;
-use ccred::ops::{Ctx, doctor, refresh, simple, switch};
+use ccred::ops::{Ctx, doctor, refresh, schedule as sched_ops, simple, switch};
 use ccred::validate::validate_profile_name;
 
 fn main() {
@@ -111,6 +111,45 @@ fn run(cli: &Cli) -> ccred::Result<ExitCode> {
             })
         }
 
+        Some(Command::Schedule(args)) => {
+            let backend = sched_ops::backend();
+            match &args.action {
+                ScheduleAction::Install { dry_run } => {
+                    let spec = sched_ops::spec_for(&ctx)?;
+                    if *dry_run {
+                        for file in backend.render(&spec)? {
+                            println!("--- {} ---", file.path.display());
+                            println!("{}", file.contents);
+                        }
+                        return Ok(ExitCode::Ok);
+                    }
+                    let health = ccred::schedule::install_checked(backend.as_ref(), &spec)?;
+                    println!(
+                        "installed; next run: {}",
+                        health.next_run.as_deref().unwrap_or("-")
+                    );
+                    for w in &health.warnings {
+                        println!("warning: {w:?}");
+                    }
+                    Ok(ExitCode::Ok)
+                }
+                ScheduleAction::Uninstall => {
+                    backend.uninstall()?;
+                    println!("schedule removed");
+                    Ok(ExitCode::Ok)
+                }
+                ScheduleAction::Status => {
+                    let state = backend.status()?;
+                    if cli.json {
+                        print_json(&state);
+                    } else {
+                        print_schedule(&state);
+                    }
+                    Ok(ExitCode::Ok)
+                }
+            }
+        }
+
         Some(Command::Doctor) => {
             let findings = doctor::doctor(&ctx)?;
             if cli.json {
@@ -199,6 +238,29 @@ fn print_list(rows: &[simple::ProfileRow]) {
         );
         if let Some(note) = &r.note {
             println!("  {:width$}  {note}", "");
+        }
+    }
+}
+
+fn print_schedule(state: &ccred::schedule::State) {
+    use ccred::schedule::State;
+    match state {
+        State::NotInstalled => println!("not installed -- run `ccred schedule install`"),
+        State::Unsupported { reason, remedy } => {
+            println!("unsupported here: {reason}");
+            if let Some(r) = remedy {
+                println!("  {r}");
+            }
+        }
+        State::Installed(h) => {
+            println!("installed  : yes (enabled: {})", h.enabled);
+            println!("next run   : {}", h.next_run.as_deref().unwrap_or("NONE"));
+            if let Some(last) = &h.last_run {
+                println!("last run   : {last}");
+            }
+            for w in &h.warnings {
+                println!("warning    : {w:?}");
+            }
         }
     }
 }

@@ -1,6 +1,6 @@
 //! Command-line surface.
 
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -63,6 +63,9 @@ pub enum Command {
         claude_path: Option<std::path::PathBuf>,
     },
 
+    /// Install, remove or inspect the background refresh schedule.
+    Schedule(ScheduleArgs),
+
     /// Check for anything that is quietly wrong.
     Doctor,
 
@@ -73,4 +76,24 @@ pub enum Command {
     /// was reorganised to remove, so the answer is a hint, not a guess.
     #[command(external_subcommand)]
     Unknown(Vec<String>),
+}
+
+#[derive(Debug, Args)]
+pub struct ScheduleArgs {
+    #[command(subcommand)]
+    pub action: ScheduleAction,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ScheduleAction {
+    /// Register the periodic refresh with this platform's scheduler.
+    Install {
+        /// Print what would be registered, without touching anything.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Remove it again.
+    Uninstall,
+    /// Report whether it is registered and when it will next run.
+    Status,
 }

@@ -354,3 +354,81 @@ fn refresh_output_never_prints_a_token() {
         );
     }
 }
+
+#[test]
+fn schedule_dry_run_prints_the_artifact_and_touches_nothing() {
+    // A tool that holds credentials must let you read exactly what it would
+    // register with the operating system before it does it.
+    let sb = Sandbox::new();
+    let before: Vec<_> = walk(sb.path());
+
+    let (out, err, code) = sb.run(&["schedule", "install", "--dry-run"]);
+    assert_eq!(code, 0, "{err}");
+    assert!(
+        out.contains("ccred"),
+        "the command line should be visible:
+{out}"
+    );
+    assert!(
+        out.contains("---"),
+        "a file header should be printed:
+{out}"
+    );
+
+    let after: Vec<_> = walk(sb.path());
+    assert_eq!(before, after, "--dry-run must not create anything");
+}
+
+#[test]
+fn schedule_status_reports_absence_rather_than_failing() {
+    let sb = Sandbox::new();
+    let (out, err, code) = sb.run(&["schedule", "status"]);
+    assert_eq!(code, 0, "{err}");
+    assert!(
+        out.contains("not installed") || out.contains("unsupported"),
+        "{out}"
+    );
+}
+
+#[test]
+fn schedule_output_never_prints_a_token() {
+    let sb = Sandbox::new();
+    sb.run(&["save", "work"]);
+    for args in [
+        vec!["schedule", "status"],
+        vec!["schedule", "status", "--json"],
+        vec!["schedule", "install", "--dry-run"],
+    ] {
+        let out = sb.cmd(&args);
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            !text.contains("sk-ant-"),
+            "`{args:?}` leaked:
+{text}"
+        );
+    }
+}
+
+/// Every path under a directory, sorted -- for proving nothing was written.
+fn walk(root: &Path) -> Vec<std::path::PathBuf> {
+    let mut out = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for e in entries.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                stack.push(p.clone());
+            }
+            out.push(p);
+        }
+    }
+    out.sort();
+    out
+}

@@ -6,6 +6,7 @@
 
 pub mod doctor;
 pub mod refresh;
+pub mod schedule;
 pub mod simple;
 pub mod switch;
 
