@@ -58,6 +58,41 @@ gh secret set AUR_EMAIL --repo Zigecek/ccred
 
 The job skips itself while these are unset, so releases do not fail without it.
 
+## Known issue: the `host` job cannot create the release
+
+`dist`'s `host` job fails with `HTTP 403: Resource not accessible by
+integration` on `POST /repos/Zigecek/ccred/releases`, even though the job's own
+log reports `Contents: write`. Builds all seven targets fine; only the final
+step fails.
+
+**This is unsolved.** A diagnostic workflow reproduced the release job's
+conditions one variable at a time, and every one of them succeeded in
+isolation:
+
+| Suspected cause | Result |
+|---|---|
+| Repository default workflow permissions were `read` | Changed to `write`. Job already showed `Contents: write` both before and after; no change. |
+| Re-runs inherit the original run's token | A completely fresh run failed identically. |
+| `gh` CLI behaves differently from the raw API | Both succeed in the same job, same token, same endpoint. |
+| Tag pushes get a restricted token | A tag-triggered run created a release fine. |
+| The tag already exists and `--target` is also passed | Reproduced exactly; succeeded. |
+| The `ubuntu-22.04` runner has a different `gh` | Reproduced on 22.04; succeeded. |
+
+The one difference not yet isolated is that the real job passes sixteen asset
+files to `gh release create`, while every probe created an empty release.
+
+**Workaround, which is how v0.1.0 shipped.** The build artifacts are complete
+and correct, so assemble the release from them:
+
+```sh
+gh run download <run-id> --dir /tmp/rel
+cd /tmp/rel && find . -name 'ccred-*' -exec cp {} . \;
+gh release create v0.1.0 --title "ccred 0.1.0" --notes-file notes.md   ccred-*.tar.xz ccred-*.zip ccred-*.sha256 ccred-installer.*
+```
+
+Verify a binary and its checksum before publishing; the v0.1.0 Windows build
+was checked this way and reported `ccred 0.1.0` correctly.
+
 ## Cutting a release
 
 ```sh
