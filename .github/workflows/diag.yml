@@ -8,6 +8,11 @@ name: diag
 
 on:
   workflow_dispatch:
+  # The release workflow is triggered by a tag push and fails; this one is
+  # triggered by dispatch and succeeds. Testing whether the event is the
+  # difference.
+  push:
+    tags: ["diag-*"]
 
 permissions:
   contents: write
