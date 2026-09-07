@@ -21,8 +21,11 @@ profiles on a schedule to prevent that.
 
 ## Install
 
-Nothing is published yet. The intended channels, and the reasoning behind which
-ones are worth maintaining, are in [docs/install.md](docs/install.md).
+The intended channels, and the reasoning behind which ones are worth
+maintaining, are in [docs/install.md](docs/install.md). Release binaries are
+on the [releases page](https://github.com/Zigecek/ccred/releases); registry
+publishing needs the account setup described in
+[docs/publishing.md](docs/publishing.md).
 
 Building from source:
 

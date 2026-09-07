@@ -87,11 +87,12 @@ jobs:
         with:
           persist-credentials: false
 
+      # Gate on the deploy key existing, so releases do not start failing
+      # before the AUR account is set up. Only the boolean is exposed here,
+      # never the key itself.
       - name: Check whether the AUR key is configured
         id: gate
-        env:
-          KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
-        run: echo "ready=${{ secrets.AUR_SSH_PRIVATE_KEY != '' }}" >> "$GITHUB_OUTPUT"
+        run: echo "ready=${{ secrets.AUR_SSH_PRIVATE_KEY !=  }}" >> "$GITHUB_OUTPUT"
 
       - name: Stamp the version into the PKGBUILD
         if: steps.gate.outputs.ready == 'true'
