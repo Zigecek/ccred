@@ -31,9 +31,13 @@ jobs:
         run: |
           set +e
           echo "diag notes" > notes.txt
-          gh release create diag-probe             --target "${{ github.sha }}"             --title "diag"             --notes-file notes.txt
+          # Mirror the release job exactly: the tag ALREADY EXISTS (this run
+          # was triggered by pushing it) and --target is passed anyway.
+          TAG="${GITHUB_REF#refs/tags/}"
+          echo "tag under test: $TAG"
+          gh release create "$TAG"             --target "${{ github.sha }}"             --title "diag"             --notes-file notes.txt
           echo "GH_EXIT=$?"
-          gh release delete diag-probe --yes --cleanup-tag 2>/dev/null
+          gh release delete "$TAG" --yes 2>/dev/null
 
       - name: the same request through the raw API
         run: |
