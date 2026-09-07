@@ -1,0 +1,111 @@
+name: packaging
+
+# Downstream packaging, after a release exists.
+#
+# The .deb is attached to the same release; the AUR and Scoop steps push to
+# other repositories, so they are safe to run afterwards.
+#
+# NOTE: if repository-level immutable releases are ever enabled, attaching the
+# .deb here will start failing, because assets cannot be added to a published
+# release. Move the deb job into dist's global-artifacts stage at that point.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to package
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  NFPM_VERSION: "2.47.0"
+
+jobs:
+  deb:
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            arch: amd64
+          - target: aarch64-unknown-linux-musl
+            arch: arm64
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Resolve the tag
+        run: echo "TAG=${{ github.event.inputs.tag || github.ref_name }}" >> "$GITHUB_ENV"
+
+      - name: Fetch nfpm and verify it
+        run: |
+          set -euo pipefail
+          base="https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VERSION}"
+          curl -sSLo nfpm.tar.gz "${base}/nfpm_${NFPM_VERSION}_Linux_x86_64.tar.gz"
+          curl -sSLo checksums.txt "${base}/checksums.txt"
+          # Verifying the download beats trusting a third-party action with the
+          # release pipeline of a credential tool.
+          grep "nfpm_${NFPM_VERSION}_Linux_x86_64.tar.gz" checksums.txt | sha256sum -c -
+          tar xzf nfpm.tar.gz nfpm
+          chmod +x nfpm
+
+      - name: Fetch the binary from the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          gh release download "$TAG" --pattern "ccred-${{ matrix.target }}.tar.gz" --output - \
+            | tar xz -C dist --strip-components=1
+          test -f dist/ccred
+
+      - name: Build the package
+        env:
+          CCRED_DEB_ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          export CCRED_VERSION="${TAG#v}"
+          ./nfpm pkg --packager deb --config packaging/nfpm.yaml --target dist/
+
+      - name: Attach it to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" dist/*.deb --clobber
+
+  aur:
+    needs: deb
+    runs-on: ubuntu-24.04
+    # Needs an SSH deploy key; skipped until that secret exists, so the
+    # workflow does not fail on every release before it is set up.
+    if: ${{ github.event_name == 'release' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check whether the AUR key is configured
+        id: gate
+        env:
+          KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+        run: echo "ready=${{ secrets.AUR_SSH_PRIVATE_KEY != '' }}" >> "$GITHUB_OUTPUT"
+
+      - name: Stamp the version into the PKGBUILD
+        if: steps.gate.outputs.ready == 'true'
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          sed -i "s/^pkgver=.*/pkgver=$v/;s/^pkgrel=.*/pkgrel=1/" packaging/aur/PKGBUILD
+
+      - uses: KSXGitHub/github-actions-deploy-aur@2ac5a4c1d7035885d46b10e3193393be8460b6f1 # v4.1.1
+        if: steps.gate.outputs.ready == 'true'
+        with:
+          pkgname: ccred-bin
+          pkgbuild: packaging/aur/PKGBUILD
+          updpkgsums: true
+          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          commit_username: ${{ secrets.AUR_USERNAME }}
+          commit_email: ${{ secrets.AUR_EMAIL }}
+          commit_message: "chore: bump to ${{ github.ref_name }}"

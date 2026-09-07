@@ -48,3 +48,8 @@ codegen-units = 1
 strip = "debuginfo"
 # Deliberately on in release too: this is a security tool.
 overflow-checks = true
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"

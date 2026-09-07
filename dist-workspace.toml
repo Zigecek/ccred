@@ -1,43 +1,39 @@
 [workspace]
 members = ["cargo:."]
 
+# Config for 'dist'
 [dist]
+# The preferred dist version to use in CI (Cargo.toml SemVer syntax)
 cargo-dist-version = "0.32.0"
+# CI backends to support
 ci = "github"
-
-# No "npm" installer on purpose. cargo-dist's npm package downloads the binary
-# during `npm install`, which fails under `npm ci --ignore-scripts`, cannot
-# install offline, and leaves provenance covering the fetcher rather than the
-# binary. Per-platform packages are generated instead -- see npm/README.md.
+# The installers to generate for each app
 installers = ["shell", "powershell", "homebrew"]
+# A GitHub repo to push Homebrew formulas to
 tap = "Zigecek/homebrew-ccred"
+# Customize the Homebrew formula name
 formula = "ccred"
-
-targets = [
-    "x86_64-unknown-linux-gnu",
-    "aarch64-unknown-linux-gnu",
-    "x86_64-unknown-linux-musl",
-    "aarch64-unknown-linux-musl",
-    "x86_64-apple-darwin",
-    "aarch64-apple-darwin",
-    "x86_64-pc-windows-msvc",
-]
-
+# Target platforms to build apps for (Rust target-triple syntax)
+targets = ["aarch64-apple-darwin", "aarch64-unknown-linux-gnu", "aarch64-unknown-linux-musl", "x86_64-apple-darwin", "x86_64-unknown-linux-gnu", "x86_64-unknown-linux-musl", "x86_64-pc-windows-msvc"]
+# Where to host releases
 hosting = "github"
+# Which actions to run on pull requests
 pr-run-mode = "plan"
+# Path that installers should place binaries in
 install-path = "CARGO_HOME"
-
-# A self-updater in a tool that holds credentials is extra attack surface for
-# very little convenience.
+# Whether to install an updater program
 install-updater = false
-
-# Supply chain
+# Publish jobs to run in CI
+publish-jobs = ["homebrew", "./publish-crates", "./publish-npm"]
+# Whether to enable GitHub Attestations
 github-attestations = true
-# Embeds the dependency tree in the binary, so `cargo audit bin ccred` works on
-# something a user actually downloaded.
+# Whether to embed dependency information using cargo-auditable
 cargo-auditable = true
+# Whether to use cargo-cyclonedx to generate an SBOM
 cargo-cyclonedx = true
+# Whether +crt-static should be used on msvc
 msvc-crt-static = true
+# Checksums to generate for each App
 checksum = "sha256"
 
 [dist.github-action-commits]

@@ -1,0 +1,75 @@
+name: publish-npm
+
+# Called by the dist release workflow as a custom publish job.
+#
+# Publishes one package per platform plus the root wrapper. See npm/README.md
+# for why this shape rather than cargo-dist's npm installer.
+on:
+  workflow_call:
+    inputs:
+      plan:
+        required: true
+        type: string
+
+jobs:
+  publish-npm:
+    runs-on: ubuntu-24.04
+    permissions:
+      id-token: write # OIDC trusted publishing; also generates provenance
+      contents: read
+    environment: npm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22.14.0"
+          registry-url: "https://registry.npmjs.org"
+
+      # Trusted publishing needs a recent npm; the runner's may be older.
+      - run: npm install -g npm@latest
+
+      - name: Fetch the release archives
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts dist
+          gh release download "${GITHUB_REF_NAME}" --dir artifacts \
+            --pattern '*.tar.gz' --pattern '*.zip'
+          # dist names each archive after its target triple; unpack each into a
+          # directory of the same name, which is what gen-npm.mjs expects.
+          for f in artifacts/*.tar.gz; do
+            [ -e "$f" ] || continue
+            name=$(basename "$f" .tar.gz)
+            mkdir -p "dist/$name"
+            tar xzf "$f" -C "dist/$name" --strip-components=1
+          done
+          for f in artifacts/*.zip; do
+            [ -e "$f" ] || continue
+            name=$(basename "$f" .zip)
+            mkdir -p "dist/$name"
+            unzip -q -j "$f" -d "dist/$name"
+          done
+          ls dist
+
+      - name: Lay out the packages
+        run: |
+          node scripts/gen-npm.mjs \
+            --from dist --out target/npm --version "${GITHUB_REF_NAME#v}"
+
+      # Platform packages first: the root names exact versions in
+      # optionalDependencies, so publishing it first would leave a window where
+      # it resolves to versions that do not exist yet.
+      - name: Publish platform packages
+        run: |
+          set -euo pipefail
+          for p in target/npm/platforms/*; do
+            echo "publishing $p"
+            npm publish "$p" --access public
+          done
+
+      - name: Publish the root package
+        run: npm publish target/npm/ccred --access public
