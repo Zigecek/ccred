@@ -15,6 +15,22 @@ usefully, the reasoning behind which ones are worth maintaining.
 | apt | `sudo apt install ./ccred_<ver>_amd64.deb` | A real `.deb` from the release page |
 | AUR | `yay -S ccred-bin` | Prebuilt; a source variant can follow |
 
+## A note on the Windows one-liner
+
+cargo-dist suggests `powershell -ExecutionPolicy Bypass -c "irm <url> | iex"`.
+That fails on **Windows PowerShell 5.1** with a misleading pair of errors about
+an empty string and an unterminated block comment.
+
+It is not a download problem and not a permissions problem. Measured: the
+string reaching the pipeline is one object of the correct length whose content
+is byte-identical to the file on disk, the script parses cleanly under 5.1, and
+the same script run from a file installs perfectly. PowerShell 7 also handles
+the piped form. Something about executing this particular script as a piped
+string under 5.1 breaks it, and the exact mechanism is not pinned down.
+
+So the documented Windows command downloads first and then runs. Slightly
+longer, works on both.
+
 ## Deliberately not packaged
 
 **Snap and Flatpak.** Both sandbox the filesystem, and this tool's entire job
