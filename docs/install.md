@@ -15,21 +15,24 @@ usefully, the reasoning behind which ones are worth maintaining.
 | apt | `sudo apt install ./ccred_<ver>_amd64.deb` | A real `.deb` from the release page |
 | AUR | `yay -S ccred-bin` | Prebuilt; a source variant can follow |
 
-## A note on the Windows one-liner
+## A note on `-NoProfile` in the Windows command
 
-cargo-dist suggests `powershell -ExecutionPolicy Bypass -c "irm <url> | iex"`.
-That fails on **Windows PowerShell 5.1** with a misleading pair of errors about
-an empty string and an unterminated block comment.
+The Windows one-liner passes `-NoProfile`, and that is not decoration.
 
-It is not a download problem and not a permissions problem. Measured: the
-string reaching the pipeline is one object of the correct length whose content
-is byte-identical to the file on disk, the script parses cleanly under 5.1, and
-the same script run from a file installs perfectly. PowerShell 7 also handles
-the piped form. Something about executing this particular script as a piped
-string under 5.1 breaks it, and the exact mechanism is not pinned down.
+Without it, `irm <url> | iex` failed on one machine with a misleading pair of
+errors about an empty string and an unterminated block comment -- while the
+same script run from a file installed perfectly. The first guess was a
+PowerShell 5.1 incompatibility. It was not: with `-NoProfile` the identical
+command works on both 5.1 and 7, deterministically, three runs each way.
 
-So the documented Windows command downloads first and then runs. Slightly
-longer, works on both.
+The trigger was loading the user's PowerShell profile, which on that machine
+was a zero-byte file under `Documents\WindowsPowerShell`. Why an empty profile
+changes the behaviour of a piped `iex` is not established -- a OneDrive
+placeholder is the leading suspicion -- but it is somebody's real machine, and
+an installer that breaks on it is broken.
+
+`-NoProfile` is worth having regardless: an installer has no business
+inheriting whatever a user's profile redefines.
 
 ## Deliberately not packaged
 

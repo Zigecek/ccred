@@ -33,11 +33,8 @@ curl --proto '=https' --tlsv1.2 -LsSf   https://github.com/Zigecek/ccred/release
 ```
 
 ```powershell
-# Windows. Downloads first and then runs, because `irm ... | iex` fails on
-# Windows PowerShell 5.1 -- the script runs correctly from a file but not as a
-# piped string. PowerShell 7 handles the piped form fine.
-iwr https://github.com/Zigecek/ccred/releases/download/v0.1.0/ccred-installer.ps1 -OutFile "$env:TEMP\ccred-installer.ps1"
-& "$env:TEMP\ccred-installer.ps1"
+# Windows
+powershell -NoProfile -ExecutionPolicy Bypass -c "irm https://github.com/Zigecek/ccred/releases/download/v0.1.0/ccred-installer.ps1 | iex"
 ```
 
 Building from source:
