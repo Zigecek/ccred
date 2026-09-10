@@ -98,6 +98,35 @@ Switching refuses to run while Claude Code is open. A live session holds the
 old account in memory and would write its next refreshed token into what is by
 then a different profile's file. Quit it first, or pass `--force` knowing that.
 
+### What it looks like
+
+```
+$ ccred list
+
+  PROFILE  ACCOUNT            PLAN     REFRESH WINDOW  LEFT      SYNCED  STATE
+  ● work   ada@example.com    Max 20x  ███████████░░░   23d     3 h ago  ok
+    home   grace@example.com  Max 5x   ██░░░░░░░░░░░░    4d  9 days ago  expiring
+
+  2 profiles, 1 needs attention
+```
+
+```
+$ ccred current
+
+  ● work   ada@example.com   · Max 20x
+
+  Access     █████████░░░░░  5 hours
+  Refresh    ███████████░░░  23 days
+  Synced     3 h ago
+  Profiles   2 saved   (ccred list)
+```
+
+Colour follows `NO_COLOR` and `CLICOLOR_FORCE`, and is dropped whenever output
+is not a terminal -- which is what keeps systemd, launchd and Task Scheduler
+logs free of escape sequences. Drawing characters fall back to ASCII unless the
+terminal is known to handle UTF-8; set `CCRED_UNICODE=1` or `0` to overrule
+that guess.
+
 ## Design notes
 
 **It never talks to Anthropic's OAuth endpoint.** Refreshing is done by running

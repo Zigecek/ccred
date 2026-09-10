@@ -87,6 +87,11 @@ impl Sandbox {
             .env("USERPROFILE", self.path())
             .env_remove("CCRED_HOME")
             .env_remove("CLAUDE_CONFIG_DIR")
+            // Pin the presentation: assertions below are about wording, and
+            // must not depend on whether the machine running the suite has a
+            // UTF-8 terminal or a colour-capable one.
+            .env("NO_COLOR", "1")
+            .env("CCRED_UNICODE", "0")
             .output()
             .unwrap()
     }
@@ -124,7 +129,7 @@ fn save_list_switch_round_trip() {
 
     let (out, _, code) = sb.run(&["switch", "work"]);
     assert_eq!(code, 0, "{out}");
-    assert!(out.contains("switched to 'work'"), "{out}");
+    assert!(out.contains("personal -> work"), "{out}");
 
     let (out, _, _) = sb.run(&["current"]);
     assert!(out.contains("alice@example.com"), "{out}");
@@ -140,12 +145,18 @@ fn a_pointer_that_disagrees_with_the_live_account_is_reported() {
     sb.login_b();
 
     let (out, _, _) = sb.run(&["current"]);
-    assert!(out.contains("WARNING"), "no warning in: {out}");
+    assert!(
+        out.contains("the active profile is 'work'"),
+        "no mismatch warning in: {out}"
+    );
     assert!(out.contains("bob@example.com"), "{out}");
 
     let (out, _, code) = sb.run(&["doctor"]);
     assert_eq!(code, 7, "doctor should fail loudly: {out}");
-    assert!(out.contains("FAIL"), "{out}");
+    assert!(
+        out.contains("the active profile is not the account that is logged in"),
+        "{out}"
+    );
 }
 
 #[test]
@@ -309,7 +320,7 @@ fn refresh_leaves_healthy_profiles_alone_and_never_spawns() {
     assert_eq!(code, 0, "{err}");
     assert!(out.contains("work"), "{out}");
     assert!(
-        out.contains("SkipFresh") || out.contains("MirrorActive"),
+        out.contains("up to date") || out.contains("mirrored"),
         "nothing should have been refreshed:
 {out}"
     );
@@ -328,7 +339,7 @@ fn refresh_rate_limits_itself_so_over_firing_is_harmless() {
 
     let (out, _, code) = sb.run(&["refresh", "--if-older-than", "24"]);
     assert_eq!(code, 0, "an over-fire must not be an error");
-    assert!(out.contains("skipped"), "{out}");
+    assert!(out.contains("nothing to do"), "{out}");
 }
 
 #[test]

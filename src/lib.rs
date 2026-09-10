@@ -23,6 +23,7 @@ pub mod profile;
 pub mod redact;
 pub mod schedule;
 pub mod store;
+pub mod ui;
 pub mod validate;
 
 pub use error::{CcredError, Result};

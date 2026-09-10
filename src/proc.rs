@@ -80,10 +80,10 @@ fn windows_pids() -> std::collections::HashSet<u32> {
     };
     for line in String::from_utf8_lossy(&out.stdout).lines() {
         // "name","pid","session","#","mem"
-        if let Some(field) = line.split(',').nth(1) {
-            if let Ok(pid) = field.trim_matches('"').trim().parse::<u32>() {
-                set.insert(pid);
-            }
+        if let Some(field) = line.split(',').nth(1)
+            && let Ok(pid) = field.trim_matches('"').trim().parse::<u32>()
+        {
+            set.insert(pid);
         }
     }
     set

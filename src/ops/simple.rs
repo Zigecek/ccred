@@ -20,6 +20,10 @@ pub struct ProfileRow {
     pub refresh_days_left: Option<i64>,
     pub healthy: bool,
     pub note: Option<String>,
+    /// When `ccred` last wrote this profile from a live login or a refresh.
+    pub last_synced_at_ms: Option<i64>,
+    /// Latched by `refresh` when only a person can fix this one.
+    pub needs_login: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -29,6 +33,16 @@ pub struct CurrentReport {
     pub logged_in: bool,
     pub access_days_left: Option<i64>,
     pub refresh_days_left: Option<i64>,
+    /// Milliseconds, because an access token lives about eight hours and
+    /// "0 days left" is not a useful thing to tell someone about it.
+    pub access_ms_left: Option<i64>,
+    pub refresh_ms_left: Option<i64>,
+    /// The plan on the account that is logged in, when it is known.
+    pub plan: Option<String>,
+    /// When the active profile was last written.
+    pub last_synced_at_ms: Option<i64>,
+    /// How many profiles exist, so `current` can point at `list`.
+    pub profile_count: usize,
     pub claude_running: Vec<u32>,
     /// Set when the active pointer disagrees with the live account. This is
     /// the shape of a near-miss that once nearly destroyed a profile.
@@ -42,20 +56,21 @@ pub fn current(ctx: &Ctx) -> crate::Result<CurrentReport> {
     let active = ctx.repo().active()?;
 
     let loaded = live.load()?;
-    let (logged_in, access_days_left, refresh_days_left) = match &loaded {
+    let (logged_in, access_ms_left, refresh_ms_left) = match &loaded {
         Some(l) => match validate_credentials(&l.creds.oauth, now) {
             Ok(_) => (
                 true,
-                Some(days_until(l.creds.oauth.expires_at, now)),
-                l.creds
-                    .oauth
-                    .refresh_token_expires_at
-                    .map(|t| days_until(t, now)),
+                Some(l.creds.oauth.expires_at - now),
+                l.creds.oauth.refresh_token_expires_at.map(|t| t - now),
             ),
             Err(_) => (false, None, None),
         },
         None => (false, None, None),
     };
+    // Days are kept alongside the milliseconds so the JSON shape does not
+    // change under anyone who is already parsing it.
+    let access_days_left = access_ms_left.map(|ms| ms / 86_400_000);
+    let refresh_days_left = refresh_ms_left.map(|ms| ms / 86_400_000);
 
     // Does the pointer agree with who is actually logged in?
     let mut pointer_mismatch = None;
@@ -73,12 +88,22 @@ pub fn current(ctx: &Ctx) -> crate::Result<CurrentReport> {
         ));
     }
 
+    let last_synced_at_ms = match &active {
+        Some(name) => ctx.repo().meta(name)?.and_then(|m| m.last_synced_at_ms),
+        None => None,
+    };
+
     Ok(CurrentReport {
         active_profile: active.map(|n| n.as_str().to_string()),
         account: account.label(),
         logged_in,
         access_days_left,
         refresh_days_left,
+        access_ms_left,
+        refresh_ms_left,
+        plan: account.identity.rate_limit_tier.clone(),
+        last_synced_at_ms,
+        profile_count: ctx.repo().list()?.len(),
         claude_running: crate::proc::running_claude_pids(ctx.paths().claude_config_dir()),
         pointer_mismatch,
     })
@@ -124,6 +149,8 @@ pub fn list(ctx: &Ctx) -> crate::Result<Vec<ProfileRow>> {
                 .as_ref()
                 .map(|m| m.account.label())
                 .unwrap_or_else(|| "<unknown account>".into()),
+            last_synced_at_ms: meta.as_ref().and_then(|m| m.last_synced_at_ms),
+            needs_login: meta.as_ref().is_some_and(|m| m.refresh.needs_login),
             subscription: meta.and_then(|m| m.account.rate_limit_tier),
             refresh_days_left,
             healthy,

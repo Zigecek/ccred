@@ -100,7 +100,13 @@ pub fn doctor(ctx: &Ctx) -> crate::Result<Vec<Finding>> {
     if !pids.is_empty() {
         findings.push(Finding::warn(
             "Claude Code is running",
-            format!("pid {pids:?}; switching now needs --force and is not advised"),
+            format!(
+                "{} live; switching now needs --force and is not advised",
+                match pids.len() {
+                    1 => "1 session".to_string(),
+                    n => format!("{n} sessions"),
+                }
+            ),
         ));
     }
 

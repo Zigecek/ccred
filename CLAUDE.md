@@ -67,6 +67,31 @@ We read and write files that belong to Claude Code, so:
   The item's ACL trusts `security`; a native read from a scheduled job returns
   `errSecInteractionNotAllowed` and fails silently forever.
 
+## Output is rendered, never printed inline
+
+Operations return data; `src/ui/render.rs` turns it into text. That split is
+what keeps "no output may ever contain a token" auditable in one file, so a
+`println!` inside an operation is a bug even when the string is harmless.
+
+Three rules hold in `src/ui`:
+
+- **Six roles, not six colours.** `LABEL`, `VALUE`, `NAME`, `OK`, `WARN` and
+  `ERR`, plus `ACCENT` for the active profile and `MUTED` for context.
+  Anything that seems to need a new colour needs one of these instead.
+- **Measure unstyled, pad outside the styled run.** A column width taken from
+  text that already carries escape sequences is wrong by the length of those
+  sequences, and padding inside the run puts blanks where `trim_end` cannot
+  reach them. `table_columns_line_up_regardless_of_styling` pins this.
+- **Two glyph sets, and the Unicode one is opt-in.** A terminal not known to
+  handle UTF-8 gets ASCII, because a tool people run when something is already
+  broken must not add mojibake to the problem. Source stays ASCII: the Unicode
+  set is written as escapes.
+
+Colour itself is `anstream`'s problem, not ours. It strips escapes when stdout
+is not a terminal -- which is what keeps systemd, launchd and Task Scheduler
+logs clean -- and it honours `NO_COLOR` and `CLICOLOR_FORCE`. Never branch on
+colour support by hand.
+
 ## Before committing
 
 ```sh
