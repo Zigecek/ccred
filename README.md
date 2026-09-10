@@ -21,20 +21,36 @@ profiles on a schedule to prevent that.
 
 ## Install
 
-The intended channels, and the reasoning behind which ones are worth
-maintaining, are in [docs/install.md](docs/install.md). Release binaries are
-on the [releases page](https://github.com/Zigecek/ccred/releases); registry
-publishing needs the account setup described in
-[docs/publishing.md](docs/publishing.md).
+Nothing is published to a registry yet, so the release page is the only route
+today. The intended channels, and the reasoning behind which ones are worth
+maintaining, are in [docs/install.md](docs/install.md); registry publishing
+needs the account setup described in [docs/publishing.md](docs/publishing.md).
 
 ```sh
 # Linux and macOS
-curl --proto '=https' --tlsv1.2 -LsSf   https://github.com/Zigecek/ccred/releases/download/v0.1.0/ccred-installer.sh | sh
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/Zigecek/ccred/releases/download/v0.1.0/ccred-installer.sh | sh
 ```
 
 ```powershell
 # Windows
-powershell -NoProfile -ExecutionPolicy Bypass -c "irm https://github.com/Zigecek/ccred/releases/download/v0.1.0/ccred-installer.ps1 | iex"
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/Zigecek/ccred/releases/download/v0.1.0/ccred-installer.ps1 | iex"
+```
+
+`-ExecutionPolicy Bypass` is not bypassing a protection. Execution policy does
+not apply to a piped `iex` in the first place; the flag is there because
+cargo-dist's script checks its own policy and refuses to continue without it.
+That, and why Defender intermittently flags this command line, is written up in
+[docs/install.md](docs/install.md).
+
+To read every byte before running anything:
+
+```powershell
+$v = "0.1.0"
+$z = "ccred-x86_64-pc-windows-msvc.zip"
+irm "https://github.com/Zigecek/ccred/releases/download/v$v/$z" -OutFile $z
+(Get-FileHash $z -Algorithm SHA256).Hash    # compare against the .sha256 on the release
+gh attestation verify $z --repo Zigecek/ccred
+Expand-Archive $z -DestinationPath .
 ```
 
 Building from source:
