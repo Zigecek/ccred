@@ -715,3 +715,45 @@ fn switching_away_from_a_deleted_profile_is_reported_not_fatal() {
         "work"
     );
 }
+
+/// Everything this tool writes must land inside the home it was given.
+///
+/// `log_dir` used to be derived from `LOCALAPPDATA` / `XDG_STATE_HOME`, read
+/// from the process environment rather than from the sandbox -- so this
+/// suite was quietly appending its runs to the real user's log file, and
+/// `CCRED_HOME` did not relocate the log either.
+#[test]
+fn nothing_is_written_outside_the_home_it_was_given() {
+    let sb = Sandbox::new();
+    sb.run(&["save", "work"]);
+    sb.login_b();
+    sb.run(&["save", "personal"]);
+    sb.run(&["refresh"]);
+
+    let log = sb.path().join(".ccred/logs/ccred.jsonl");
+    assert!(log.exists(), "the run must be recorded inside the sandbox");
+
+    let (out, err, code) = sb.run(&["log"]);
+    assert_eq!(code, 0, "{err}{out}");
+    assert!(
+        out.contains("mirror active") || out.contains("skip"),
+        "{out}"
+    );
+}
+
+/// Decisions are written in the serde spelling. `{:?}` squashes
+/// `MirrorActive` into `mirroractive`, which is neither the enum name nor a
+/// readable phrase.
+#[test]
+fn the_log_records_decisions_in_a_readable_spelling() {
+    let sb = Sandbox::new();
+    sb.run(&["save", "work"]);
+    sb.run(&["refresh"]);
+
+    let raw = std::fs::read_to_string(sb.path().join(".ccred/logs/ccred.jsonl")).unwrap();
+    assert!(raw.contains("mirror_active"), "{raw}");
+    assert!(!raw.contains("mirroractive"), "{raw}");
+    // And the rule the module exists under: no rendered error text.
+    assert!(!raw.contains("detail"), "{raw}");
+    assert!(!raw.contains("sk-ant-"), "{raw}");
+}

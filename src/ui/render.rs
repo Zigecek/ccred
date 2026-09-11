@@ -620,6 +620,55 @@ pub fn dry_run(theme: &Theme, files: &[RenderedFile]) {
     println!();
 }
 
+// --- log ------------------------------------------------------------------
+
+pub fn log(theme: &Theme, entries: &[crate::logbook::Entry], path: &std::path::Path) {
+    let g = theme.glyphs;
+    println!();
+    if entries.is_empty() {
+        callout(
+            MUTED,
+            g.bullet,
+            "no runs recorded yet",
+            &[&format!("the log lives at {}", path.display())],
+        );
+        println!();
+        return;
+    }
+
+    let now = crate::store::now_ms();
+    let mut t = Table::new(&[
+        ("WHEN", Align::Left),
+        ("STATUS", Align::Left),
+        ("PROFILES", Align::Left),
+    ]);
+    for e in entries {
+        let summary = if e.profiles.is_empty() {
+            "-".to_string()
+        } else {
+            e.profiles
+                .iter()
+                .map(|p| format!("{} {}", p.name, p.decision.replace('_', " ")))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let style = if e.status.starts_with("skipped") {
+            MUTED
+        } else {
+            VALUE
+        };
+        t.row(vec![
+            Cell::new(ago(e.at_ms, now), MUTED),
+            Cell::new(&e.status, style),
+            Cell::new(summary, VALUE),
+        ]);
+    }
+    println!("{}", t.render(theme, PAD));
+    println!();
+    println!("{PAD}{}", paint(MUTED, &path.display().to_string()));
+    println!();
+}
+
 // --- doctor ---------------------------------------------------------------
 
 pub fn doctor(theme: &Theme, findings: &[Finding]) {

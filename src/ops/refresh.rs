@@ -388,6 +388,12 @@ pub fn refresh(ctx: &Ctx, opts: &RefreshOptions) -> crate::Result<RefreshReport>
         profiles: results,
     };
     write_last_run(ctx, now, &report)?;
+
+    // A scheduled run is otherwise invisible on Windows, where Task Scheduler
+    // discards stdout. Failing to write the record must never fail the run it
+    // was recording.
+    let _ = crate::logbook::append(&ctx.paths().log_dir(), &log_entry(now, &report));
+
     Ok(report)
 }
 
@@ -566,6 +572,34 @@ fn refresh_one(
         m.refresh.next_attempt_after_ms = Some(next);
     })?;
     Ok((Decision::SkipBackoff, Some(last_note)))
+}
+
+/// Turn a report into a log line.
+///
+/// Decisions and numbers only. `detail` is deliberately left out: it is built
+/// from rendered error messages, and the project rule is to persist error
+/// kinds, because a message can echo its input and that input can be a token.
+fn log_entry(now: i64, report: &RefreshReport) -> crate::logbook::Entry {
+    crate::logbook::Entry {
+        at_ms: now,
+        command: "refresh".to_string(),
+        status: report.status.clone(),
+        profiles: report
+            .profiles
+            .iter()
+            .map(|p| crate::logbook::ProfileLine {
+                name: p.name.clone(),
+                // The serde spelling, which is snake_case; `{:?}` squashes
+                // MirrorActive into "mirroractive".
+                decision: serde_json::to_value(p.decision)
+                    .ok()
+                    .and_then(|v| v.as_str().map(str::to_string))
+                    .unwrap_or_else(|| "unknown".into()),
+                window_days_before: p.window_days_before,
+                window_days_after: p.window_days_after,
+            })
+            .collect(),
+    }
 }
 
 fn read_last_run(ctx: &Ctx) -> crate::Result<Option<LastRun>> {

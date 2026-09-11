@@ -139,6 +139,18 @@ pub enum Command {
     #[command(display_order = 9)]
     Doctor,
 
+    /// Show what the scheduled runs did.
+    ///
+    /// A scheduled run is otherwise invisible on Windows, where Task
+    /// Scheduler discards its output entirely. Decisions and numbers only --
+    /// never an error message, which could echo a token.
+    #[command(display_order = 10)]
+    Log {
+        /// How many runs to show.
+        #[arg(long, short = 'n', value_name = "COUNT", default_value_t = 20)]
+        count: usize,
+    },
+
     /// Anything else: almost always someone typing `ccred <profile>`.
     ///
     /// The bare form is deliberately not a switch alias. That ambiguity -- a

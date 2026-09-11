@@ -15,6 +15,7 @@ pub mod cli;
 pub mod error;
 pub mod journal;
 pub mod lockfile;
+pub mod logbook;
 pub mod model;
 pub mod ops;
 pub mod paths;

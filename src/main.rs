@@ -155,6 +155,20 @@ fn run(cli: &Cli, theme: &Theme) -> ccred::Result<ExitCode> {
             }
         }
 
+        Some(Command::Log { count }) => {
+            let entries = ccred::logbook::tail(&ctx.paths().log_dir(), *count);
+            if cli.json {
+                print_json(&entries);
+            } else {
+                render::log(
+                    theme,
+                    &entries,
+                    &ccred::logbook::log_path(&ctx.paths().log_dir()),
+                );
+            }
+            Ok(ExitCode::Ok)
+        }
+
         Some(Command::Doctor) => {
             let findings = doctor::doctor(&ctx)?;
             if cli.json {

@@ -139,26 +139,16 @@ impl Paths {
         Ok(self.profile_dir(name)?.join(".credentials.json.lkg"))
     }
 
-    /// Where we write logs, following each platform's convention.
+    /// Where the record of unattended runs lives.
+    ///
+    /// Under `ccred_home`, with everything else this tool owns, rather than
+    /// in the platform's log convention. The conventional directories are
+    /// found through `LOCALAPPDATA` and `XDG_STATE_HOME`, which are read from
+    /// the process environment -- so a `Paths` built for a sandbox, or
+    /// relocated with `CCRED_HOME`, wrote its log to the real user's
+    /// directory anyway. The test suite was quietly appending to it.
     pub fn log_dir(&self) -> PathBuf {
-        #[cfg(target_os = "macos")]
-        {
-            self.home.join("Library").join("Logs").join("ccred")
-        }
-        #[cfg(target_os = "windows")]
-        {
-            env_path("LOCALAPPDATA")
-                .unwrap_or_else(|| self.home.join("AppData").join("Local"))
-                .join("ccred")
-                .join("logs")
-        }
-        #[cfg(all(unix, not(target_os = "macos")))]
-        {
-            env_path("XDG_STATE_HOME")
-                .unwrap_or_else(|| self.home.join(".local").join("state"))
-                .join("ccred")
-                .join("logs")
-        }
+        self.ccred_home.join("logs")
     }
 }
 
