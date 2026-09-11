@@ -25,10 +25,19 @@ Without this, every recently saved profile collected spurious failures.
 
 ### Tested
 
+- The exit-code mapping. A scheduler reads nothing else, so those numbers are
+  a published contract, and the distinction this tool cares most about --
+  "this machine is not set up" versus "your credentials are in danger" --
+  could until now have been swapped without anything noticing.
 - The journal recovery arms that decide whether an interrupted switch rolls
   back or is merely litter. Two of the five phases had never executed.
+- The switch paths that degrade instead of failing: a profile deleted from
+  under the pointer, and one saved before account details were captured.
 - The helpers in `src/ui/render.rs`, the file the conventions name as the one
   place to audit for "no output may ever contain a token", which had none.
+- The command tree, through clap's own `debug_assert`, which is the
+  difference between finding a bad flag here and finding it when a user runs
+  that command.
 
 ## 0.2.4
 
