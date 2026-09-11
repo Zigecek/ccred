@@ -8,9 +8,19 @@ name: packaging
 # NOTE: if repository-level immutable releases are ever enabled, attaching the
 # .deb here will start failing, because assets cannot be added to a published
 # release. Move the deb job into dist's global-artifacts stage at that point.
+#
+# TRIGGERS: `release: published` never actually fires for our releases. dist
+# creates them with GITHUB_TOKEN, and GitHub deliberately does not start a new
+# workflow run from an event raised by that token -- so this workflow sat
+# unrun through every release. `workflow_run` is the supported way to chain
+# after another workflow and is not subject to that rule; the release trigger
+# is kept only for a release published by a human.
 on:
   release:
     types: [published]
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
   workflow_dispatch:
     inputs:
       tag:
@@ -24,7 +34,35 @@ env:
   NFPM_VERSION: "2.47.0"
 
 jobs:
+  # Each trigger names the tag somewhere different, so resolve it once and let
+  # every job read the same answer.
+  resolve:
+    runs-on: ubuntu-24.04
+    # A failed or cancelled release has nothing worth packaging.
+    if: >-
+      ${{ github.event_name != 'workflow_run'
+          || github.event.workflow_run.conclusion == 'success' }}
+    outputs:
+      tag: ${{ steps.pick.outputs.tag }}
+    steps:
+      - id: pick
+        run: |
+          set -euo pipefail
+          case "${{ github.event_name }}" in
+            workflow_dispatch) tag='${{ github.event.inputs.tag }}' ;;
+            release)           tag='${{ github.event.release.tag_name }}' ;;
+            workflow_run)      tag='${{ github.event.workflow_run.head_branch }}' ;;
+            *)                 tag='${{ github.ref_name }}' ;;
+          esac
+          # A Release run on a branch rather than a tag has nothing to package.
+          case "$tag" in
+            v*) ;;
+            *) echo "::error::'$tag' is not a release tag"; exit 1 ;;
+          esac
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
   deb:
+    needs: resolve
     runs-on: ubuntu-24.04
     strategy:
       matrix:
@@ -36,10 +74,11 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.resolve.outputs.tag }}
           persist-credentials: false
 
-      - name: Resolve the tag
-        run: echo "TAG=${{ github.event.inputs.tag || github.ref_name }}" >> "$GITHUB_ENV"
+      - name: Carry the tag into the environment
+        run: echo "TAG=${{ needs.resolve.outputs.tag }}" >> "$GITHUB_ENV"
 
       - name: Fetch nfpm and verify it
         run: |
@@ -77,14 +116,12 @@ jobs:
         run: gh release upload "$TAG" dist/*.deb --clobber
 
   aur:
-    needs: deb
+    needs: [resolve, deb]
     runs-on: ubuntu-24.04
-    # Needs an SSH deploy key; skipped until that secret exists, so the
-    # workflow does not fail on every release before it is set up.
-    if: ${{ github.event_name == 'release' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.resolve.outputs.tag }}
           persist-credentials: false
 
       # Gate on the deploy key existing, so releases do not start failing
@@ -96,8 +133,10 @@ jobs:
 
       - name: Stamp the version into the PKGBUILD
         if: steps.gate.outputs.ready == 'true'
+        env:
+          TAG: ${{ needs.resolve.outputs.tag }}
         run: |
-          v="${GITHUB_REF_NAME#v}"
+          v="${TAG#v}"
           sed -i "s/^pkgver=.*/pkgver=$v/;s/^pkgrel=.*/pkgrel=1/" packaging/aur/PKGBUILD
 
       - uses: KSXGitHub/github-actions-deploy-aur@2ac5a4c1d7035885d46b10e3193393be8460b6f1 # v4.1.1
@@ -109,4 +148,4 @@ jobs:
           ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
           commit_username: ${{ secrets.AUR_USERNAME }}
           commit_email: ${{ secrets.AUR_EMAIL }}
-          commit_message: "chore: bump to ${{ github.ref_name }}"
+          commit_message: "chore: bump to ${{ needs.resolve.outputs.tag }}"
