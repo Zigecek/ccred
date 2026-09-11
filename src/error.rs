@@ -129,3 +129,101 @@ impl CcredError {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A scheduler reads nothing but the exit code, so the numbers are a
+    /// published contract. Changing one silently changes what systemd,
+    /// launchd and Task Scheduler do about a failure.
+    #[test]
+    fn the_exit_code_numbers_are_a_contract() {
+        assert_eq!(ExitCode::Ok as i32, 0);
+        assert_eq!(ExitCode::Internal as i32, 1);
+        assert_eq!(ExitCode::Usage as i32, 2);
+        assert_eq!(ExitCode::NotFound as i32, 3);
+        assert_eq!(ExitCode::NeedsLogin as i32, 4);
+        assert_eq!(ExitCode::Transient as i32, 5);
+        assert_eq!(ExitCode::Busy as i32, 6);
+        assert_eq!(ExitCode::Unsafe as i32, 7);
+        assert_eq!(ExitCode::Misconfigured as i32, 8);
+    }
+
+    /// The distinction that matters most: "this machine is not set up" must
+    /// not arrive looking like "your credentials are in danger". They call for
+    /// opposite reactions -- install something, versus stop and look.
+    #[test]
+    fn a_missing_binary_is_not_reported_as_an_unsafe_state() {
+        assert_eq!(
+            CcredError::ClaudeMissing("no claude".into()).exit_code(),
+            ExitCode::Misconfigured
+        );
+        assert_eq!(
+            CcredError::Schedule("systemd said no".into()).exit_code(),
+            ExitCode::Misconfigured
+        );
+    }
+
+    /// Everything that means "a write was refused because the state is not
+    /// safe" has to land on the same code, or a scheduler cannot act on it.
+    #[test]
+    fn every_refused_write_exits_unsafe() {
+        let refusals = [
+            CcredError::UnsafeWrite("x".into()),
+            CcredError::LossyRewrite {
+                dropped: vec!["k".into()],
+            },
+            CcredError::RefusedSymlink("/tmp/x".into()),
+            CcredError::PathEscape { name: "..".into() },
+            CcredError::AccountMismatch {
+                profile: "p".into(),
+                stored: "a".into(),
+                incoming: "b".into(),
+            },
+            CcredError::AccountUnverifiable {
+                profile: "p".into(),
+                stored: "a".into(),
+            },
+        ];
+        for e in refusals {
+            assert_eq!(e.exit_code(), ExitCode::Unsafe, "{e}");
+        }
+    }
+
+    /// A name the user mistyped is a lookup failure, not a danger.
+    #[test]
+    fn a_bad_name_is_a_lookup_failure() {
+        assert_eq!(
+            CcredError::ProfileNotFound("nope".into()).exit_code(),
+            ExitCode::NotFound
+        );
+        assert_eq!(
+            CcredError::InvalidProfileName {
+                name: "!".into(),
+                reason: "bad"
+            }
+            .exit_code(),
+            ExitCode::NotFound
+        );
+    }
+
+    /// No error may render as an empty string: the message is the whole
+    /// report for anything reading stderr.
+    #[test]
+    fn every_error_says_something() {
+        let all = [
+            CcredError::UnsafeWrite("x".into()),
+            CcredError::ClaudeMissing("y".into()),
+            CcredError::Schedule("z".into()),
+            CcredError::ProfileNotFound("p".into()),
+            CcredError::LossyRewrite {
+                dropped: vec!["k".into()],
+            },
+            CcredError::PathEscape { name: "..".into() },
+        ];
+        for e in all {
+            assert!(!e.to_string().trim().is_empty(), "{e:?} renders as nothing");
+        }
+    }
+}

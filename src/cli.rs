@@ -167,3 +167,59 @@ pub enum ScheduleAction {
     /// Report whether it is registered and when it will next run.
     Status,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::CommandFactory;
+
+    /// clap validates its own configuration only in debug builds, and only
+    /// when asked. Without this a duplicated short flag or a bad argument
+    /// relationship is a panic the first time a user runs that command.
+    #[test]
+    fn the_command_tree_is_well_formed() {
+        Cli::command().debug_assert();
+    }
+
+    /// The bare form is not a switch alias, which is what lets a profile be
+    /// called `list` or `save`. An external subcommand is how that stays
+    /// true; losing it would turn a hint into a wrong guess.
+    #[test]
+    fn an_unknown_word_is_captured_rather_than_rejected() {
+        let cli = Cli::try_parse_from(["ccred", "some-profile"]).expect("must parse");
+        assert!(
+            matches!(cli.command, Some(Command::Unknown(_))),
+            "{:?}",
+            cli.command
+        );
+    }
+
+    #[test]
+    fn json_is_accepted_on_every_command_not_just_the_root() {
+        for args in [
+            vec!["ccred", "list", "--json"],
+            vec!["ccred", "--json", "list"],
+            vec!["ccred", "doctor", "--json"],
+            vec!["ccred", "schedule", "status", "--json"],
+        ] {
+            let cli = Cli::try_parse_from(&args).unwrap_or_else(|e| panic!("{args:?}: {e}"));
+            assert!(cli.json, "{args:?}");
+        }
+    }
+
+    /// `refresh --force` and `switch --force` mean different things, and both
+    /// take the short form. A collision here would be found by a user.
+    #[test]
+    fn both_force_flags_parse() {
+        let cli = Cli::try_parse_from(["ccred", "switch", "work", "--force"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Switch { force: true, .. })
+        ));
+        let cli = Cli::try_parse_from(["ccred", "refresh", "--force"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Refresh { force: true, .. })
+        ));
+    }
+}
