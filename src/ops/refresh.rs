@@ -96,6 +96,14 @@ pub enum Decision {
     SkipBackoff,
     SkipCap,
     Refresh,
+    /// The access token has not expired yet, so there is nothing to exchange.
+    ///
+    /// The refresh window only moves when Claude Code actually performs a
+    /// token exchange, and it only does that when the access token needs
+    /// renewing. Spawning against a profile whose access token is still live
+    /// cannot extend anything -- and, because success is judged by the window
+    /// moving, it would be recorded as a failure and earn a backoff.
+    SkipAccessLive,
     /// The refresh token is gone; only a person can fix this.
     NeedsLogin,
     Broken,
@@ -134,15 +142,37 @@ impl RefreshReport {
 }
 
 /// Decide what to do with one profile. Pure, so the policy is testable.
+/// How one profile's stored tokens stand against the clock.
+///
+/// Grouped rather than passed as four bare booleans: `decide(false, true,
+/// false, true, ...)` is unreadable at the call site and easy to transpose.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TokenState {
+    /// Time left on the refresh window, when the credentials state one.
+    pub window_left_ms: Option<i64>,
+    /// The refresh token itself is past its stated expiry.
+    pub refresh_expired: bool,
+    /// The access token is past its stated expiry, so a probe would cause
+    /// Claude Code to exchange tokens -- which is the only thing that moves
+    /// the refresh window.
+    pub access_expired: bool,
+    /// The credentials parse and pass validation at all.
+    pub usable: bool,
+}
+
 pub fn decide(
     is_active: bool,
-    window_left_ms: Option<i64>,
-    refresh_expired: bool,
-    credentials_usable: bool,
+    tokens: TokenState,
     state: &crate::profile::RefreshState,
     now: i64,
     policy: &RefreshPolicy,
 ) -> Decision {
+    let TokenState {
+        window_left_ms,
+        refresh_expired,
+        access_expired,
+        usable: credentials_usable,
+    } = tokens;
     if is_active {
         return Decision::MirrorActive;
     }
@@ -167,6 +197,11 @@ pub fn decide(
         // No stated expiry means we cannot tell how urgent it is; leave it be
         // rather than refreshing something that may not need it.
         None => Decision::SkipFresh,
+        // The window is low enough to act on, but acting only works once the
+        // access token has expired. An idle profile's access token is expired
+        // almost all of the time -- eight hours against a schedule measured in
+        // days -- so this is a short wait, not a dead end.
+        Some(_) if !access_expired => Decision::SkipAccessLive,
         Some(_) => Decision::Refresh,
     }
 }
@@ -222,13 +257,19 @@ pub fn refresh(ctx: &Ctx, opts: &RefreshOptions) -> crate::Result<RefreshReport>
         let store = ctx.repo().store(&name)?;
         let loaded = store.load().ok().flatten();
 
-        let (usable, window_before, refresh_expired) = match &loaded {
+        let tokens = match &loaded {
             Some(l) => match validate_credentials(&l.creds.oauth, now) {
-                Ok(h) => (true, h.refresh_window_left_ms, h.refresh_expired),
-                Err(_) => (false, None, false),
+                Ok(h) => TokenState {
+                    window_left_ms: h.refresh_window_left_ms,
+                    refresh_expired: h.refresh_expired,
+                    access_expired: h.access_expired,
+                    usable: true,
+                },
+                Err(_) => TokenState::default(),
             },
-            None => (false, None, false),
+            None => TokenState::default(),
         };
+        let window_before = tokens.window_left_ms;
 
         let meta = ctx.repo().meta(&name)?;
         let mut state = meta.map(|m| m.refresh).unwrap_or_default();
@@ -250,15 +291,7 @@ pub fn refresh(ctx: &Ctx, opts: &RefreshOptions) -> crate::Result<RefreshReport>
         } else {
             opts.policy.clone()
         };
-        let mut decision = decide(
-            is_active,
-            window_before,
-            refresh_expired,
-            usable,
-            &state,
-            now,
-            &effective_policy,
-        );
+        let mut decision = decide(is_active, tokens, &state, now, &effective_policy);
 
         if decision == Decision::Refresh && spawned >= opts.policy.max_spawns {
             decision = Decision::SkipCap;
@@ -321,6 +354,10 @@ pub fn refresh(ctx: &Ctx, opts: &RefreshOptions) -> crate::Result<RefreshReport>
                     .flatten()
                     .and_then(|l| l.creds.oauth.refresh_token_expires_at)
                     .map(|t| (t - now) / DAY_MS);
+            }
+            Decision::SkipAccessLive => {
+                detail =
+                    Some("the access token has not expired yet; nothing would be exchanged".into());
             }
             Decision::NeedsLogin => {
                 detail = Some(format!(
@@ -566,9 +603,12 @@ mod tests {
         // be pure waste.
         let d = decide(
             true,
-            Some(2 * DAY_MS),
-            false,
-            true,
+            TokenState {
+                window_left_ms: Some(2 * DAY_MS),
+                refresh_expired: false,
+                access_expired: true,
+                usable: true,
+            },
             &RefreshState::default(),
             NOW,
             &policy(),
@@ -580,9 +620,12 @@ mod tests {
     fn a_healthy_idle_profile_is_left_alone() {
         let d = decide(
             false,
-            Some(20 * DAY_MS),
-            false,
-            true,
+            TokenState {
+                window_left_ms: Some(20 * DAY_MS),
+                refresh_expired: false,
+                access_expired: true,
+                usable: true,
+            },
             &RefreshState::default(),
             NOW,
             &policy(),
@@ -594,9 +637,12 @@ mod tests {
     fn a_profile_nearing_expiry_is_refreshed() {
         let d = decide(
             false,
-            Some(3 * DAY_MS),
-            false,
-            true,
+            TokenState {
+                window_left_ms: Some(3 * DAY_MS),
+                refresh_expired: false,
+                access_expired: true,
+                usable: true,
+            },
             &RefreshState::default(),
             NOW,
             &policy(),
@@ -609,9 +655,12 @@ mod tests {
         // Spawning cannot help once the refresh token is gone.
         let d = decide(
             false,
-            Some(-DAY_MS),
-            true,
-            true,
+            TokenState {
+                window_left_ms: Some(-DAY_MS),
+                refresh_expired: true,
+                access_expired: true,
+                usable: true,
+            },
             &RefreshState::default(),
             NOW,
             &policy(),
@@ -625,7 +674,18 @@ mod tests {
             needs_login: true,
             ..Default::default()
         };
-        let d = decide(false, Some(3 * DAY_MS), false, true, &state, NOW, &policy());
+        let d = decide(
+            false,
+            TokenState {
+                window_left_ms: Some(3 * DAY_MS),
+                refresh_expired: false,
+                access_expired: true,
+                usable: true,
+            },
+            &state,
+            NOW,
+            &policy(),
+        );
         assert_eq!(d, Decision::NeedsLogin);
     }
 
@@ -635,7 +695,18 @@ mod tests {
             next_attempt_after_ms: Some(NOW + 3_600_000),
             ..Default::default()
         };
-        let d = decide(false, Some(DAY_MS), false, true, &state, NOW, &policy());
+        let d = decide(
+            false,
+            TokenState {
+                window_left_ms: Some(DAY_MS),
+                refresh_expired: false,
+                access_expired: true,
+                usable: true,
+            },
+            &state,
+            NOW,
+            &policy(),
+        );
         assert_eq!(d, Decision::SkipBackoff);
     }
 
@@ -645,7 +716,18 @@ mod tests {
             last_attempt_ms: Some(NOW - 3_600_000),
             ..Default::default()
         };
-        let d = decide(false, Some(DAY_MS), false, true, &state, NOW, &policy());
+        let d = decide(
+            false,
+            TokenState {
+                window_left_ms: Some(DAY_MS),
+                refresh_expired: false,
+                access_expired: true,
+                usable: true,
+            },
+            &state,
+            NOW,
+            &policy(),
+        );
         assert_eq!(d, Decision::SkipBackoff);
     }
 
@@ -653,9 +735,12 @@ mod tests {
     fn unusable_credentials_are_reported_not_refreshed() {
         let d = decide(
             false,
-            None,
-            false,
-            false,
+            TokenState {
+                window_left_ms: None,
+                refresh_expired: false,
+                access_expired: true,
+                usable: false,
+            },
             &RefreshState::default(),
             NOW,
             &policy(),
@@ -667,9 +752,12 @@ mod tests {
     fn an_unknown_expiry_is_left_alone() {
         let d = decide(
             false,
-            None,
-            false,
-            true,
+            TokenState {
+                window_left_ms: None,
+                refresh_expired: false,
+                access_expired: true,
+                usable: true,
+            },
             &RefreshState::default(),
             NOW,
             &policy(),
@@ -801,12 +889,15 @@ mod tests {
         assert_eq!(
             decide(
                 false,
-                Some(20 * DAY_MS),
-                false,
-                true,
+                TokenState {
+                    window_left_ms: Some(20 * DAY_MS),
+                    refresh_expired: false,
+                    access_expired: true,
+                    usable: true,
+                },
                 &backed_off,
                 NOW,
-                &policy()
+                &policy(),
             ),
             Decision::SkipBackoff
         );
@@ -823,7 +914,18 @@ mod tests {
             ..policy()
         };
         assert_eq!(
-            decide(false, Some(20 * DAY_MS), false, true, &cleared, NOW, &wide),
+            decide(
+                false,
+                TokenState {
+                    window_left_ms: Some(20 * DAY_MS),
+                    refresh_expired: false,
+                    access_expired: true,
+                    usable: true,
+                },
+                &cleared,
+                NOW,
+                &wide,
+            ),
             Decision::Refresh
         );
 
@@ -836,14 +938,84 @@ mod tests {
         assert_eq!(
             decide(
                 false,
-                Some(20 * DAY_MS),
-                false,
-                true,
+                TokenState {
+                    window_left_ms: Some(20 * DAY_MS),
+                    refresh_expired: false,
+                    access_expired: true,
+                    usable: true,
+                },
                 &logged_out,
                 NOW,
-                &wide
+                &wide,
             ),
             Decision::NeedsLogin
+        );
+    }
+
+    /// Measured on a live machine: a profile whose access token still had six
+    /// hours left ran all three probes, moved nothing, and was recorded as a
+    /// failure with a backoff. Claude Code had no reason to exchange
+    /// anything, so the refresh window could not have moved -- the run was
+    /// judging a correct no-op by a yardstick that did not apply.
+    #[test]
+    fn a_profile_whose_access_token_is_still_live_is_not_spawned_for() {
+        let low_window = Some(3 * DAY_MS);
+        assert_eq!(
+            decide(
+                false,
+                TokenState {
+                    window_left_ms: low_window,
+                    refresh_expired: false,
+                    access_expired: false,
+                    usable: // access token still valid
+                true,
+                },
+                &RefreshState::default(),
+                NOW,
+                &policy(),
+            ),
+            Decision::SkipAccessLive
+        );
+        // Once it has expired there is something to exchange, so go.
+        assert_eq!(
+            decide(
+                false,
+                TokenState {
+                    window_left_ms: low_window,
+                    refresh_expired: false,
+                    access_expired: true,
+                    usable: true,
+                },
+                &RefreshState::default(),
+                NOW,
+                &policy(),
+            ),
+            Decision::Refresh
+        );
+    }
+
+    /// The wait is short by construction: an access token lives about eight
+    /// hours and the schedule is measured in days, so an idle profile is
+    /// almost always past it by the time a run comes round.
+    #[test]
+    fn a_live_access_token_never_outranks_a_dead_refresh_token() {
+        assert_eq!(
+            decide(
+                false,
+                TokenState {
+                    window_left_ms: Some(-1),
+                    refresh_expired: true,
+                    access_expired: // refresh window gone
+                false,
+                    usable: // access token still valid
+                true,
+                },
+                &RefreshState::default(),
+                NOW,
+                &policy(),
+            ),
+            Decision::NeedsLogin,
+            "a human is needed regardless of the access token"
         );
     }
 }

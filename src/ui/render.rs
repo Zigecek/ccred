@@ -435,6 +435,7 @@ fn decision_label(d: Decision) -> (&'static str, anstyle::Style) {
     match d {
         Decision::MirrorActive => ("mirrored", OK),
         Decision::SkipFresh => ("up to date", MUTED),
+        Decision::SkipAccessLive => ("not due yet", MUTED),
         Decision::SkipBackoff => ("backing off", WARN),
         Decision::SkipCap => ("rate capped", WARN),
         Decision::Refresh => ("refreshed", OK),
