@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.2.9
+
+**The refresh path was working the whole time. The test for whether it worked
+was not.**
+
+### Success is a renewed access token, not a moved window
+
+Measured against a live account, twice. A probe rotates both tokens -- their
+hashes change -- and renews `expiresAt` by eight hours. `refreshTokenExpiresAt`
+moves by half a millisecond, and on one reading came back microscopically
+*lower* than before.
+
+That deadline is a ceiling fixed when you logged in, and every rotated token
+inherits it. Refreshing cannot postpone it. So the success test was watching
+the one quantity that cannot change: every real exchange was recorded as "did
+not move the refresh window", counted as a failure, and earned a backoff --
+which is why this looked broken through four releases while it was in fact
+doing exactly what it was asked to.
+
+### The README was promising something impossible
+
+It said `ccred` refreshes profiles on a schedule to prevent an idle account's
+refresh token expiring. It cannot: the deadline is fixed at login and only a
+new login resets it. What a schedule can influence is whether the token stays
+in active use, and that is what it now claims.
+
 ## 0.2.8
 
 ### `--force` now forces something
