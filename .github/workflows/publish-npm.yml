@@ -31,14 +31,23 @@ jobs:
       # Trusted publishing needs a recent npm; the runner's may be older.
       - run: npm install -g npm@latest
 
+      # Take the archives from the run that built them, not from the release.
+      # `gh release download` needs `contents: read`, and a called workflow
+      # cannot grant itself more than the calling job allowed -- which dist
+      # sets to id-token and packages only. Run artifacts need no permission
+      # at all, and are the same bytes; this is how dist's own homebrew job
+      # gets the formula.
       - name: Fetch the release archives
-        env:
-          GH_TOKEN: ${{ github.token }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: artifacts-*
+          path: artifacts/
+          merge-multiple: true
+
+      - name: Unpack them
         run: |
           set -euo pipefail
-          mkdir -p artifacts dist
-          gh release download "${GITHUB_REF_NAME}" --dir artifacts \
-            --pattern '*.tar.xz' --pattern '*.zip'
+          mkdir -p dist
           # dist names each archive after its target triple; unpack each into a
           # directory of the same name, which is what gen-npm.mjs expects.
           for f in artifacts/*.tar.xz; do

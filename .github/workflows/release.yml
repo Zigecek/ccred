@@ -66,7 +66,7 @@ jobs:
         shell: bash
         run: "curl --proto '=https' --tlsv1.2 -LsSf https://github.com/axodotdev/cargo-dist/releases/download/v0.32.0/cargo-dist-installer.sh | sh"
       - name: Cache dist
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: cargo-dist-cache
           path: ~/.cargo/bin/dist
@@ -82,7 +82,7 @@ jobs:
           cat plan-dist-manifest.json
           echo "manifest=$(jq -c "." plan-dist-manifest.json)" >> "$GITHUB_OUTPUT"
       - name: "Upload dist-manifest.json"
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: artifacts-plan-dist-manifest
           path: plan-dist-manifest.json
@@ -135,7 +135,7 @@ jobs:
         run: ${{ matrix.install_dist.run }}
       # Get the dist-manifest
       - name: Fetch local artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           pattern: artifacts-*
           path: target/distrib/
@@ -151,7 +151,7 @@ jobs:
           dist build ${{ needs.plan.outputs.tag-flag }} --print=linkage --output-format=json ${{ matrix.dist_args }} > dist-manifest.json
           echo "dist ran successfully"
       - name: Attest
-        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
         with:
           subject-path: "target/distrib/*${{ join(matrix.targets, ', ') }}*"
       - id: cargo-dist
@@ -168,7 +168,7 @@ jobs:
 
           cp dist-manifest.json "$BUILD_MANIFEST_NAME"
       - name: "Upload artifacts"
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: artifacts-build-local-${{ join(matrix.targets, '_') }}
           path: |
@@ -190,7 +190,7 @@ jobs:
           persist-credentials: false
           submodules: recursive
       - name: Install cached dist
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: cargo-dist-cache
           path: ~/.cargo/bin/
@@ -202,7 +202,7 @@ jobs:
         shell: bash
       # Get all the local artifacts for the global tasks to use (for e.g. checksums)
       - name: Fetch local artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           pattern: artifacts-*
           path: target/distrib/
@@ -233,12 +233,12 @@ jobs:
             find . -name '*.cdx.xml' | tee -a "$GITHUB_OUTPUT"
             echo "EOF" >> "$GITHUB_OUTPUT"
       - name: "Upload artifacts"
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: artifacts-build-global
           path: |
             ${{ steps.cargo-dist.outputs.paths }}
-            ${{ steps.cargo-cyclonedx.outputs.paths }}
+            ${{ steps.cargo-cyclonedx.output.paths }}
             ${{ env.BUILD_MANIFEST_NAME }}
   # Determines if we should publish/announce
   host:
@@ -259,14 +259,14 @@ jobs:
           persist-credentials: false
           submodules: recursive
       - name: Install cached dist
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: cargo-dist-cache
           path: ~/.cargo/bin/
       - run: chmod +x ~/.cargo/bin/dist
       # Fetch artifacts from scratch-storage
       - name: Fetch artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           pattern: artifacts-*
           path: target/distrib/
@@ -279,14 +279,14 @@ jobs:
           cat dist-manifest.json
           echo "manifest=$(jq -c "." dist-manifest.json)" >> "$GITHUB_OUTPUT"
       - name: "Upload dist-manifest.json"
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           # Overwrite the previous copy
           name: artifacts-dist-manifest
           path: dist-manifest.json
       # Create a GitHub Release while uploading all files to it
       - name: "Download GitHub Artifacts"
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           pattern: artifacts-*
           path: artifacts
@@ -300,69 +300,12 @@ jobs:
           PRERELEASE_FLAG: "${{ fromJson(steps.host.outputs.manifest).announcement_is_prerelease && '--prerelease' || '' }}"
           ANNOUNCEMENT_TITLE: "${{ fromJson(steps.host.outputs.manifest).announcement_title }}"
           ANNOUNCEMENT_BODY: "${{ fromJson(steps.host.outputs.manifest).announcement_github_body }}"
+          RELEASE_COMMIT: "${{ github.sha }}"
         run: |
           # Write and read notes from a file to avoid quoting breaking things
           echo "$ANNOUNCEMENT_BODY" > $RUNNER_TEMP/notes.txt
 
-          gh release create "${{ needs.plan.outputs.tag }}" $PRERELEASE_FLAG --title "$ANNOUNCEMENT_TITLE" --notes-file "$RUNNER_TEMP/notes.txt" artifacts/*
-
-  publish-homebrew-formula:
-    needs:
-      - plan
-      - host
-    runs-on: "ubuntu-22.04"
-    env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      PLAN: ${{ needs.plan.outputs.val }}
-      GITHUB_USER: "axo bot"
-      GITHUB_EMAIL: "admin+bot@axo.dev"
-    if: ${{ !fromJson(needs.plan.outputs.val).announcement_is_prerelease || fromJson(needs.plan.outputs.val).publish_prereleases }}
-    steps:
-      # Skip the whole job while the tap token is unset, instead of failing on
-      # "Input required and not supplied: token" and making a perfectly good
-      # release look broken. The `secrets` context is not available in a
-      # job-level `if`, so the gate has to be a step -- the same shape the AUR
-      # job uses. Only the boolean is exposed, never the token.
-      - name: Check whether the tap token is configured
-        id: gate
-        run: echo "ready=${{ secrets.HOMEBREW_TAP_TOKEN != '' }}" >> "$GITHUB_OUTPUT"
-
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        if: steps.gate.outputs.ready == 'true'
-        with:
-          persist-credentials: true
-          repository: "Zigecek/homebrew-ccred"
-          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-      # So we have access to the formula
-      - name: Fetch homebrew formulae
-        if: steps.gate.outputs.ready == 'true'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          pattern: artifacts-*
-          path: Formula/
-          merge-multiple: true
-      # This is extra complex because you can make your Formula name not match your app name
-      # so we need to find releases with a *.rb file, and publish with that filename.
-      - name: Commit formula files
-        if: steps.gate.outputs.ready == 'true'
-        run: |
-          git config --global user.name "${GITHUB_USER}"
-          git config --global user.email "${GITHUB_EMAIL}"
-
-          for release in $(echo "$PLAN" | jq --compact-output '.releases[] | select([.artifacts[] | endswith(".rb")] | any)'); do
-            filename=$(echo "$release" | jq '.artifacts[] | select(endswith(".rb"))' --raw-output)
-            name=$(echo "$filename" | sed "s/\.rb$//")
-            version=$(echo "$release" | jq .app_version --raw-output)
-
-            export PATH="/home/linuxbrew/.linuxbrew/bin:$PATH"
-            brew update
-            # We avoid reformatting user-provided data such as the app description and homepage.
-            brew style --except-cops FormulaAudit/Homepage,FormulaAudit/Desc,FormulaAuditStrict --fix "Formula/${filename}" || true
-
-            git add "Formula/${filename}"
-            git commit -m "${name} ${version}"
-          done
-          git push
+          gh release create "${{ needs.plan.outputs.tag }}" --target "$RELEASE_COMMIT" $PRERELEASE_FLAG --title "$ANNOUNCEMENT_TITLE" --notes-file "$RUNNER_TEMP/notes.txt" artifacts/*
 
   custom-publish-crates:
     needs:
@@ -377,9 +320,6 @@ jobs:
     permissions:
       "id-token": "write"
       "packages": "write"
-      # Declaring a permissions block drops everything it does not name, and
-      # the called workflow downloads the release assets it is publishing.
-      "contents": "read"
 
   custom-publish-npm:
     needs:
@@ -394,21 +334,17 @@ jobs:
     permissions:
       "id-token": "write"
       "packages": "write"
-      # Declaring a permissions block drops everything it does not name, and
-      # the called workflow downloads the release assets it is publishing.
-      "contents": "read"
 
   announce:
     needs:
       - plan
       - host
-      - publish-homebrew-formula
       - custom-publish-crates
       - custom-publish-npm
     # use "always() && ..." to allow us to wait for all publish jobs while
     # still allowing individual publish jobs to skip themselves (for prereleases).
     # "host" however must run to completion, no skipping allowed!
-    if: ${{ always() && needs.host.result == 'success' && (needs.publish-homebrew-formula.result == 'skipped' || needs.publish-homebrew-formula.result == 'success') && (needs.custom-publish-crates.result == 'skipped' || needs.custom-publish-crates.result == 'success') && (needs.custom-publish-npm.result == 'skipped' || needs.custom-publish-npm.result == 'success') }}
+    if: ${{ always() && needs.host.result == 'success' && (needs.custom-publish-crates.result == 'skipped' || needs.custom-publish-crates.result == 'success') && (needs.custom-publish-npm.result == 'skipped' || needs.custom-publish-npm.result == 'success') }}
     runs-on: "ubuntu-22.04"
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
