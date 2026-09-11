@@ -131,12 +131,19 @@ was checked this way and reported `ccred 0.1.0` correctly.
 ## Cutting a release
 
 ```sh
-# bump the version in Cargo.toml and CHANGELOG.md, commit, push, and let CI
-# go green BEFORE tagging -- see the rule above about an empty commit range
-git tag -a v0.2.1 -m "ccred 0.2.1"
-git push origin v0.2.1
-# then wait. Do not push to main until the run finishes.
+# bump the version in Cargo.toml and CHANGELOG.md, commit, push, let CI go
+# green -- and then:
+scripts/tag-release.sh v0.3.0
 ```
+
+The script refuses to tag unless HEAD is `origin/main`, the tree is clean, and
+`Cargo.toml` agrees with the tag, because the empty-commit-range rule above is
+too easy to break by hand. It was broken by hand, once, within an hour of
+being written down: a tag went up, an unrelated commit touching
+`.github/workflows/` landed on main while the build ran, and the host job
+died with the same 403 as before.
+
+Then wait. **Push nothing to main until the run finishes.**
 
 Changing anything dist generates -- `release.yml` -- means changing
 `dist-workspace.toml` and re-running `dist generate`, never editing the file.
