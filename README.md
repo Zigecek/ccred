@@ -28,12 +28,12 @@ needs the account setup described in [docs/publishing.md](docs/publishing.md).
 
 ```sh
 # Linux and macOS
-curl --proto '=https' --tlsv1.2 -LsSf https://github.com/Zigecek/ccred/releases/download/v0.2.1/ccred-installer.sh | sh
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/Zigecek/ccred/releases/download/v0.2.2/ccred-installer.sh | sh
 ```
 
 ```powershell
 # Windows
-powershell -ExecutionPolicy Bypass -c "irm https://github.com/Zigecek/ccred/releases/download/v0.2.1/ccred-installer.ps1 | iex"
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/Zigecek/ccred/releases/download/v0.2.2/ccred-installer.ps1 | iex"
 ```
 
 `-ExecutionPolicy Bypass` is not bypassing a protection. Execution policy does
@@ -45,7 +45,7 @@ That, and why Defender intermittently flags this command line, is written up in
 To read every byte before running anything:
 
 ```powershell
-$v = "0.2.1"
+$v = "0.2.2"
 $z = "ccred-x86_64-pc-windows-msvc.zip"
 irm "https://github.com/Zigecek/ccred/releases/download/v$v/$z" -OutFile $z
 (Get-FileHash $z -Algorithm SHA256).Hash    # compare against the .sha256 on the release

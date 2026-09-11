@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.2.2
+
+### A spawned `claude` can no longer empty a profile
+
+This is written from an incident, not a review. A scheduled refresh on a
+live machine spawned `claude` against a profile's own credential store; the
+binary decided it was signed out and wrote an empty credential blob straight
+over it. Every safety gate in this tool guards what *we* write -- that write
+was not ours, so nothing stopped it. The profile survived only because a
+last-known-good copy happened to be sitting beside it.
+
+`refresh` now takes the store as it stands before spawning anything, and
+after each probe checks whether it went from usable to unusable. If it did,
+the good copy goes back, `needs_login` is latched and the run says so.
+Restoring a token that later turns out to be dead costs nothing, because
+`validate` reports it on the next run; not restoring costs the account.
+
+### Fixed
+
+- `save` and the refresh mirror take the credential store lock. Only `switch`
+  did, and those two are what a timer runs -- so they are the likeliest to
+  collide with a live session refreshing its token, and a read landing
+  mid-write copies half of one token pair and half of the next.
+- The refresh rate limit was armed by any run that finished, including one
+  where every profile came back broken, turning a transient failure into two
+  days of silence. Only a clean run suppresses the next one now.
+- `publish-npm` upgraded npm in place, leaving the running npm without part
+  of its own dependency tree. It takes npm 11 from Node 24 instead.
+- The packaging trigger required the whole release run to succeed, but that
+  run also carries the registry publish jobs, which fail while the accounts
+  are unconfigured. It gates on the release existing instead.
+
 ## 0.2.1
 
 ### Refreshing could not have worked
