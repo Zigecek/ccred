@@ -36,9 +36,10 @@ pub struct AuthStatus {
     pub org_id: Option<String>,
     #[serde(rename = "subscriptionType", default)]
     pub subscription_type: Option<String>,
-    /// Present from 2.1.260. When it is there it doubles as an oracle: it
-    /// echoes the *resolved* config directory, so we can prove the
-    /// environment we passed was honoured instead of hoping it was.
+    /// Present from 2.1.260. Kept because the shape must parse across
+    /// releases, but it is not evidence of anything we need: it echoes
+    /// `CLAUDE_CONFIG_DIR`, which we deliberately do not set, so it reports
+    /// the shared configuration whichever credential store was read.
     #[serde(rename = "projectsDirectory", default)]
     pub projects_directory: Option<String>,
 }
@@ -138,8 +139,8 @@ impl ClaudeCli {
             if p.is_file() {
                 return Ok(ClaudeCli::at(p.to_path_buf()));
             }
-            return Err(CcredError::UnsafeWrite(format!(
-                "configured claude path does not exist: {}",
+            return Err(CcredError::ClaudeMissing(format!(
+                "the path given with --claude-path does not exist: {}",
                 p.display()
             )));
         }
@@ -273,8 +274,20 @@ fn run_with_timeout(mut cmd: Command, timeout: Duration) -> std::io::Result<Prob
         }
     };
 
-    let (out, err) = rx.recv_timeout(Duration::from_secs(5)).unwrap_or_default();
-    let _ = reader.join();
+    // Bounded, and then left alone. Killing the child does not necessarily
+    // close the pipe: if it spawned a grandchild of its own, that grandchild
+    // still holds the write end and the reader thread stays blocked on it.
+    // Joining here would wait for that grandchild to exit, which is exactly
+    // the wait the deadline above just refused -- a 30-second hang survived a
+    // 400-millisecond timeout in testing. Detaching costs one parked thread
+    // in a process that is about to exit.
+    let (out, err) = match rx.recv_timeout(Duration::from_secs(5)) {
+        Ok(pair) => {
+            let _ = reader.join();
+            pair
+        }
+        Err(_) => (String::new(), String::new()),
+    };
 
     Ok(ProbeOutcome {
         exit_code: status.and_then(|s| s.code()),
@@ -403,5 +416,72 @@ mod tests {
             outcome.needs_login(),
             "the message a real Claude Code prints must be recognised"
         );
+    }
+
+    /// `run_with_timeout` is hand-rolled concurrency -- a poll loop, a reader
+    /// thread and a channel with its own deadline -- and none of it had ever
+    /// executed in a test. These drive it through the system shell, which is
+    /// the only program guaranteed to exist on both platforms.
+    fn shell(script_unix: &str, script_windows: &str) -> Command {
+        let mut cmd = if cfg!(windows) {
+            let mut c = Command::new("cmd");
+            c.args(["/c", script_windows]);
+            c
+        } else {
+            let mut c = Command::new("sh");
+            c.args(["-c", script_unix]);
+            c
+        };
+        cmd.stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .stdin(std::process::Stdio::null());
+        cmd
+    }
+
+    #[test]
+    fn a_process_that_finishes_reports_its_streams_and_exit_code() {
+        let cmd = shell(
+            "printf hello; printf trouble >&2; exit 3",
+            "(echo hello & echo trouble 1>&2) & exit 3",
+        );
+        let out = run_with_timeout(cmd, Duration::from_secs(30)).expect("spawn");
+        assert!(
+            !out.timed_out,
+            "a fast command must not look like a timeout"
+        );
+        assert_eq!(out.exit_code, Some(3), "{out:?}");
+        assert!(out.stdout.contains("hello"), "{out:?}");
+        assert!(out.stderr.contains("trouble"), "{out:?}");
+    }
+
+    /// The branch that matters when Claude Code hangs waiting for input: the
+    /// child must be killed, and the result must say so rather than being
+    /// mistaken for "the refresh window did not move".
+    #[test]
+    fn a_process_that_overruns_is_killed_and_marked_timed_out() {
+        let started = std::time::Instant::now();
+        // `timeout` refuses to run without a console, so ping is the portable
+        // way to idle on Windows.
+        let cmd = shell("sleep 30", "ping -n 31 127.0.0.1 >nul");
+        let out = run_with_timeout(cmd, Duration::from_millis(400)).expect("spawn");
+        assert!(out.timed_out, "{out:?}");
+        assert_eq!(out.exit_code, None, "a killed child has no exit code");
+        assert!(
+            started.elapsed() < Duration::from_secs(20),
+            "the deadline must actually fire, not wait for the child"
+        );
+    }
+
+    /// A timed-out probe must not be read as a logged-out account: that would
+    /// latch needs_login and tell the user to log in when nothing is wrong.
+    #[test]
+    fn a_timeout_is_not_mistaken_for_being_logged_out() {
+        let out = ProbeOutcome {
+            exit_code: None,
+            stdout: String::new(),
+            stderr: String::new(),
+            timed_out: true,
+        };
+        assert!(!out.needs_login(), "{out:?}");
     }
 }

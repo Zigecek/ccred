@@ -331,6 +331,24 @@ pub fn removed(theme: &Theme, name: &str) {
     println!();
 }
 
+pub fn restored(theme: &Theme, name: &str) {
+    let g = theme.glyphs;
+    println!();
+    println!(
+        "{PAD}{} restored {} from its last-known-good copy",
+        paint(OK, g.ok),
+        paint(NAME, name)
+    );
+    println!(
+        "{PAD}  {}",
+        paint(
+            MUTED,
+            "run `ccred doctor` to confirm, and log in again if it is still refused"
+        )
+    );
+    println!();
+}
+
 pub fn switch(theme: &Theme, r: &SwitchReport) {
     let g = theme.glyphs;
     println!();

@@ -81,6 +81,15 @@ fn run(cli: &Cli, theme: &Theme) -> ccred::Result<ExitCode> {
             Ok(ExitCode::Ok)
         }
 
+        Some(Command::Restore { name }) => {
+            let name = validate_profile_name(name)?;
+            simple::restore(&ctx, &name)?;
+            if !cli.json {
+                render::restored(theme, name.as_str());
+            }
+            Ok(ExitCode::Ok)
+        }
+
         Some(Command::Refresh {
             if_older_than,
             force,

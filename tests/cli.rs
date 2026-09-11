@@ -532,3 +532,63 @@ fn switching_away_from_a_logged_out_store_keeps_nothing() {
         "an unusable credential blob must not be backed up"
     );
 }
+
+/// The recovery path the incident needed and did not have.
+///
+/// A spawned Claude Code signed itself out and wrote an empty credential blob
+/// over a profile. Nothing read the last-known-good copy that sat beside it,
+/// so the only way back was copying files by hand over SSH.
+#[test]
+fn a_damaged_profile_can_be_restored_from_its_last_known_good_copy() {
+    let sb = Sandbox::new();
+    sb.run(&["save", "work"]);
+
+    let creds = sb.path().join(".ccred/profiles/work/.credentials.json");
+    assert!(
+        sb.path()
+            .join(".ccred/profiles/work/.credentials.json.lkg")
+            .exists(),
+        "a save must leave a last-known-good copy"
+    );
+
+    // Exactly what the real failure wrote.
+    std::fs::write(
+        &creds,
+        r#"{"claudeAiOauth":{"accessToken":"","refreshToken":"","expiresAt":0,
+           "refreshTokenExpiresAt":0,"scopes":["user:inference"]}}"#,
+    )
+    .unwrap();
+
+    let (out, _, code) = sb.run(&["doctor"]);
+    assert_eq!(code, 7, "a wiped profile must fail loudly: {out}");
+    assert!(
+        out.contains("ccred restore work"),
+        "doctor must point at the way back: {out}"
+    );
+
+    let (out, err, code) = sb.run(&["restore", "work"]);
+    assert_eq!(code, 0, "{err}{out}");
+
+    let after = std::fs::read_to_string(&creds).unwrap();
+    assert!(after.contains(REFRESH_A), "the good token must be back");
+    assert!(
+        sb.run(&["list"]).0.contains("ok"),
+        "the profile must read as healthy again"
+    );
+}
+
+/// Restoring is only offered when there is something worth restoring.
+#[test]
+fn restoring_a_profile_with_no_usable_copy_is_refused() {
+    let sb = Sandbox::new();
+    sb.run(&["save", "work"]);
+    std::fs::write(
+        sb.path().join(".ccred/profiles/work/.credentials.json.lkg"),
+        r#"{"claudeAiOauth":{"accessToken":"","refreshToken":"","expiresAt":0,"scopes":[]}}"#,
+    )
+    .unwrap();
+
+    let (_, err, code) = sb.run(&["restore", "work"]);
+    assert_eq!(code, 7, "{err}");
+    assert!(err.contains("no usable earlier copy"), "{err}");
+}

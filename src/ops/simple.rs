@@ -299,6 +299,19 @@ pub fn save(ctx: &Ctx, name: &ProfileName) -> crate::Result<SaveReport> {
     })
 }
 
+/// Put a profile's last-known-good credentials back.
+pub fn restore(ctx: &Ctx, name: &ProfileName) -> crate::Result<()> {
+    if !ctx.repo().exists(name)? {
+        return Err(CcredError::ProfileNotFound(name.as_str().to_string()));
+    }
+    if !ctx.repo().restore_last_known_good(name)? {
+        return Err(CcredError::UnsafeWrite(format!(
+            "'{name}' has no usable earlier copy to restore; switch to it and              run `claude auth login`, then `ccred save {name}`"
+        )));
+    }
+    Ok(())
+}
+
 pub fn remove(ctx: &Ctx, name: &ProfileName) -> crate::Result<()> {
     if !ctx.repo().exists(name)? {
         return Err(CcredError::ProfileNotFound(name.as_str().to_string()));

@@ -26,7 +26,7 @@ use serde::{Deserialize, Serialize};
 use crate::atomic::write_atomic;
 use crate::error::CcredError;
 use crate::model::credentials::JsonMap;
-use crate::model::{AccountIdentity, AccountSnapshot};
+use crate::model::{AccountIdentity, AccountSnapshot, CredentialsFile};
 use crate::paths::Paths;
 use crate::store::file::FileStore;
 use crate::store::{CredentialStore, now_ms};
@@ -335,6 +335,49 @@ impl ProfileRepo {
                 stored: existing.account.label(),
             }),
         }
+    }
+
+    // --------------------------------------------------------------- recovery
+
+    /// What a last-known-good copy holds, if it holds anything usable.
+    ///
+    /// The `.lkg` file is written after every accepted store, so it lags the
+    /// live copy by at most one successful save. Until now nothing read it --
+    /// which was fine right up to the day a spawned `claude` emptied a profile
+    /// and this was the only surviving copy.
+    pub fn last_known_good(&self, name: &ProfileName) -> crate::Result<Option<CredentialsFile>> {
+        let path = self.paths.profile_lkg(name)?;
+        let raw = match fs::read(&path) {
+            Ok(raw) => raw,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(source) => return Err(CcredError::Io { path, source }),
+        };
+        let parsed: CredentialsFile = match serde_json::from_slice(&raw) {
+            Ok(v) => v,
+            // A corrupt copy is the same as no copy. Reporting it as an error
+            // would turn "you have no fallback" into "the command failed".
+            Err(_) => return Ok(None),
+        };
+        if validate_credentials(&parsed.oauth, now_ms()).is_err() {
+            return Ok(None);
+        }
+        Ok(Some(parsed))
+    }
+
+    /// Put the last-known-good copy back into the profile's store.
+    ///
+    /// Deliberately `replace` rather than `store`: the monotonic refresh-window
+    /// rule exists to stop an older credential overwriting a newer one, and
+    /// restoring is precisely the case where going backwards is the intent.
+    pub fn restore_last_known_good(&self, name: &ProfileName) -> crate::Result<bool> {
+        let Some(good) = self.last_known_good(name)? else {
+            return Ok(false);
+        };
+        // Keep whatever is there now before overwriting it, even though it is
+        // believed broken -- a wrong diagnosis should not be the end of it.
+        let _ = self.backup(name);
+        self.store(name)?.replace(&good)?;
+        Ok(true)
     }
 
     // --------------------------------------------------------------- backups

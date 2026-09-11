@@ -9,6 +9,7 @@ use crate::paths::storage_write_lock_target;
 use crate::proc::running_claude_pids;
 use crate::schedule::{State, Warning, detect};
 use crate::store::{CredentialStore, now_ms};
+use crate::validate::ProfileName;
 use crate::validate::validate_credentials;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -214,15 +215,9 @@ pub fn doctor(ctx: &Ctx) -> crate::Result<Vec<Finding>> {
                         _ => findings.push(Finding::ok(format!("profile '{name}' is healthy"))),
                     }
                 }
-                Err(e) => findings.push(Finding::error(
-                    format!("profile '{name}' holds unusable credentials"),
-                    e.to_string(),
-                )),
+                Err(e) => findings.push(broken_profile(ctx, &name, &e.to_string())),
             },
-            Ok(None) => findings.push(Finding::error(
-                format!("profile '{name}' has no credentials"),
-                "it will need a login before it can be used".to_string(),
-            )),
+            Ok(None) => findings.push(broken_profile(ctx, &name, "there are no credentials")),
             Err(e) => findings.push(Finding::error(
                 format!("profile '{name}' is unreadable"),
                 e.to_string(),
@@ -233,6 +228,24 @@ pub fn doctor(ctx: &Ctx) -> crate::Result<Vec<Finding>> {
     findings.push(schedule_finding(detect().status(), profile_count));
 
     Ok(findings)
+}
+
+/// A profile that cannot be used, and whether there is a way back.
+///
+/// The last-known-good copy is written after every accepted store and was,
+/// on one real machine, the only thing standing between a spawned `claude`
+/// and a destroyed account. Reporting a broken profile without mentioning it
+/// tells the user to log in again when they may not have to.
+fn broken_profile(ctx: &Ctx, name: &ProfileName, why: &str) -> Finding {
+    let recoverable = ctx.repo().last_known_good(name).ok().flatten().is_some();
+    Finding::error(
+        format!("profile '{name}' is unusable"),
+        if recoverable {
+            format!("{why}; a good earlier copy exists -- run `ccred restore {name}`")
+        } else {
+            format!("{why}; switch to it and run `claude auth login`, then `ccred save {name}`")
+        },
+    )
 }
 
 /// Is anything actually keeping the idle profiles alive?

@@ -96,11 +96,20 @@ pub enum Command {
     #[command(alias = "remove", display_order = 5)]
     Rm { name: String },
 
+    /// Put a profile's last-known-good credentials back.
+    ///
+    /// Every accepted save also writes a copy beside the profile. This puts
+    /// that copy back, for when the current credentials have been damaged --
+    /// a spawned Claude Code signing itself out is the case this exists for.
+    /// `ccred doctor` says when a profile has a copy worth restoring.
+    #[command(display_order = 6)]
+    Restore { name: String },
+
     /// Refresh stored profiles so idle accounts do not expire.
     ///
     /// Safe to run more often than needed: it checks when it last ran and
     /// exits successfully without doing anything if that was recent.
-    #[command(display_order = 6)]
+    #[command(display_order = 7)]
     Refresh {
         /// Do nothing if the last run was more recent than this many hours.
         #[arg(long, value_name = "HOURS")]
@@ -123,11 +132,11 @@ pub enum Command {
     },
 
     /// Install, remove or inspect the background refresh schedule.
-    #[command(display_order = 7)]
+    #[command(display_order = 8)]
     Schedule(ScheduleArgs),
 
     /// Check for anything that is quietly wrong.
-    #[command(display_order = 8)]
+    #[command(display_order = 9)]
     Doctor,
 
     /// Anything else: almost always someone typing `ccred <profile>`.
