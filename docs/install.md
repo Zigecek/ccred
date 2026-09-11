@@ -1,19 +1,20 @@
 # Installing
 
-Nothing is published yet. This describes the intended channels and, more
-usefully, the reasoning behind which ones are worth maintaining.
+Two channels work today. The rest are wired up and waiting on account setup
+that only a person can do, described in [publishing.md](publishing.md). What
+follows is which ones are worth maintaining, and why.
 
 ## Channels
 
-| Channel | Command | Notes |
+| Channel | Command | State |
 |---|---|---|
-| npm | `npm i -g ccred`, or `npx ccred` | Prebuilt binary, no download at install time |
-| crates.io | `cargo install ccred` | Builds from source |
-| GitHub Releases | shell / PowerShell installer | What every other channel points at |
-| Homebrew | `brew install Zigecek/ccred/ccred` | macOS and Linux |
-| Scoop | `scoop install ccred` | Windows; no gatekeeper, self-updating manifest |
-| apt | `sudo apt install ./ccred_<ver>_amd64.deb` | A real `.deb` from the release page |
-| AUR | `yay -S ccred-bin` | Prebuilt; a source variant can follow |
+| Scoop | `scoop bucket add ccred https://github.com/Zigecek/scoop-ccred` then `scoop install ccred` | **Live.** No admin, no execution policy, no SmartScreen prompt |
+| apt | `sudo apt install ./ccred_<ver>_amd64.deb` | **Live.** amd64 and arm64 on every release |
+| GitHub Releases | shell / PowerShell installer | **Live.** What every other channel points at |
+| npm | `npm i -g ccred`, or `npx ccred` | Needs the `@ccred` scope reserved and eight trusted publishers |
+| crates.io | `cargo install ccred` | Needs a trusted publisher, and one token-based publish to create the crate |
+| Homebrew | `brew install Zigecek/ccred/ccred` | Formula is built and attached to each release; needs `HOMEBREW_TAP_TOKEN` to be pushed |
+| AUR | `yay -S ccred-bin` | Needs an AUR account and an SSH key |
 
 ## A note on the Windows command line
 
