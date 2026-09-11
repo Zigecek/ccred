@@ -16,9 +16,17 @@ If you use more than one Claude Code account on the same machine, switching
 between them means logging out and back in. `ccred` stores each account as a
 named profile and swaps the active one, so switching is one command.
 
-It also keeps idle profiles alive. An account you have not used for a couple of
-weeks has an expired refresh token and needs a manual login; `ccred` refreshes
-profiles on a schedule to prevent that.
+It also keeps idle profiles exercised. An account you have not used for weeks
+goes stale and needs a manual login; `ccred` runs Claude Code against each
+stored profile on a schedule so its tokens keep rotating.
+
+**What that does and does not buy you.** Measured against a live account: a
+refresh rotates both tokens and renews the access token by eight hours, and
+leaves `refreshTokenExpiresAt` where it was, to the millisecond. That deadline
+is a ceiling fixed when you logged in, and every rotated token inherits it --
+so refreshing cannot postpone it, and when it arrives only a new login will
+do. What refreshing keeps is the token in active use, which is the part a
+schedule can actually influence.
 
 ## Install
 

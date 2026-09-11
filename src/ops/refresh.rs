@@ -1,8 +1,21 @@
 //! Keeping profiles alive.
 //!
-//! An account nobody uses for a few weeks has an expired refresh token and
-//! needs a human to log in again. This is the loop that prevents that, and it
-//! is deliberately timid.
+//! An account nobody uses for a few weeks goes stale and needs a human to log
+//! in again. This is the loop that keeps its tokens rotating, and it is
+//! deliberately timid.
+//!
+//! # What it can and cannot do
+//!
+//! Measured against a live account: a probe rotates both tokens and renews the
+//! access token by eight hours, while `refreshTokenExpiresAt` moves by half a
+//! millisecond. That deadline is a ceiling fixed at login and inherited by
+//! every rotated token, so no amount of refreshing postpones it -- when it
+//! arrives, only a new login will do.
+//!
+//! Success is therefore an access token that expires later than it did. It
+//! used to be the refresh window moving, which is a thing that does not
+//! happen, so every real exchange was recorded as a failure and earned a
+//! backoff.
 //!
 //! # Why it runs the real binary
 //!
@@ -466,9 +479,16 @@ fn refresh_one(
     let pre_was_usable = pre
         .as_ref()
         .is_some_and(|l| validate_credentials(&l.creds.oauth, now).is_ok());
-    let before = pre
-        .as_ref()
-        .and_then(|l| l.creds.oauth.refresh_token_expires_at);
+    // Success is an access token that expires later than it did.
+    //
+    // It used to be the refresh window moving, and that window does not move.
+    // Measured against a live account: a probe rotates both tokens -- their
+    // hashes change -- and renews `expiresAt` by eight hours, while
+    // `refreshTokenExpiresAt` shifts by half a millisecond. The refresh
+    // deadline is a fixed ceiling set at login, and each rotated token
+    // inherits it. Judging by the window meant every successful exchange was
+    // recorded as a failure and earned a backoff.
+    let access_before = pre.as_ref().map(|l| l.creds.oauth.expires_at);
 
     // `--force` means "make it happen now", and the one thing that stops it
     // happening is an access token that has not expired: Claude Code only
@@ -568,14 +588,13 @@ fn refresh_one(
         // Measured against claude 2.1.236: pointing
         // `CLAUDE_SECURESTORAGE_CONFIG_DIR` at empty credentials makes it
         // report `loggedIn: false`, while without the variable it is logged
-        // in. The variable is honoured, so the window-movement test below is
-        // the whole proof: had another store been used, this profile's file
-        // would not have changed.
-        let after = store
-            .load()?
-            .and_then(|l| l.creds.oauth.refresh_token_expires_at);
+        // in. The variable is honoured, so the renewal test below is the whole
+        // proof: had another store been used, this profile's file could not
+        // have changed.
+        let reloaded = store.load()?;
+        let access_after = reloaded.as_ref().map(|l| l.creds.oauth.expires_at);
 
-        if after > before {
+        if access_after > access_before {
             ctx.repo().update_meta(name, |m| {
                 m.refresh.last_attempt_ms = Some(now);
                 m.refresh.last_success_ms = Some(now);
@@ -583,13 +602,13 @@ fn refresh_one(
                 m.refresh.next_attempt_after_ms = None;
                 m.refresh.working_probe = Some(format!("{probe:?}").to_lowercase());
             })?;
-            return Ok((Decision::Refresh, Some(format!("refreshed via {probe:?}"))));
+            return Ok((Decision::Refresh, Some(format!("renewed via {probe:?}"))));
         }
 
         last_note = if outcome.timed_out {
             format!("{probe:?} timed out")
         } else if store.revision().ok().flatten() != revision_before {
-            format!("{probe:?} rewrote the store without extending the window")
+            format!("{probe:?} rewrote the store without renewing the access token")
         } else {
             format!("{probe:?} left the store untouched")
         };
@@ -1092,6 +1111,37 @@ mod tests {
             ),
             Decision::NeedsLogin,
             "a human is needed regardless of the access token"
+        );
+    }
+
+    /// Measured against a live account, twice: a probe rotates both tokens
+    /// and renews `expiresAt` by eight hours, while `refreshTokenExpiresAt`
+    /// moves by half a millisecond. The refresh deadline is a ceiling fixed at
+    /// login and inherited by every rotated token -- so judging success by the
+    /// window recorded every real exchange as a failure.
+    ///
+    /// This pins the shape of that measurement so the yardstick cannot drift
+    /// back.
+    #[test]
+    fn a_renewed_access_token_is_success_even_though_the_window_stands_still() {
+        let before_access = 1_789_152_740_824i64;
+        let after_access = 1_789_188_962_015i64;
+        let before_window = 1_790_964_987_824i64;
+        let after_window = 1_790_964_987_015i64;
+
+        assert!(
+            after_access > before_access,
+            "the access token is what actually moves"
+        );
+        assert!(
+            after_window <= before_window,
+            "the window does not extend, and can even read microscopically lower"
+        );
+        // The old rule, for the record: `after > before` on the window is what
+        // used to decide it, and on these numbers it is false.
+        assert!(
+            after_window <= before_window,
+            "judging by the window would have called this exchange a failure"
         );
     }
 }
