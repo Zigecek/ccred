@@ -78,9 +78,19 @@ pub fn write_atomic(path: &Path, bytes: &[u8], private: bool) -> crate::Result<(
         use std::os::unix::fs::OpenOptionsExt;
         opts.mode(0o600);
     }
-    // On Windows `mode` is meaningless -- the file inherits its DACL from the
-    // parent directory. Explicit ACL hardening lands together with the
-    // scheduler; until then this matches what Claude Code itself does.
+    // On Windows `mode` is meaningless: the file inherits its DACL from the
+    // parent directory, and there is no std API for setting one.
+    //
+    // Measured rather than assumed. A credential file under a default
+    // `%USERPROFILE%` inherits exactly SYSTEM, BUILTIN\Administrators and the
+    // owner -- no `Users`, no `Everyone` -- which is what 0600 buys on unix,
+    // since root can read that too. So the default is already right, and
+    // writing unsafe ACL code for a credential tool to reach a state it is
+    // already in would add risk rather than remove it.
+    //
+    // What the inheritance cannot survive is a profile directory whose ACL
+    // someone has loosened, which debloat scripts do. That is why `doctor`
+    // checks the result instead of this trusting it.
     #[cfg(not(unix))]
     let _ = private;
 

@@ -225,9 +225,66 @@ pub fn doctor(ctx: &Ctx) -> crate::Result<Vec<Finding>> {
         }
     }
 
+    findings.push(permissions_finding(ctx));
     findings.push(schedule_finding(detect().status(), profile_count));
 
     Ok(findings)
+}
+
+/// Can anyone but the owner read the stored credentials?
+///
+/// The writer asks for 0600, but a mode is only what was requested: an
+/// umask cannot loosen it, yet a file restored from a backup, copied with
+/// `cp -p`, or synced from another machine can arrive wide open. Checking the
+/// result costs a stat and turns an assumption into a fact.
+///
+/// On Windows there is no mode to read. The inherited DACL under a default
+/// profile is already owner-plus-SYSTEM-plus-Administrators -- measured, see
+/// `atomic::write_atomic` -- but this cannot confirm it without an ACL API,
+/// so it says so rather than implying the check passed.
+fn permissions_finding(ctx: &Ctx) -> Finding {
+    #[cfg(not(unix))]
+    {
+        let _ = ctx;
+        Finding::ok("credential file permissions: inherited (not checkable here)")
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mut exposed = Vec::new();
+        let mut checked = 0usize;
+        let mut paths = vec![ctx.paths().claude_config_dir().join(".credentials.json")];
+        if let Ok(names) = ctx.repo().list() {
+            for n in names {
+                if let Ok(p) = ctx.paths().profile_credentials(&n) {
+                    paths.push(p);
+                }
+            }
+        }
+
+        for path in paths {
+            let Ok(meta) = std::fs::metadata(&path) else {
+                continue;
+            };
+            checked += 1;
+            let mode = meta.permissions().mode();
+            if mode & 0o077 != 0 {
+                exposed.push(format!("{} is {:o}", path.display(), mode & 0o777));
+            }
+        }
+
+        if exposed.is_empty() {
+            Finding::ok(format!(
+                "credential file permissions: {checked} checked, none readable by anyone else"
+            ))
+        } else {
+            Finding::error(
+                "credentials are readable by other users",
+                format!("{}; run `chmod 600` on each", exposed.join(", ")),
+            )
+        }
+    }
 }
 
 /// A profile that cannot be used, and whether there is a way back.

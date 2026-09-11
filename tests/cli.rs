@@ -757,3 +757,30 @@ fn the_log_records_decisions_in_a_readable_spelling() {
     assert!(!raw.contains("detail"), "{raw}");
     assert!(!raw.contains("sk-ant-"), "{raw}");
 }
+
+/// A mode is only what was asked for. A credential file restored from a
+/// backup, copied with `cp -p`, or synced from another machine can arrive
+/// readable by everyone, and nothing would have said so.
+#[cfg(unix)]
+#[test]
+fn doctor_reports_credentials_other_users_can_read() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let sb = Sandbox::new();
+    sb.run(&["save", "work"]);
+
+    let (out, _, code) = sb.run(&["doctor"]);
+    assert_ne!(code, 7, "a freshly saved profile must be private: {out}");
+    assert!(out.contains("none readable by anyone else"), "{out}");
+
+    let creds = sb.path().join(".ccred/profiles/work/.credentials.json");
+    std::fs::set_permissions(&creds, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+    let (out, _, code) = sb.run(&["doctor"]);
+    assert_eq!(
+        code, 7,
+        "a world-readable credential file must fail loudly: {out}"
+    );
+    assert!(out.contains("readable by other users"), "{out}");
+    assert!(out.contains("644"), "the mode found must be named: {out}");
+}
