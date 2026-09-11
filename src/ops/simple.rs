@@ -359,7 +359,7 @@ pub fn restore(ctx: &Ctx, name: &ProfileName) -> crate::Result<()> {
     Ok(())
 }
 
-pub fn remove(ctx: &Ctx, name: &ProfileName) -> crate::Result<()> {
+pub fn remove(ctx: &Ctx, name: &ProfileName) -> crate::Result<RemoveReport> {
     if !ctx.repo().exists(name)? {
         return Err(CcredError::ProfileNotFound(name.as_str().to_string()));
     }
@@ -368,9 +368,36 @@ pub fn remove(ctx: &Ctx, name: &ProfileName) -> crate::Result<()> {
             "'{name}' is the active profile; switch to another one first"
         )));
     }
+    // Copy it aside first. The backups live outside the profile directory, so
+    // this survives the deletion -- and `rm` is the one command here whose
+    // mistake is a mistyped name that cannot be taken back. Every other write
+    // in this tool is recoverable; deleting the only stored copy of an account
+    // should not be the exception.
+    //
+    // A backup that fails does not stop the removal the user asked for. It is
+    // reported instead.
+    let backed_up = ctx.repo().backup(name).is_ok();
+
     let dir = ctx.paths().profile_dir(name)?;
     std::fs::remove_dir_all(&dir).map_err(|source| CcredError::Io { path: dir, source })?;
-    Ok(())
+    Ok(RemoveReport {
+        name: name.as_str().to_string(),
+        backup_dir: backed_up.then(|| {
+            ctx.paths()
+                .backups_dir()
+                .join(name.as_str())
+                .display()
+                .to_string()
+        }),
+    })
+}
+
+/// What `rm` did, and whether anything survives it.
+#[derive(Debug, Clone, Serialize)]
+pub struct RemoveReport {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backup_dir: Option<String>,
 }
 
 /// The snapshot a save would use. Exposed for `doctor`.

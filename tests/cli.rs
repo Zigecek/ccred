@@ -899,3 +899,35 @@ fn current_reports_an_unreadable_live_store_instead_of_refusing() {
     let (dout, _, dcode) = sb.run(&["doctor"]);
     assert_eq!(dcode, 7, "{dout}");
 }
+
+/// `rm` is the one command here whose mistake cannot be taken back: a
+/// mistyped name deletes the only stored copy of an account. Every other
+/// write in this tool is recoverable, so this one should be too.
+#[test]
+fn removing_a_profile_leaves_a_copy_of_its_credentials() {
+    let sb = Sandbox::new();
+    sb.run(&["save", "work"]);
+    sb.login_b();
+    sb.run(&["save", "personal"]); // 'personal' is active, so 'work' can go
+
+    let (out, err, code) = sb.run(&["rm", "work"]);
+    assert_eq!(code, 0, "{err}{out}");
+    assert!(
+        !sb.path().join(".ccred/profiles/work").exists(),
+        "the profile must actually be gone"
+    );
+
+    let kept: Vec<_> = std::fs::read_dir(sb.path().join(".ccred/backups/work"))
+        .expect("a copy must survive the deletion")
+        .flatten()
+        .map(|e| std::fs::read_to_string(e.path()).unwrap())
+        .collect();
+    assert_eq!(kept.len(), 1, "{kept:?}");
+    assert!(
+        kept[0].contains(REFRESH_A),
+        "the copy must hold the credentials"
+    );
+
+    // And the user has to be told where it went, or the copy is useless.
+    assert!(out.contains("backups"), "{out}");
+}

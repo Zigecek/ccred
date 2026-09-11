@@ -74,9 +74,11 @@ fn run(cli: &Cli, theme: &Theme) -> ccred::Result<ExitCode> {
 
         Some(Command::Rm { name }) => {
             let name = validate_profile_name(name)?;
-            simple::remove(&ctx, &name)?;
-            if !cli.json {
-                render::removed(theme, name.as_str());
+            let report = simple::remove(&ctx, &name)?;
+            if cli.json {
+                print_json(&report);
+            } else {
+                render::removed(theme, &report);
             }
             Ok(ExitCode::Ok)
         }

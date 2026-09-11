@@ -331,10 +331,20 @@ pub fn save(theme: &Theme, r: &SaveReport) {
     println!();
 }
 
-pub fn removed(theme: &Theme, name: &str) {
+pub fn removed(theme: &Theme, r: &crate::ops::simple::RemoveReport) {
     let g = theme.glyphs;
     println!();
-    println!("{PAD}{} removed {}", paint(OK, g.ok), paint(NAME, name));
+    println!("{PAD}{} removed {}", paint(OK, g.ok), paint(NAME, &r.name));
+    match &r.backup_dir {
+        Some(dir) => println!(
+            "{PAD}  {}",
+            paint(MUTED, &format!("a copy of its credentials is in {dir}"))
+        ),
+        None => println!(
+            "{PAD}  {}",
+            paint(WARN, "there was nothing left to copy aside first")
+        ),
+    }
     println!();
 }
 

@@ -383,7 +383,10 @@ impl ProfileRepo {
     // --------------------------------------------------------------- backups
 
     /// Copy the profile's current credentials aside, keeping the newest few.
-    fn backup(&self, name: &ProfileName) -> crate::Result<()> {
+    ///
+    /// Public because `rm` needs it: the backups live outside the profile
+    /// directory, so a copy taken here survives the directory being deleted.
+    pub fn backup(&self, name: &ProfileName) -> crate::Result<()> {
         let store = self.store(name)?;
         let Ok(Some(loaded)) = store.load() else {
             return Ok(()); // nothing worth keeping
