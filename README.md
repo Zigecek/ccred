@@ -207,6 +207,19 @@ each other out. Each machine should log in independently.
 unrelated state, so every write patches rather than regenerates, and a runtime
 check refuses any rewrite that would drop a key we do not model.
 
+**It assumes the other writer can be wrong.** Pointing Claude Code at a
+profile's store is the one place something other than `ccred` writes into a
+profile, and every safety gate here guards what *we* write. So `refresh` takes
+the credentials as they stand before it spawns anything and puts them back if
+what comes out is unusable. That is not defensive decoration: a scheduled run
+once decided it was signed out and wrote an empty credential blob over a live
+profile.
+
+**A failure is contained to the profile it happened to.** A store that will not
+load, a spawn that will not start, a profile whose metadata is corrupt -- none
+of them ends the run, the listing or the diagnosis for the others. The commands
+you reach for when something is wrong have to survive meeting it.
+
 ## Development
 
 ```sh
