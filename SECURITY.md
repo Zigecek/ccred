@@ -13,7 +13,20 @@ access and refresh tokens for your Anthropic account.
 
 - Profiles live in `~/.ccred/profiles/<name>/`, mode `0600` on Unix.
 - On Windows the files inherit the profile directory's ACL, which is what
-  Claude Code itself relies on. Explicit ACL hardening is not implemented yet.
+  Claude Code itself relies on. That inheritance was measured rather than
+  assumed: under a default `%USERPROFILE%` a credential file ends up granting
+  exactly SYSTEM, `BUILTIN\Administrators` and the owner -- no `Users`, no
+  `Everyone` -- which is what `0600` buys on Unix, where root reads it anyway.
+  Explicit ACL code is deliberately not written: it would be unsafe code, in a
+  credential tool, to reach a state the file is already in.
+- `ccred doctor` checks the result instead of trusting either mechanism. On
+  Unix it fails loudly, naming the mode, if any credential file it can find is
+  readable by anyone else -- a file can arrive from a backup, a `cp -p`, or
+  another machine with permissions nobody asked for. On Windows it reports
+  that it cannot check rather than implying it did.
+- The run log (`~/.ccred/logs/ccred.jsonl`) holds decisions and day counts
+  only, and is created `0600`. It never records a rendered error message,
+  because a message can echo its input.
 - On macOS, Claude Code normally keeps credentials in the Keychain. `ccred`
   does not read the Keychain yet, so on that platform it only sees the
   plaintext fallback file. This is a known gap, not a claim of support.
