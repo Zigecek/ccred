@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.2.11
+
+### One broken profile no longer ends the run
+
+`refresh_one` propagated every error out of the loop, so a store that would
+not load, a spawn that would not start, or a metadata write that failed ended
+the whole run and took the other profiles' work with it. An unattended job
+that gives up on every account because one is broken is worse than one that
+reports the broken account and carries on -- especially when that report is
+the only thing anyone will see of it.
+
+### `--force` compares against the right baseline
+
+It backdates the stored access-token expiry so an exchange happens, but was
+still measuring success against the expiry from before that write. Whenever
+the replaced token outlived its replacement -- an eight-hour renewal over
+something longer -- a real exchange would have been recorded as a failure.
+
+The backdating write also aborted the whole run on failure. A forced run that
+cannot backdate is just a forced run that finds nothing to do.
+
+### Answered
+
+Which probe actually causes a refresh, which the design sketch left open and
+proposed a whole command to find out. Measured against claude 2.1.236 with an
+expired access token: `auth status --json` exchanges nothing, `mcp list`
+renews the token, and the prompt rung is never reached. A refresh costs one
+cheap invocation and no quota, and the ladder remembers which rung worked.
+
 ## 0.2.10
 
 ### The schedule warns before the deadline it cannot move
