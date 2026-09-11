@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.2.4
+
+### `ccred restore <name>`
+
+A copy of each profile's credentials has been written after every accepted
+save since the beginning, and nothing ever read it. That stopped being
+academic when a spawned Claude Code signed itself out and emptied a profile on
+a live machine: the copy was the only thing that survived, and getting it back
+meant editing files over SSH.
+
+`restore` puts it back, and `doctor` now says which unusable profiles have a
+copy worth restoring rather than sending everyone to `claude auth login`.
+
+### A timeout that did not time out
+
+The first test ever written for the probe runner found it. Killing the child
+does not necessarily close the pipe -- if that child spawned one of its own,
+the grandchild still holds the write end and the reader thread stays blocked
+on it. Waiting for that thread then undid the deadline that had just fired: a
+30-second process survived a 400-millisecond timeout. On a scheduled run that
+is a job that never ends.
+
+### Fixed
+
+- A profile whose credentials a probe cleared is reported as needing a login,
+  not as broken. They are readable again by then; what is gone is the server's
+  willingness to refresh them.
+- A missing `claude` is a configuration problem (exit 8), not an unsafe state
+  (exit 7), and it no longer aborts the whole run -- the active profile's
+  mirror does not use the binary at all. The message names `--claude-path`
+  rather than a configuration file nothing reads.
+
 ## 0.2.3
 
 **Upgrade from 0.2.1 or 0.2.2.** Both shipped a check that reported healthy
