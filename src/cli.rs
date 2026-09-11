@@ -123,7 +123,12 @@ pub enum Command {
         /// and wants to see it work.
         #[arg(long)]
         force: bool,
-        /// Accepted for symmetry with schedulers; all profiles are the default.
+        /// Every profile. This is the default, and the flag exists so that
+        /// someone who types it gets what they expect rather than an error.
+        ///
+        /// Nothing passes it -- not the scheduler, which sends only
+        /// `--if-older-than`. An earlier comment claimed it was there for
+        /// symmetry with schedulers, which was not true of any of them.
         #[arg(long)]
         all: bool,
         /// Path to the claude binary, when it is not on PATH.
