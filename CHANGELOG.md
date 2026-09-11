@@ -21,6 +21,15 @@ something longer -- a real exchange would have been recorded as a failure.
 The backdating write also aborted the whole run on failure. A forced run that
 cannot backdate is just a forced run that finds nothing to do.
 
+### Commands that report on trouble no longer fail on meeting it
+
+`doctor` ended the whole diagnosis with an error when the active-profile
+pointer or the profiles directory could not be read. `list` refused the entire
+listing when one profile's metadata would not parse. Both are commands someone
+reaches for *because* something is already wrong, so producing nothing is the
+one response that cannot help: each is a finding or a row now, with the rest
+of the report intact around it.
+
 ### Answered
 
 Which probe actually causes a refresh, which the design sketch left open and
