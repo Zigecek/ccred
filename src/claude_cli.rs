@@ -105,6 +105,15 @@ impl ProbeOutcome {
         text.contains("please run /login")
             || text.contains("invalid_grant")
             || text.contains("authentication_error")
+            // Observed verbatim from claude 2.1.236 against a profile whose
+            // refresh token had already been spent:
+            //   "Failed to authenticate: OAuth session expired and could not
+            //    be refreshed"
+            // None of the patterns above match it, so this read as "the window
+            // did not move" -- reported as broken, when what the user needed to
+            // be told was to log in.
+            || text.contains("could not be refreshed")
+            || text.contains("oauth session expired")
     }
 }
 
@@ -373,5 +382,23 @@ mod tests {
     fn discovery_reports_a_missing_override_clearly() {
         let err = ClaudeCli::discover(Some(Path::new("/nope/claude"))).unwrap_err();
         assert!(err.to_string().contains("does not exist"), "{err}");
+    }
+
+    /// Observed verbatim from claude 2.1.236 against a profile whose refresh
+    /// token had already been spent. None of the older patterns matched it, so
+    /// the run reported "broken" when what the user needed to be told was to
+    /// log in.
+    #[test]
+    fn a_spent_refresh_token_is_reported_as_needing_a_login() {
+        let outcome = ProbeOutcome {
+            exit_code: Some(1),
+            stdout: r#"{"is_error":true,"subtype":"success","result":"Failed to authenticate: OAuth session expired and could not be refreshed"}"#.to_string(),
+            stderr: String::new(),
+            timed_out: false,
+        };
+        assert!(
+            outcome.needs_login(),
+            "the message a real Claude Code prints must be recognised"
+        );
     }
 }
