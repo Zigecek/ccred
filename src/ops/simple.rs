@@ -315,15 +315,22 @@ pub fn save(ctx: &Ctx, name: &ProfileName) -> crate::Result<SaveReport> {
     // `switch` calls that while already holding it and the lock is not
     // reentrant.
     let live = ctx.live_store();
-    let _guard = live.lock(SAVE_LOCK_TIMEOUT)?;
-
     let account = ctx.live_account();
     if !account.is_known() {
         return Err(CcredError::UnsafeWrite(
             "cannot tell which account is logged in; is Claude Code set up in this home?".into(),
         ));
     }
-    let outcome = ctx.repo().save_from(name, &live, &account)?;
+
+    // Scoped to the read, and no wider. Held to the end of the function it
+    // also spanned `auto_schedule`, which shells out to schtasks, systemctl
+    // or launchctl with no timeout of its own -- so a hung scheduler would
+    // have blocked Claude Code's own credential refresh for as long as it
+    // hung, with our heartbeat keeping the lock from ever looking stale.
+    let outcome = {
+        let _guard = live.lock(SAVE_LOCK_TIMEOUT)?;
+        ctx.repo().save_from(name, &live, &account)?
+    };
 
     // Saving the account that is logged in makes that profile the active one.
     // Without this the pointer would keep naming the previous profile, and
@@ -376,19 +383,16 @@ pub fn remove(ctx: &Ctx, name: &ProfileName) -> crate::Result<RemoveReport> {
     //
     // A backup that fails does not stop the removal the user asked for. It is
     // reported instead.
-    let backed_up = ctx.repo().backup(name).is_ok();
+    let backup = ctx.repo().backup(name).unwrap_or(None);
 
     let dir = ctx.paths().profile_dir(name)?;
     std::fs::remove_dir_all(&dir).map_err(|source| CcredError::Io { path: dir, source })?;
     Ok(RemoveReport {
         name: name.as_str().to_string(),
-        backup_dir: backed_up.then(|| {
-            ctx.paths()
-                .backups_dir()
-                .join(name.as_str())
-                .display()
-                .to_string()
-        }),
+        // The path of the file that was actually written. Reporting a
+        // directory that was never created is worse than reporting nothing:
+        // it tells someone their account is recoverable when it is not.
+        backup_dir: backup.map(|p| p.display().to_string()),
     })
 }
 

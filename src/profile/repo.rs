@@ -255,6 +255,14 @@ impl ProfileRepo {
             )
             && a == b
         {
+            // Identical content, but the metadata may still be wrong: a
+            // latched needs_login has to be clearable by saving credentials
+            // that work, and returning early here meant it never was.
+            self.update_meta(name, |m| {
+                m.refresh.needs_login = false;
+                m.refresh.consecutive_failures = 0;
+                m.refresh.next_attempt_after_ms = None;
+            })?;
             return Ok(SaveOutcome::Unchanged);
         }
 
@@ -377,6 +385,15 @@ impl ProfileRepo {
         // believed broken -- a wrong diagnosis should not be the end of it.
         let _ = self.backup(name);
         self.store(name)?.replace(&good)?;
+        // Clear the latch, or the profile stays excluded from every future
+        // refresh despite now holding working credentials. Only `save_from`
+        // cleared it, and only on a write it did not skip as unchanged -- so
+        // a repaired profile could never get out.
+        self.update_meta(name, |m| {
+            m.refresh.needs_login = false;
+            m.refresh.consecutive_failures = 0;
+            m.refresh.next_attempt_after_ms = None;
+        })?;
         Ok(true)
     }
 
@@ -386,12 +403,28 @@ impl ProfileRepo {
     ///
     /// Public because `rm` needs it: the backups live outside the profile
     /// directory, so a copy taken here survives the directory being deleted.
-    pub fn backup(&self, name: &ProfileName) -> crate::Result<()> {
+    /// Returns where the copy went, or `None` when there was nothing to copy.
+    ///
+    /// The distinction matters: a caller that is about to delete the profile
+    /// has to know whether anything survives. Returning `Ok(())` for both
+    /// cases let `rm` promise a backup directory it had never created.
+    pub fn backup(&self, name: &ProfileName) -> crate::Result<Option<PathBuf>> {
         let store = self.store(name)?;
         let Ok(Some(loaded)) = store.load() else {
-            return Ok(()); // nothing worth keeping
+            // The live copy is unreadable, but the last-known-good one may
+            // not be -- and `rm` is about to take that with it too.
+            return self.backup_last_known_good(name);
         };
-        self.backup_raw(name.as_str(), &loaded.raw).map(|_| ())
+        self.backup_raw(name.as_str(), &loaded.raw).map(Some)
+    }
+
+    /// Copy the last-known-good file aside, for when the live one is gone.
+    fn backup_last_known_good(&self, name: &ProfileName) -> crate::Result<Option<PathBuf>> {
+        let path = self.paths.profile_lkg(name)?;
+        match fs::read(&path) {
+            Ok(raw) if !raw.is_empty() => self.backup_raw(name.as_str(), &raw).map(Some),
+            _ => Ok(None),
+        }
     }
 
     /// Copy live credentials that belong to no profile out of harm's way.

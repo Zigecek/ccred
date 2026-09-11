@@ -127,12 +127,29 @@ pub fn acquire(target: &Path, timeout: Duration) -> crate::Result<DirLock> {
             }
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
                 // Clean up a lock abandoned by a crashed process.
+                //
+                // The timeout is checked first, and the retry still sleeps.
+                // `continue`ing straight back to the top on a reclaim that
+                // cannot succeed -- a sharing violation on Windows, a
+                // directory owned by another user, a read-only parent --
+                // spun at full CPU for ever and never consulted the caller's
+                // deadline at all. An unattended run would wedge a scheduler
+                // slot indefinitely.
+                if start.elapsed() > timeout {
+                    return Err(CcredError::Busy(format!(
+                        "credential store is locked by another process ({})",
+                        lock.display()
+                    )));
+                }
                 if age_of(&lock).is_some_and(|a| a > STALE) {
                     let _ = fs::remove_dir_all(&lock);
-                    continue;
                 }
                 if start.elapsed() > timeout {
-                    return Err(CcredError::UnsafeWrite(format!(
+                    // Busy, not UnsafeWrite. Nothing is wrong: Claude Code
+                    // takes this lock on every refresh, and the right
+                    // response is to come back shortly, which is what exit 6
+                    // tells a scheduler.
+                    return Err(CcredError::Busy(format!(
                         "credential store is locked by another process ({})",
                         lock.display()
                     )));
@@ -179,7 +196,11 @@ mod tests {
 
         let _held = acquire(&target, Duration::from_millis(500)).unwrap();
         let err = acquire(&target, Duration::from_millis(300)).unwrap_err();
-        assert!(matches!(err, CcredError::UnsafeWrite(_)), "{err}");
+        // Busy, not UnsafeWrite: a held lock is the most ordinary thing here
+        // -- Claude Code takes it on every refresh -- and a scheduler has to
+        // tell "come back shortly" apart from "stop, something is wrong".
+        assert!(matches!(err, CcredError::Busy(_)), "{err}");
+        assert_eq!(err.exit_code(), crate::error::ExitCode::Busy);
     }
 
     #[test]
@@ -221,5 +242,36 @@ mod tests {
         touch(&lock);
         let after = fs::metadata(&lock).unwrap().modified().unwrap();
         assert!(after > before, "heartbeat did not advance the dir mtime");
+    }
+
+    /// A reclaim that cannot succeed must not become a spin.
+    ///
+    /// The loop used to `continue` straight back to the top after trying to
+    /// remove a stale lock, without consulting the caller's deadline or
+    /// sleeping. When the removal could not work -- a sharing violation on
+    /// Windows, a directory owned by someone else, a read-only parent -- that
+    /// ran at full CPU for ever, and an unattended run wedged a scheduler
+    /// slot indefinitely.
+    #[test]
+    fn a_stale_lock_that_cannot_be_removed_still_times_out() {
+        let dir = tempdir().unwrap();
+        let target = dir.path().join(".storage-write");
+        let lock = lock_path_for(&target);
+        fs::create_dir_all(&lock).unwrap();
+
+        // Old enough to look stale, with something inside that a removal on a
+        // locked file would trip over. Whether the removal succeeds here is
+        // beside the point: what is pinned is that the deadline is honoured.
+        fs::write(lock.join("keep"), b"x").unwrap();
+        let long_ago = std::time::SystemTime::now() - Duration::from_secs(3600);
+        let _ = filetime::set_file_mtime(&lock, long_ago.into());
+
+        let started = std::time::Instant::now();
+        let _ = acquire(&target, Duration::from_millis(200));
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "acquire must return on its deadline, took {:?}",
+            started.elapsed()
+        );
     }
 }

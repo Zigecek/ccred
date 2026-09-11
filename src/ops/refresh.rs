@@ -483,15 +483,26 @@ fn restore_if_cleared(
         return None;
     }
     let good = pre?;
-    let still_usable = store
-        .load()
-        .ok()
-        .flatten()
-        .is_some_and(|l| validate_credentials(&l.creds.oauth, now).is_ok());
-    if still_usable {
-        return None;
+    // An error is NOT "the store was cleared". `FileStore::load` is explicit
+    // that a read failure must never be reported as absence, because a caller
+    // that believes a file is gone will overwrite it -- and `replace` skips
+    // the monotonic window check, so this would put the pre-probe credentials
+    // over freshly refreshed ones with nothing to stop it.
+    //
+    // A Windows sharing violation while Claude Code writes, or a parse that
+    // fails the lossless check, both land here. Neither means the account was
+    // destroyed, and both are read again on the next run.
+    match store.load() {
+        Err(_) => None,
+        Ok(None) => Some(store.replace(&good.creds).is_ok()),
+        Ok(Some(now_stored)) => {
+            if validate_credentials(&now_stored.creds.oauth, now).is_ok() {
+                None
+            } else {
+                Some(store.replace(&good.creds).is_ok())
+            }
+        }
     }
-    Some(store.replace(&good.creds).is_ok())
 }
 
 /// Refresh one idle profile by running Claude Code against its own store.
@@ -650,7 +661,12 @@ fn refresh_one(
         let reloaded = store.load()?;
         let access_after = reloaded.as_ref().map(|l| l.creds.oauth.expires_at);
 
-        if access_after > access_before {
+        // Both sides must exist. `Some(0) > None` is true, so a store that
+        // vanished and came back holding a logged-out blob -- `expiresAt: 0`
+        // -- would read as a renewal, with `last_success_ms` set and the
+        // failure count cleared.
+        let renewed = matches!((access_after, access_before), (Some(a), Some(b)) if a > b);
+        if renewed {
             ctx.repo().update_meta(name, |m| {
                 m.refresh.last_attempt_ms = Some(now);
                 m.refresh.last_success_ms = Some(now);
