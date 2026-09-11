@@ -743,3 +743,102 @@ pub fn unknown_command(theme: &Theme, guess: &str) {
     eprintln!("{}", f.render(PAD));
     eprintln!();
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An unrecognised tier must stay readable rather than disappear. The
+    /// mapping is cosmetic; losing information to it would not be.
+    #[test]
+    fn an_unknown_plan_is_tidied_but_never_hidden() {
+        assert_eq!(plan_label("default_claude_max_20x"), "Max 20x");
+        assert_eq!(plan_label("default_claude_pro"), "Pro");
+        assert_eq!(plan_label("default_claude_team_premium"), "team premium");
+        assert_eq!(plan_label("something_new"), "something new");
+    }
+
+    #[test]
+    fn a_long_pid_list_stays_on_one_line() {
+        assert_eq!(pids(&[1, 2]), "1, 2");
+        assert_eq!(pids(&[1, 2, 3]), "1, 2, 3");
+        assert_eq!(pids(&[1, 2, 3, 4, 5]), "1, 2, 3 and 2 more");
+        assert_eq!(pids(&[]), "");
+    }
+
+    #[test]
+    fn counts_of_one_do_not_read_as_a_bug() {
+        assert_eq!(plural(1, "profile", "profiles"), "1 profile");
+        assert_eq!(plural(0, "profile", "profiles"), "0 profiles");
+        assert_eq!(plural(2, "profile", "profiles"), "2 profiles");
+    }
+
+    /// Every decision needs words. A `{:?}` leaking into the output would be
+    /// the same class of slip that printed `pid [12204, 26656]` at users.
+    #[test]
+    fn every_decision_has_a_human_label() {
+        for d in [
+            Decision::MirrorActive,
+            Decision::SkipFresh,
+            Decision::SkipBackoff,
+            Decision::SkipCap,
+            Decision::Refresh,
+            Decision::NeedsLogin,
+            Decision::Broken,
+        ] {
+            let (label, _) = decision_label(d);
+            assert!(!label.is_empty(), "{d:?} has no label");
+            assert!(
+                label.chars().all(|c| c.is_ascii_lowercase() || c == ' '),
+                "{d:?} produced {label:?}, which looks like a Debug spelling"
+            );
+        }
+    }
+
+    /// Same rule for scheduler warnings, which reach `doctor` as well.
+    #[test]
+    fn every_scheduler_warning_has_a_human_label() {
+        for w in [
+            Warning::LingerDisabled,
+            Warning::NoGuiSession,
+            Warning::DisabledByUser,
+            Warning::OnBatteryBlocked,
+            Warning::RegisteredButNeverFires,
+            Warning::RunsOnlyWhenSignedIn,
+            Warning::BinaryMissing("/nope/ccred".into()),
+        ] {
+            let text = w.to_string();
+            assert!(!text.is_empty(), "{w:?} has no wording");
+            assert!(
+                !text.contains('_') || text.contains("/nope"),
+                "{w:?} produced {text:?}, which looks like an enum name"
+            );
+        }
+    }
+
+    /// A wrong suggestion costs more than none, so anything whose remedy
+    /// depends on context must not get one.
+    #[test]
+    fn hints_are_offered_only_where_the_next_step_is_unambiguous() {
+        use crate::CcredError as E;
+        assert!(hint_for(&E::ProfileNotFound("x".into())).is_some());
+        assert!(
+            hint_for(&E::InvalidProfileName {
+                name: "x".into(),
+                reason: "bad"
+            })
+            .is_some()
+        );
+        assert!(
+            hint_for(&E::Schedule("systemd said no".into())).is_none(),
+            "a scheduler failure has no single next step"
+        );
+        assert!(
+            hint_for(&E::LossyRewrite {
+                dropped: vec!["k".into()]
+            })
+            .is_none(),
+            "a lossy rewrite needs a human to look, not a command to run"
+        );
+    }
+}
