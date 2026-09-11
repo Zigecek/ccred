@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.2.7
+
+### `ccred log`
+
+A scheduled run left nothing anyone could read. systemd captures stdout in the
+journal and launchd can be pointed at a file, but Windows Task Scheduler
+discards it entirely -- so on the platform where a job is least visible there
+was no record at all. When a refresh quietly emptied a profile, the only
+reason it could be explained was that someone happened to be watching at the
+time.
+
+Each run now appends a line: what every profile was decided to be, and how its
+refresh window moved. Decisions and numbers only, never the detail text --
+that is built from rendered error messages, and the rule here is to persist
+error *kinds*, because a message can echo its input and that input can be a
+token. The file rotates at a megabyte and keeps three generations.
+
+### The sandbox was not a sandbox
+
+Writing that found `log_dir` was derived from `LOCALAPPDATA` or
+`XDG_STATE_HOME`, read from the process environment rather than from the
+`Paths` it belongs to. Neither a test sandbox nor `CCRED_HOME` relocated it,
+which means this project's own test suite had been appending its runs to the
+real user's log file. Logs live under the ccred home now, with everything else
+this tool owns, and a test pins that nothing is written outside the home it
+was given.
+
 ## 0.2.6
 
 ### A failed probe says which kind of failure it was
