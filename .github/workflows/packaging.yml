@@ -38,10 +38,12 @@ jobs:
   # every job read the same answer.
   resolve:
     runs-on: ubuntu-24.04
-    # A failed or cancelled release has nothing worth packaging.
-    if: >-
-      ${{ github.event_name != 'workflow_run'
-          || github.event.workflow_run.conclusion == 'success' }}
+    # Deliberately NOT gated on the Release run's overall conclusion. That run
+    # also carries the registry publish jobs, which fail for as long as the
+    # accounts are unconfigured -- and a release whose artifacts all built and
+    # published is worth packaging regardless. What matters is whether the
+    # release actually exists, which the next job checks directly.
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion != 'cancelled' }}
     outputs:
       tag: ${{ steps.pick.outputs.tag }}
     steps:
@@ -60,6 +62,17 @@ jobs:
             *) echo "::error::'$tag' is not a release tag"; exit 1 ;;
           esac
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      # The release is what we package from, so its absence is the real gate.
+      - name: Require the release to exist
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if ! gh release view "${{ steps.pick.outputs.tag }}"                  --repo "$GITHUB_REPOSITORY" --json tagName >/dev/null 2>&1; then
+            echo "::error::no release for ${{ steps.pick.outputs.tag }}"
+            exit 1
+          fi
 
   deb:
     needs: resolve

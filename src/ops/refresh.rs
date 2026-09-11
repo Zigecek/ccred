@@ -36,6 +36,12 @@ use crate::validate::{ProfileName, validate_credentials};
 
 const DAY_MS: i64 = 86_400_000;
 
+/// How long to wait for the credential store lock.
+///
+/// Shorter than the switch timeout on purpose: this runs unattended, so
+/// giving up and reporting "busy" beats holding a scheduler job open.
+const LOCK_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// When to act, and how hard to try.
 #[derive(Debug, Clone)]
 pub struct RefreshPolicy {
@@ -70,6 +76,15 @@ impl Default for RefreshPolicy {
 pub struct LastRun {
     pub finished_at_ms: i64,
     pub status: String,
+    /// Whether that run left anything a person has to deal with.
+    ///
+    /// The rate limit exists so a scheduler that double-fires costs nothing.
+    /// Arming it from a run where every profile came back broken turns a
+    /// transient failure into two days of silence, which is the opposite of
+    /// what it is for. Old records without the field read as clean, so an
+    /// upgrade does not suddenly re-run everything.
+    #[serde(default)]
+    pub needed_attention: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -178,6 +193,7 @@ pub fn refresh(ctx: &Ctx, opts: &RefreshOptions) -> crate::Result<RefreshReport>
     if let Some(window) = opts.if_older_than_ms
         && let Some(last) = read_last_run(ctx)?
         && now - last.finished_at_ms < window
+        && !last.needed_attention
     {
         return Ok(RefreshReport::skipped("last run was recent"));
     }
@@ -227,10 +243,21 @@ pub fn refresh(ctx: &Ctx, opts: &RefreshOptions) -> crate::Result<RefreshReport>
                 // Claude Code refreshes the live store on its own; our job is
                 // only to copy the result into the profile so a later switch
                 // does not lose it.
-                let account = ctx.live_account();
-                match ctx.repo().save_from(&name, &ctx.live_store(), &account) {
-                    Ok(outcome) => detail = Some(format!("{outcome:?}").to_lowercase()),
-                    Err(e) => detail = Some(format!("not mirrored: {e}")),
+                //
+                // Read it under the same lock Claude Code takes, or a refresh
+                // landing mid-read copies half of one token pair and half of
+                // the next. This runs from a timer, so it collides with a live
+                // session more often than anything a person types.
+                let live = ctx.live_store();
+                match live.lock(LOCK_TIMEOUT) {
+                    Ok(_guard) => {
+                        let account = ctx.live_account();
+                        match ctx.repo().save_from(&name, &live, &account) {
+                            Ok(outcome) => detail = Some(format!("{outcome:?}").to_lowercase()),
+                            Err(e) => detail = Some(format!("not mirrored: {e}")),
+                        }
+                    }
+                    Err(e) => detail = Some(format!("not mirrored, store is busy: {e}")),
                 }
             }
             Decision::Refresh => {
@@ -413,6 +440,7 @@ fn write_last_run(ctx: &Ctx, now: i64, report: &RefreshReport) -> crate::Result<
     let record = LastRun {
         finished_at_ms: now,
         status: report.status.clone(),
+        needed_attention: report.needs_attention(),
     };
     let bytes = serde_json::to_vec_pretty(&record).map_err(|source| CcredError::Json {
         path: ctx.paths().last_run(),

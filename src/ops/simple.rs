@@ -7,6 +7,9 @@ use crate::error::CcredError;
 use crate::model::AccountSnapshot;
 use crate::profile::SaveOutcome;
 use crate::store::{CredentialStore, now_ms};
+
+/// How long `save` waits for the credential store lock.
+const SAVE_LOCK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 use crate::validate::{ProfileName, validate_credentials};
 
 /// One row of `ccred list`. Contains no secret.
@@ -259,13 +262,21 @@ pub fn save(ctx: &Ctx, name: &ProfileName) -> crate::Result<SaveReport> {
     let mut warnings = Vec::new();
     let _ = super::switch::recover_pending(ctx, &mut warnings)?;
 
+    // Read the live store under the lock Claude Code also takes. Without it a
+    // refresh landing mid-read stores half of one token pair and half of the
+    // next. The lock is taken here rather than inside `save_from`, because
+    // `switch` calls that while already holding it and the lock is not
+    // reentrant.
+    let live = ctx.live_store();
+    let _guard = live.lock(SAVE_LOCK_TIMEOUT)?;
+
     let account = ctx.live_account();
     if !account.is_known() {
         return Err(CcredError::UnsafeWrite(
             "cannot tell which account is logged in; is Claude Code set up in this home?".into(),
         ));
     }
-    let outcome = ctx.repo().save_from(name, &ctx.live_store(), &account)?;
+    let outcome = ctx.repo().save_from(name, &live, &account)?;
 
     // Saving the account that is logged in makes that profile the active one.
     // Without this the pointer would keep naming the previous profile, and

@@ -25,11 +25,27 @@ jobs:
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "22.22.2"
+          # Node 24 ships npm 11, which is what trusted publishing needs.
+          # Taking it from the runtime avoids upgrading npm in place: doing
+          # that left the running npm with a half-replaced dependency tree
+          # ("Cannot find module 'promise-retry'" out of arborist), which is
+          # how this job failed on v0.2.1.
+          node-version: "24"
           registry-url: "https://registry.npmjs.org"
 
-      # Trusted publishing needs a recent npm; the runner's may be older.
-      - run: npm install -g npm@latest
+      # Trusted publishing landed in npm 11.5.1. Fail here, where the message
+      # says so, rather than at the publish step, where it looks like a token
+      # problem.
+      - name: Check npm is new enough to publish with OIDC
+        run: |
+          set -euo pipefail
+          have=$(npm --version)
+          echo "npm $have"
+          need=11.5.1
+          if [ "$(printf '%s\n%s\n' "$need" "$have" | sort -V | head -1)" != "$need" ]; then
+            echo "::error::npm $have is older than $need, which trusted publishing requires"
+            exit 1
+          fi
 
       # Take the archives from the run that built them, not from the release.
       # `gh release download` needs `contents: read`, and a called workflow
