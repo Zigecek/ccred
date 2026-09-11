@@ -68,6 +68,13 @@ pub enum CcredError {
     #[error("scheduler: {0}")]
     Schedule(String),
 
+    /// The `claude` binary could not be found or is not where it was said to
+    /// be. A configuration problem, not an unsafe state, and the exit code
+    /// says so -- a scheduler needs to tell "set this machine up" apart from
+    /// "something is wrong with the credentials".
+    #[error("{0}")]
+    ClaudeMissing(String),
+
     #[error("I/O error at {path}")]
     Io {
         path: PathBuf,
@@ -116,6 +123,7 @@ impl CcredError {
             CcredError::AccountMismatch { .. } => ExitCode::Unsafe,
             CcredError::AccountUnverifiable { .. } => ExitCode::Unsafe,
             CcredError::Schedule(_) => ExitCode::Misconfigured,
+            CcredError::ClaudeMissing(_) => ExitCode::Misconfigured,
             CcredError::Io { .. } => ExitCode::Internal,
             CcredError::Json { .. } => ExitCode::Unsafe,
         }

@@ -209,6 +209,9 @@ pub fn refresh(ctx: &Ctx, opts: &RefreshOptions) -> crate::Result<RefreshReport>
     let active = ctx.repo().active()?;
     let mut results = Vec::new();
     let mut spawned = 0usize;
+    // Set when `claude` could not be found, so the run can exit with
+    // "this machine is not set up" rather than "your credentials are unsafe".
+    let mut missing_claude = false;
 
     // Resolved lazily: a machine with nothing to refresh should not fail just
     // because `claude` is not installed.
@@ -288,13 +291,27 @@ pub fn refresh(ctx: &Ctx, opts: &RefreshOptions) -> crate::Result<RefreshReport>
             }
             Decision::Refresh => {
                 spawned += 1;
-                let cli = match &cli {
-                    Some(c) => c,
-                    None => {
-                        cli = Some(ClaudeCli::discover(opts.claude_path.as_deref())?);
-                        cli.as_ref().unwrap()
+                // A missing `claude` is reported per profile, not thrown out
+                // of the whole run. Only the profiles that need a spawn are
+                // affected; mirroring the active one does not use the binary
+                // at all, and losing that work as well would be gratuitous.
+                if cli.is_none() {
+                    match ClaudeCli::discover(opts.claude_path.as_deref()) {
+                        Ok(found) => cli = Some(found),
+                        Err(e) => {
+                            missing_claude = true;
+                            results.push(ProfileResult {
+                                name: name.as_str().to_string(),
+                                decision: Decision::Broken,
+                                detail: Some(e.to_string()),
+                                window_days_before: window_before.map(|ms| ms / DAY_MS),
+                                window_days_after: None,
+                            });
+                            continue;
+                        }
                     }
-                };
+                }
+                let cli = cli.as_ref().expect("discovered just above");
                 let outcome = refresh_one(ctx, &name, cli, &state, &effective_policy, now)?;
                 decision = outcome.0;
                 detail = outcome.1;
@@ -324,17 +341,19 @@ pub fn refresh(ctx: &Ctx, opts: &RefreshOptions) -> crate::Result<RefreshReport>
     }
 
     let report = RefreshReport {
-        status: "ran".to_string(),
+        // The status is what `doctor` and a scheduler read back, so say which
+        // kind of "ran" this was.
+        status: if missing_claude {
+            "ran, but claude was not found".to_string()
+        } else {
+            "ran".to_string()
+        },
         profiles: results,
     };
     write_last_run(ctx, now, &report)?;
     Ok(report)
 }
 
-/// Refresh one idle profile by running Claude Code against its own store.
-///
-/// Success is judged by an observed change in the credential store, never by
-/// an exit code. Exit codes lie; a refresh window that moved forward does not.
 /// Put a profile back if the spawned `claude` emptied it.
 ///
 /// Returns `None` when there is nothing to do, and `Some(restored)` when the
@@ -364,6 +383,10 @@ fn restore_if_cleared(
     Some(store.replace(&good.creds).is_ok())
 }
 
+/// Refresh one idle profile by running Claude Code against its own store.
+///
+/// Success is judged by an observed change in the credential store, never by
+/// an exit code. Exit codes lie; a refresh window that moved forward does not.
 fn refresh_one(
     ctx: &Ctx,
     name: &ProfileName,

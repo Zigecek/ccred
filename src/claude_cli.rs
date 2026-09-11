@@ -177,9 +177,12 @@ impl ClaudeCli {
             }
         }
 
-        Err(CcredError::UnsafeWrite(
-            "cannot find the `claude` binary; put it on PATH or set claude_path in \
-             ~/.ccred/config.toml"
+        // The advice has to be something the reader can act on. An earlier
+        // version pointed at ~/.ccred/config.toml, which nothing in this
+        // program reads or writes.
+        Err(CcredError::ClaudeMissing(
+            "cannot find the `claude` binary; put it on PATH, or pass \
+             --claude-path /full/path/to/claude"
                 .into(),
         ))
     }
