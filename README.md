@@ -2,9 +2,10 @@
 
 Save, list and switch between named sets of local Claude Code credentials.
 
-**Status: early development.** The commands below work on Linux and Windows.
-macOS is written but unverified -- no Mac was available -- and nothing is
-published to any registry so far.
+**Status: early development, and exercised in anger.** Linux and Windows are
+both in daily use. macOS is written but unverified -- no Mac was available, and
+the Keychain backend is deliberately not wired up until it can be tested, so
+that platform sees only the plaintext fallback.
 
 > **Unofficial and independent.** Not affiliated with, endorsed by, or sponsored
 > by Anthropic PBC. See [TRADEMARKS.md](TRADEMARKS.md).
@@ -21,10 +22,37 @@ profiles on a schedule to prevent that.
 
 ## Install
 
-Nothing is published to a registry yet, so the release page is the only route
-today. The intended channels, and the reasoning behind which ones are worth
-maintaining, are in [docs/install.md](docs/install.md); registry publishing
-needs the account setup described in [docs/publishing.md](docs/publishing.md).
+### Windows: Scoop
+
+```powershell
+scoop bucket add ccred https://github.com/Zigecek/scoop-ccred
+scoop install ccred
+```
+
+No admin rights, no execution policy, and no SmartScreen prompt -- Scoop
+extracts an archive and shims the binary, and a shim is launched through
+`CreateProcess` rather than `ShellExecuteEx`. Uninstalling removes the
+scheduled refresh first, so no task is left pointing at a binary that is gone.
+
+### Linux: the `.deb`
+
+Every release carries one for `amd64` and `arm64`:
+
+```sh
+curl -fsSLO https://github.com/Zigecek/ccred/releases/download/v0.2.5/ccred_0.2.5_amd64.deb
+sudo apt install ./ccred_0.2.5_amd64.deb
+```
+
+It carries no maintainer scripts on purpose: a `postinst` must not install the
+refresh schedule, because the package installs as root while the schedule
+belongs to one user's session. Run `ccred schedule install` yourself.
+
+### Anywhere: the release installer
+
+crates.io, npm, Homebrew and the AUR are wired up but not yet live; they need
+account setup that only a human can do, described in
+[docs/publishing.md](docs/publishing.md). The reasoning behind which channels
+are worth maintaining at all is in [docs/install.md](docs/install.md).
 
 ```sh
 # Linux and macOS
@@ -67,6 +95,7 @@ ccred list                saved profiles and how much refresh window each has
 ccred save <name>         store the account that is logged in, under a name
 ccred switch <name>       make a saved profile the active account
 ccred rm <name>           delete a profile
+ccred restore <name>      put a profile's last-known-good credentials back
 ccred refresh             keep stored profiles from expiring
 ccred schedule install    run that refresh automatically, twice a week
 ccred schedule status     is it registered, and when does it next run
@@ -102,6 +131,14 @@ signed-out case, not reliability in general.
 If the scheduler refuses, the profile is still saved. Storing credentials is
 the operation that matters; the schedule is reported as failed and left to
 `ccred schedule install`.
+
+Every accepted save leaves a copy of the credentials beside the profile, and
+`ccred restore <name>` puts it back. That is not theoretical tidiness: a
+scheduled refresh once spawned Claude Code against a profile, the binary
+decided it was signed out, and it wrote an empty credential blob over the
+store. Every safety gate here guards what *ccred* writes, and that write was
+not ours. `refresh` now undoes such damage by itself, and `doctor` says which
+profiles have a copy worth restoring.
 
 `ccred schedule install --dry-run` prints the exact unit file, plist or task
 XML it would register, without writing anything.
