@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.2.13
+
+### `rm` keeps a copy
+
+It deleted the profile directory outright, taking the credentials and the
+last-known-good copy with them. `rm` is the one command here whose mistake
+cannot be taken back -- a mistyped name, and the only stored copy of an
+account is gone. Every other write in this tool is guarded, backed up or
+recoverable; this was the exception.
+
+The backups live outside the profile directory, so a copy taken first survives
+the deletion, and the command says where it went. A backup that fails does not
+block the removal that was asked for.
+
 ## 0.2.12
 
 ### `current` reports an unreadable live store
