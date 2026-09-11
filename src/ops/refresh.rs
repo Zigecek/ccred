@@ -467,6 +467,13 @@ fn refresh_one(
         }
     }
 
+    // Whether the store was written at all, as opposed to written usefully.
+    // Without this a failure reads "the window did not move", which covers
+    // two very different situations: the probe was the wrong rung and did
+    // nothing, or it did exchange tokens and the server refused. Only the
+    // first is worth trying a harder rung for.
+    let revision_before = store.revision().ok().flatten();
+
     let mut last_note = String::new();
     for probe in ladder {
         let outcome = cli.run(&scope, probe, policy.spawn_timeout)?;
@@ -542,8 +549,10 @@ fn refresh_one(
 
         last_note = if outcome.timed_out {
             format!("{probe:?} timed out")
+        } else if store.revision().ok().flatten() != revision_before {
+            format!("{probe:?} rewrote the store without extending the window")
         } else {
-            format!("{probe:?} did not move the refresh window")
+            format!("{probe:?} left the store untouched")
         };
     }
 

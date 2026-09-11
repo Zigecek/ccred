@@ -108,6 +108,13 @@ impl ScheduleSpec {
     pub fn new(exe: PathBuf, home: PathBuf, log_dir: PathBuf, user: String) -> Self {
         ScheduleSpec {
             exe,
+            // 48 hours, not the 72 the design sketch suggested. The gap
+            // between scheduled runs is 72 hours at its shortest (Monday to
+            // Thursday), so 48 never suppresses a legitimate run while still
+            // absorbing the double-fires this exists for: a systemd catch-up
+            // after downtime, a Windows task with both a boot trigger and a
+            // schedule, a launchd coalesced event. 72 would sit exactly on the
+            // real interval and could swallow a run it was meant to allow.
             args: vec!["refresh".into(), "--if-older-than".into(), "48".into()],
             days: vec![Weekday::Mon, Weekday::Thu],
             hour: 9,
