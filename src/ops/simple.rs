@@ -103,8 +103,10 @@ pub fn current(ctx: &Ctx) -> crate::Result<CurrentReport> {
 
     // Does the pointer agree with who is actually logged in?
     let mut pointer_mismatch = None;
+    // Unreadable metadata must not end the command: `current` is what someone
+    // runs to find out that something is wrong.
     if let Some(name) = &active
-        && let Some(meta) = ctx.repo().meta(name)?
+        && let Ok(Some(meta)) = ctx.repo().meta(name)
         && account.is_known()
         && meta.account != Default::default()
         && account.identity.same_account_as(&meta.account) == Some(false)
@@ -118,7 +120,12 @@ pub fn current(ctx: &Ctx) -> crate::Result<CurrentReport> {
     }
 
     let last_synced_at_ms = match &active {
-        Some(name) => ctx.repo().meta(name)?.and_then(|m| m.last_synced_at_ms),
+        Some(name) => ctx
+            .repo()
+            .meta(name)
+            .ok()
+            .flatten()
+            .and_then(|m| m.last_synced_at_ms),
         None => None,
     };
 

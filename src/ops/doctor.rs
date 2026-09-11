@@ -171,12 +171,15 @@ pub fn doctor(ctx: &Ctx) -> crate::Result<Vec<Finding>> {
             "run `ccred save <name>` to record the account that is logged in",
         )),
         Some(name) => {
-            if !ctx.repo().exists(name)? {
+            // Both of these were still `?`, so corrupt metadata on the active
+            // profile ended the whole diagnosis -- the same shape already
+            // fixed for `list` and the profiles directory, missed here.
+            if !ctx.repo().exists(name).unwrap_or(false) {
                 findings.push(Finding::error(
                     "the active profile does not exist",
                     format!("the pointer names '{name}', but there is no such profile"),
                 ));
-            } else if let Some(meta) = ctx.repo().meta(name)?
+            } else if let Ok(Some(meta)) = ctx.repo().meta(name)
                 && account.is_known()
                 && meta.account != Default::default()
                 && account.identity.same_account_as(&meta.account) == Some(false)
@@ -191,6 +194,12 @@ pub fn doctor(ctx: &Ctx) -> crate::Result<Vec<Finding>> {
                         meta.account.label(),
                         account.label()
                     ),
+                ));
+            } else if ctx.repo().meta(name).is_err() {
+                findings.push(broken_profile(
+                    ctx,
+                    name,
+                    "the active profile's metadata cannot be read",
                 ));
             } else {
                 findings.push(Finding::ok(format!("active profile: {name}")));
@@ -248,10 +257,12 @@ pub fn doctor(ctx: &Ctx) -> crate::Result<Vec<Finding>> {
                 Err(e) => findings.push(broken_profile(ctx, &name, &e.to_string())),
             },
             Ok(None) => findings.push(broken_profile(ctx, &name, "there are no credentials")),
-            Err(e) => findings.push(Finding::error(
-                format!("profile '{name}' is unreadable"),
-                e.to_string(),
-            )),
+            // Through `broken_profile` like the other arms, so the recovery
+            // hint is offered here too. This is the arm a corrupt credential
+            // file lands in -- precisely where an intact last-known-good copy
+            // beside it makes `ccred restore` a one-command fix -- and it was
+            // the one arm that sent the user to log in again instead.
+            Err(e) => findings.push(broken_profile(ctx, &name, &e.to_string())),
         }
     }
 

@@ -931,3 +931,52 @@ fn removing_a_profile_leaves_a_copy_of_its_credentials() {
     // And the user has to be told where it went, or the copy is useless.
     assert!(out.contains("backups"), "{out}");
 }
+
+/// Corrupt metadata on the *active* profile used to end `doctor` and
+/// `current` with a bare error. `list` was fixed for this; these two were
+/// not, and they are the ones someone reaches for first.
+#[test]
+fn corrupt_metadata_on_the_active_profile_does_not_silence_any_command() {
+    let sb = Sandbox::new();
+    sb.run(&["save", "work"]); // 'work' becomes active
+    std::fs::write(
+        sb.path().join(".ccred/profiles/work/ccred.json"),
+        "{ not json",
+    )
+    .unwrap();
+
+    let (out, _, code) = sb.run(&["current"]);
+    assert_eq!(code, 0, "current must still report: {out}");
+    assert!(out.contains("work"), "{out}");
+
+    let (out, _, code) = sb.run(&["doctor"]);
+    assert_eq!(code, 7, "doctor must fail loudly: {out}");
+    assert!(
+        out.contains("config directory"),
+        "the rest of the report must survive: {out}"
+    );
+
+    let (out, _, code) = sb.run(&["list"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("work"), "{out}");
+}
+
+/// An explicit `null` in the credential file used to make it permanently
+/// unreadable, because the lossless guard counted it as a dropped key.
+#[test]
+fn an_explicit_null_in_the_live_store_is_not_fatal() {
+    let sb = Sandbox::new();
+    std::fs::write(
+        sb.path().join(".claude/.credentials.json"),
+        r#"{"claudeAiOauth":{"accessToken":"sk-ant-oat01-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+           "refreshToken":"sk-ant-ort01-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+           "expiresAt":4102444800000,"refreshTokenExpiresAt":4102444800000,
+           "scopes":["user:inference"],"subscriptionType":null}}"#,
+    )
+    .unwrap();
+
+    let (out, err, code) = sb.run(&["save", "work"]);
+    assert_eq!(code, 0, "{err}{out}");
+    let (out, _, _) = sb.run(&["list"]);
+    assert!(out.contains("ok"), "{out}");
+}

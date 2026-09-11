@@ -111,6 +111,27 @@ fn missing_key_paths(before: &Value, after: &Value, prefix: &str, out: &mut Vec<
 /// Claude Code version adds a field our model fails to carry for any reason,
 /// the write is **refused** rather than silently losing it. Only key names are
 /// reported, never values.
+/// A key whose value is an explicit `null` and which we model as `Option`.
+///
+/// `null` deserialises to `None` and re-serialises to nothing, so the
+/// lossless check sees a dropped key and refuses the write -- permanently,
+/// on every subsequent load. Same class as an empty `scopes` array, which
+/// was fixed by making the field faithful; this cannot be fixed that way,
+/// because `Option::None` is the only representation `null` has.
+///
+/// Dropping a key that was explicitly null loses nothing: absent and null
+/// mean the same thing to every reader of this file, including Claude Code.
+fn was_explicitly_null(before: &Value, path: &str) -> bool {
+    let mut cur = before;
+    for segment in path.split('.') {
+        match cur.get(segment) {
+            Some(next) => cur = next,
+            None => return false,
+        }
+    }
+    cur.is_null()
+}
+
 pub fn assert_lossless(original: &[u8], reserialized: &Value) -> crate::Result<()> {
     let before: Value =
         serde_json::from_slice(original).map_err(|source| crate::CcredError::Json {
@@ -119,6 +140,7 @@ pub fn assert_lossless(original: &[u8], reserialized: &Value) -> crate::Result<(
         })?;
     let mut dropped = Vec::new();
     missing_key_paths(&before, reserialized, "", &mut dropped);
+    dropped.retain(|path| !was_explicitly_null(&before, path));
     if dropped.is_empty() {
         Ok(())
     } else {
@@ -253,5 +275,30 @@ mod tests {
             !rendered.contains("BBBBBBBB"),
             "refresh token leaked: {rendered}"
         );
+    }
+
+    /// An explicit `null` used to make a credential file permanently
+    /// unreadable: it deserialises to `None`, re-serialises to nothing, and
+    /// the lossless check called that a dropped key -- on every load, for
+    /// ever. Absent and null mean the same thing to every reader of this
+    /// file, so nothing is lost by treating them alike.
+    #[test]
+    fn an_explicit_null_does_not_make_the_file_unreadable() {
+        let raw = br#"{"claudeAiOauth":{"accessToken":"a","refreshToken":"r","expiresAt":1,
+                       "refreshTokenExpiresAt":null,"subscriptionType":null,"scopes":null}}"#;
+        let parsed: CredentialsFile = serde_json::from_slice(raw).unwrap();
+        let back = serde_json::to_value(&parsed).unwrap();
+        assert_lossless(raw, &back).expect("an explicit null is not a dropped key");
+    }
+
+    /// The guard must still catch a key that was genuinely carrying a value.
+    #[test]
+    fn a_dropped_key_that_had_a_value_is_still_caught() {
+        let raw = br#"{"claudeAiOauth":{"accessToken":"a","refreshToken":"r","expiresAt":1},
+                       "organizationUuid":"org"}"#;
+        let parsed: CredentialsFile = serde_json::from_slice(raw).unwrap();
+        let mut back = serde_json::to_value(&parsed).unwrap();
+        back.as_object_mut().unwrap().remove("organizationUuid");
+        assert!(assert_lossless(raw, &back).is_err());
     }
 }
