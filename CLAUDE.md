@@ -67,6 +67,22 @@ We read and write files that belong to Claude Code, so:
   The item's ACL trusts `security`; a native read from a scheduled job returns
   `errSecInteractionNotAllowed` and fails silently forever.
 
+## Saving credentials outranks everything it triggers
+
+`save` registers the refresh schedule on the save that creates a second
+profile. That side effect must never be able to fail the save: by the time it
+runs the credentials are already stored, and returning an error would trade the
+operation that matters for one that does not. Every failure inside
+`auto_schedule` becomes a reported `ScheduleSetup::Failed`, never a `?`.
+
+Two rules keep it honest:
+
+- **Decide purely, act separately.** `should_auto_schedule` takes the state as
+  an argument, so the policy is tested without a scheduler. A test that read
+  the host's real one would assert on whichever machine ran it.
+- **The suite must not touch the platform scheduler.** `CCRED_NO_AUTO_SCHEDULE`
+  exists for provisioning and is set in `tests/cli.rs` for exactly this reason.
+
 ## Output is rendered, never printed inline
 
 Operations return data; `src/ui/render.rs` turns it into text. That split is

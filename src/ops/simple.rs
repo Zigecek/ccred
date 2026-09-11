@@ -160,11 +160,96 @@ pub fn list(ctx: &Ctx) -> crate::Result<Vec<ProfileRow>> {
     Ok(rows)
 }
 
+/// What a save did about the refresh schedule, when it did anything.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case", tag = "result")]
+pub enum ScheduleSetup {
+    Installed {
+        next_run: Option<String>,
+    },
+    /// Registration was attempted and did not work. Never fatal -- see
+    /// `auto_schedule`.
+    Failed {
+        reason: String,
+    },
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct SaveReport {
     pub name: String,
     pub account: String,
     pub outcome: String,
+    /// Set when this save registered the refresh schedule, or tried to.
+    ///
+    /// The moment a second profile exists is the moment one of them starts
+    /// going stale unattended, and it is the only moment a person is
+    /// guaranteed to be watching.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub schedule: Option<ScheduleSetup>,
+}
+
+/// Does this save call for registering the schedule?
+///
+/// Pure, so the policy is testable. Auto-registration writes to the platform
+/// scheduler, which a test must never do on the machine running it, so the
+/// decision is separated from the act.
+pub fn should_auto_schedule(
+    outcome: SaveOutcome,
+    profile_count: usize,
+    state: &crate::schedule::State,
+) -> bool {
+    outcome == SaveOutcome::Created
+        && profile_count > 1
+        && matches!(state, crate::schedule::State::NotInstalled)
+}
+
+/// Register the refresh schedule on the save that first makes it necessary.
+///
+/// Every failure here is reported rather than returned. The credentials are
+/// already stored by the time this runs, and losing that result because a
+/// scheduler refused would trade the operation that matters for the one that
+/// does not.
+fn auto_schedule(ctx: &Ctx, outcome: SaveOutcome) -> Option<ScheduleSetup> {
+    // The escape hatch exists for provisioning, for anyone who schedules
+    // refreshes their own way, and for this project's own test suite, which
+    // must not register a task on whichever machine runs it.
+    if std::env::var_os("CCRED_NO_AUTO_SCHEDULE").is_some() {
+        return None;
+    }
+    if outcome != SaveOutcome::Created {
+        return None;
+    }
+    // Querying the scheduler is not free, so ask only once the cheap local
+    // conditions already hold.
+    let profile_count = ctx.repo().list().map(|l| l.len()).unwrap_or(0);
+    if profile_count <= 1 {
+        return None;
+    }
+
+    let backend = crate::schedule::detect();
+    let state = backend.status().ok()?;
+    if !should_auto_schedule(outcome, profile_count, &state) {
+        return None;
+    }
+
+    let spec = match super::schedule::spec_for(ctx) {
+        Ok(spec) => spec,
+        Err(e) => {
+            return Some(ScheduleSetup::Failed {
+                reason: e.to_string(),
+            });
+        }
+    };
+    // `install_checked` undoes its own work if the scheduler cannot name a
+    // next run, so this either produces a schedule that fires or nothing.
+    match crate::schedule::install_checked(backend.as_ref(), &spec) {
+        Ok(health) => Some(ScheduleSetup::Installed {
+            next_run: health.next_run,
+        }),
+        Err(e) => Some(ScheduleSetup::Failed {
+            reason: e.to_string(),
+        }),
+    }
 }
 
 pub fn save(ctx: &Ctx, name: &ProfileName) -> crate::Result<SaveReport> {
@@ -188,6 +273,8 @@ pub fn save(ctx: &Ctx, name: &ProfileName) -> crate::Result<SaveReport> {
     // had in fact just resolved.
     ctx.repo().set_active(name)?;
 
+    let schedule = auto_schedule(ctx, outcome);
+
     Ok(SaveReport {
         name: name.as_str().to_string(),
         account: account.label(),
@@ -197,6 +284,7 @@ pub fn save(ctx: &Ctx, name: &ProfileName) -> crate::Result<SaveReport> {
             SaveOutcome::Unchanged => "already up to date",
         }
         .to_string(),
+        schedule,
     })
 }
 
@@ -217,4 +305,67 @@ pub fn remove(ctx: &Ctx, name: &ProfileName) -> crate::Result<()> {
 /// The snapshot a save would use. Exposed for `doctor`.
 pub fn live_account_of(ctx: &Ctx) -> AccountSnapshot {
     ctx.live_account()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::schedule::{Health, State};
+
+    fn installed() -> State {
+        State::Installed(Health {
+            enabled: true,
+            next_run: Some("Fri 03:00".into()),
+            last_run: None,
+            warnings: Vec::new(),
+        })
+    }
+
+    /// The point of auto-registration: the save that creates a second profile
+    /// is the moment one of them starts going stale unattended.
+    #[test]
+    fn the_save_that_creates_a_second_profile_registers_the_schedule() {
+        assert!(should_auto_schedule(
+            SaveOutcome::Created,
+            2,
+            &State::NotInstalled
+        ));
+    }
+
+    #[test]
+    fn a_first_profile_does_not_need_a_schedule() {
+        // Claude Code refreshes what it is using, so nothing can go stale yet.
+        assert!(!should_auto_schedule(
+            SaveOutcome::Created,
+            1,
+            &State::NotInstalled
+        ));
+    }
+
+    /// Re-saving is routine -- it happens on every switch. Registering from
+    /// there would mean a user who deliberately removed the schedule would
+    /// silently get it back.
+    #[test]
+    fn re_saving_an_existing_profile_never_registers_anything() {
+        for outcome in [SaveOutcome::Updated, SaveOutcome::Unchanged] {
+            assert!(
+                !should_auto_schedule(outcome, 5, &State::NotInstalled),
+                "{outcome:?} must not register a schedule"
+            );
+        }
+    }
+
+    #[test]
+    fn an_existing_schedule_is_left_alone() {
+        assert!(!should_auto_schedule(SaveOutcome::Created, 2, &installed()));
+    }
+
+    #[test]
+    fn an_unsupported_platform_is_not_treated_as_missing() {
+        let state = State::Unsupported {
+            reason: "no systemd".into(),
+            remedy: None,
+        };
+        assert!(!should_auto_schedule(SaveOutcome::Created, 2, &state));
+    }
 }

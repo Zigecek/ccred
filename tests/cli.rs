@@ -92,6 +92,10 @@ impl Sandbox {
             // UTF-8 terminal or a colour-capable one.
             .env("NO_COLOR", "1")
             .env("CCRED_UNICODE", "0")
+            // A save that creates a second profile registers the refresh
+            // schedule. That writes to the real platform scheduler, which a
+            // test must never do on the machine running it.
+            .env("CCRED_NO_AUTO_SCHEDULE", "1")
             .output()
             .unwrap()
     }
@@ -391,12 +395,20 @@ fn schedule_dry_run_prints_the_artifact_and_touches_nothing() {
 }
 
 #[test]
-fn schedule_status_reports_absence_rather_than_failing() {
+fn schedule_status_reports_a_state_rather_than_failing() {
+    // Whether a schedule happens to be registered belongs to the machine
+    // running the suite, not to the code under test -- `HOME` is sandboxed but
+    // the platform scheduler is not. What has to hold either way is that
+    // asking is never an error and always names a state.
     let sb = Sandbox::new();
-    let (out, err, code) = sb.run(&["schedule", "status"]);
+    let (out, err, code) = sb.run(&["schedule", "status", "--json"]);
     assert_eq!(code, 0, "{err}");
+    let state: serde_json::Value = serde_json::from_str(&out).expect(&out);
     assert!(
-        out.contains("not installed") || out.contains("unsupported"),
+        matches!(
+            state["state"].as_str(),
+            Some("installed" | "not_installed" | "unsupported")
+        ),
         "{out}"
     );
 }

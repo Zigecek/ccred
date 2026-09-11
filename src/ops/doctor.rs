@@ -7,6 +7,7 @@ use crate::journal::SwitchJournal;
 use crate::lockfile::lock_path_for;
 use crate::paths::storage_write_lock_target;
 use crate::proc::running_claude_pids;
+use crate::schedule::{State, Warning, detect};
 use crate::store::{CredentialStore, now_ms};
 use crate::validate::validate_credentials;
 
@@ -185,6 +186,7 @@ pub fn doctor(ctx: &Ctx) -> crate::Result<Vec<Finding>> {
 
     // --- each profile -----------------------------------------------------
     let profiles = ctx.repo().list()?;
+    let profile_count = profiles.len();
     if profiles.is_empty() {
         findings.push(Finding::warn(
             "no profiles saved",
@@ -228,7 +230,94 @@ pub fn doctor(ctx: &Ctx) -> crate::Result<Vec<Finding>> {
         }
     }
 
+    findings.push(schedule_finding(detect().status(), profile_count));
+
     Ok(findings)
+}
+
+/// Is anything actually keeping the idle profiles alive?
+///
+/// Nothing else in this function notices when the answer is no. Every check
+/// above reports on a profile as it stands today, so a machine with the
+/// refresh schedule switched off passes them all and then quietly loses an
+/// account a fortnight later. That is precisely the class of failure this
+/// command exists to catch.
+///
+/// Severity tracks whether it matters rather than whether it is on: with a
+/// single profile the live credentials are refreshed by Claude Code itself,
+/// and a scheduler would have nothing to do.
+///
+/// The probe is a parameter rather than a call, so the policy can be tested
+/// without a scheduler. Reading the host's real one from a test would make
+/// the assertion depend on the machine running it.
+fn schedule_finding(status: crate::Result<State>, profile_count: usize) -> Finding {
+    let state = match status {
+        Ok(state) => state,
+        // Not being able to ask is itself worth reporting: it leaves the same
+        // observable state as "installed but never fires".
+        Err(e) => {
+            return Finding::warn(
+                "could not query the refresh schedule",
+                format!("{e}; check it by hand with `ccred schedule status`"),
+            );
+        }
+    };
+
+    match state {
+        State::Installed(h) if h.next_run.is_none() => Finding::error(
+            "the refresh schedule is registered but will never run",
+            "reinstall it with `ccred schedule install`, which verifies the next run".to_string(),
+        ),
+        State::Installed(h) if !h.enabled => Finding::warn(
+            "the refresh schedule is installed but disabled",
+            "profiles will go stale until it is enabled again".to_string(),
+        ),
+        State::Installed(h) => {
+            // Running only while signed in is the normal outcome of a
+            // non-elevated install. It is worth stating once, not worth
+            // colouring the whole report yellow for ever.
+            let signed_in_only = h
+                .warnings
+                .iter()
+                .any(|w| matches!(w, Warning::RunsOnlyWhenSignedIn));
+            let blocking = h
+                .warnings
+                .iter()
+                .find(|w| !matches!(w, Warning::RunsOnlyWhenSignedIn));
+
+            match blocking {
+                Some(w) => Finding::warn(
+                    "the refresh schedule may not fire",
+                    format!("{w}; see `ccred schedule status`"),
+                ),
+                None => Finding::ok(format!(
+                    "refresh scheduled, next run {}{}",
+                    h.next_run.as_deref().unwrap_or("unknown"),
+                    if signed_in_only {
+                        " (while you are signed in)"
+                    } else {
+                        ""
+                    }
+                )),
+            }
+        }
+        State::NotInstalled if profile_count > 1 => Finding::warn(
+            "nothing is refreshing the profiles you are not using",
+            "an idle profile's refresh token expires and then needs a manual login; \
+             run `ccred schedule install`"
+                .to_string(),
+        ),
+        State::NotInstalled => {
+            Finding::ok("no refresh schedule, and with one profile nothing goes stale".to_string())
+        }
+        State::Unsupported { reason, remedy } => Finding::warn(
+            "no refresh schedule is possible here",
+            match remedy {
+                Some(r) => format!("{reason}; {r}"),
+                None => reason,
+            },
+        ),
+    }
 }
 
 /// The worst severity present, for the exit code.
@@ -239,5 +328,71 @@ pub fn worst(findings: &[Finding]) -> Severity {
         Severity::Warn
     } else {
         Severity::Ok
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::error::CcredError;
+    use crate::schedule::Health;
+
+    fn health(enabled: bool, next_run: Option<&str>) -> Health {
+        Health {
+            enabled,
+            next_run: next_run.map(str::to_string),
+            last_run: None,
+            warnings: Vec::new(),
+        }
+    }
+
+    /// The gap this check was added to close: every other finding reports on
+    /// a profile as it stands today, so a machine with no refresh schedule
+    /// passed `doctor` cleanly and then lost the idle account a fortnight
+    /// later. Two profiles and no schedule must not be reported as healthy.
+    #[test]
+    fn an_idle_profile_with_nothing_refreshing_it_is_a_warning() {
+        let f = schedule_finding(Ok(State::NotInstalled), 2);
+        assert_eq!(f.severity, Severity::Warn, "{f:?}");
+        assert!(f.detail.unwrap().contains("ccred schedule install"));
+    }
+
+    #[test]
+    fn one_profile_needs_no_schedule() {
+        // Claude Code refreshes the credentials it is actually using, so a
+        // single profile cannot go stale and a warning would be noise.
+        assert_eq!(
+            schedule_finding(Ok(State::NotInstalled), 1).severity,
+            Severity::Ok
+        );
+    }
+
+    /// `install_checked` already refuses to register a job with no next run,
+    /// but one can stop firing later -- a disabled timer, a deleted binary.
+    #[test]
+    fn registered_but_never_firing_is_an_error_not_a_warning() {
+        let f = schedule_finding(Ok(State::Installed(health(true, None))), 2);
+        assert_eq!(f.severity, Severity::Error, "{f:?}");
+    }
+
+    #[test]
+    fn a_working_schedule_reports_when_it_next_runs() {
+        let f = schedule_finding(Ok(State::Installed(health(true, Some("Fri 03:00")))), 2);
+        assert_eq!(f.severity, Severity::Ok);
+        assert!(f.title.contains("Fri 03:00"), "{f:?}");
+    }
+
+    #[test]
+    fn a_disabled_schedule_is_not_reported_as_working() {
+        let f = schedule_finding(Ok(State::Installed(health(false, Some("Fri 03:00")))), 2);
+        assert_eq!(f.severity, Severity::Warn, "{f:?}");
+    }
+
+    /// Failing to ask must not read as "nothing is wrong".
+    #[test]
+    fn an_unanswerable_probe_is_reported_rather_than_swallowed() {
+        let f = schedule_finding(Err(CcredError::Schedule("no session bus".into())), 2);
+        assert_eq!(f.severity, Severity::Warn, "{f:?}");
+        assert!(f.detail.unwrap().contains("no session bus"));
     }
 }

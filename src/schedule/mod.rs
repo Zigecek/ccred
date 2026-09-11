@@ -163,7 +163,37 @@ pub enum Warning {
     OnBatteryBlocked,
     /// Registered, but no next run -- the failure this module exists to catch.
     RegisteredButNeverFires,
+    /// Windows: registering S4U or a boot trigger needs elevation, so the task
+    /// was created with `InteractiveToken` instead and only runs while this
+    /// user is signed in.
+    RunsOnlyWhenSignedIn,
     BinaryMissing(String),
+}
+
+/// The words for each warning live here rather than in the renderer, because
+/// `doctor` reports them too and a second wording would drift from this one.
+impl std::fmt::Display for Warning {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let text = match self {
+            Warning::LingerDisabled => {
+                "lingering is off, so the timer stops when you log out (`loginctl enable-linger`)"
+            }
+            Warning::NoGuiSession => "a launchd agent only runs inside a GUI login session",
+            Warning::DisabledByUser => "someone switched this off in Login Items",
+            Warning::OnBatteryBlocked => "the task will not start while on battery",
+            Warning::RegisteredButNeverFires => {
+                "registered, but the scheduler reports no next run at all"
+            }
+            Warning::RunsOnlyWhenSignedIn => concat!(
+                "runs only while you are signed in; ",
+                "an elevated `ccred schedule install` registers the signed-out variant"
+            ),
+            Warning::BinaryMissing(path) => {
+                return write!(f, "the registered binary is missing: {path}");
+            }
+        };
+        f.write_str(text)
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]

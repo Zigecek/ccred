@@ -84,6 +84,25 @@ scheduler that double-fires -- systemd catching up, launchd coalescing, a
 Windows task with both a boot trigger and a schedule -- costs nothing. The
 real rate limit lives in the command, not the schedule.
 
+The save that creates your **second** profile registers that schedule for you,
+because that is the moment an idle account starts expiring unattended and the
+only moment someone is certainly watching. It says so when it does it, it never
+does it on a re-save, and `CCRED_NO_AUTO_SCHEDULE=1` turns it off for
+provisioning or for anyone who schedules refreshes their own way. A packaged
+install (apt, `.deb`) never registers anything: it runs as root, while the
+timer belongs to one user's session.
+
+On Windows the preferred task definition needs administrator rights: both
+`S4U` (runs while signed out) and a boot trigger are refused with `Access is
+denied` for a standard user. Rather than fail, registration falls back to a
+definition that any user may create -- it runs only while you are signed in,
+and says so. A missed run is still caught up afterwards, so what is lost is the
+signed-out case, not reliability in general.
+
+If the scheduler refuses, the profile is still saved. Storing credentials is
+the operation that matters; the schedule is reported as failed and left to
+`ccred schedule install`.
+
 `ccred schedule install --dry-run` prints the exact unit file, plist or task
 XML it would register, without writing anything.
 

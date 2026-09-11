@@ -12,7 +12,7 @@ use super::{
 };
 use crate::ops::doctor::{Finding, Severity};
 use crate::ops::refresh::{Decision, RefreshReport};
-use crate::ops::simple::{CurrentReport, ProfileRow, SaveReport};
+use crate::ops::simple::{CurrentReport, ProfileRow, SaveReport, ScheduleSetup};
 use crate::ops::switch::{OutgoingSync, SwitchReport};
 use crate::schedule::{Backend, Health, RenderedFile, State, Warning};
 
@@ -297,6 +297,30 @@ pub fn save(theme: &Theme, r: &SaveReport) {
         paint(MUTED, &format!("({})", r.account))
     );
     println!("{PAD}  {}", paint(MUTED, &r.outcome));
+    match &r.schedule {
+        Some(ScheduleSetup::Installed { next_run }) => {
+            println!();
+            callout(
+                OK,
+                g.ok,
+                "automatic refresh registered, so the idle profile cannot expire",
+                &[
+                    &format!("next run {}", next_run.as_deref().unwrap_or("unknown")),
+                    "`ccred schedule uninstall` removes it again",
+                ],
+            );
+        }
+        Some(ScheduleSetup::Failed { reason }) => {
+            println!();
+            callout(
+                WARN,
+                g.warn,
+                "the profile is saved, but automatic refresh could not be registered",
+                &[reason, "run `ccred schedule install` to see the full error"],
+            );
+        }
+        None => {}
+    }
     println!();
 }
 
@@ -467,22 +491,6 @@ fn backend_label(b: Backend) -> &'static str {
     }
 }
 
-fn warning_label(w: &Warning) -> String {
-    match w {
-        Warning::LingerDisabled => {
-            "lingering is off, so the timer stops when you log out (`loginctl enable-linger`)"
-                .into()
-        }
-        Warning::NoGuiSession => "a launchd agent only runs inside a GUI login session".into(),
-        Warning::DisabledByUser => "someone switched this off in Login Items".into(),
-        Warning::OnBatteryBlocked => "the task will not start while on battery".into(),
-        Warning::RegisteredButNeverFires => {
-            "registered, but the scheduler reports no next run at all".into()
-        }
-        Warning::BinaryMissing(path) => format!("the registered binary is missing: {path}"),
-    }
-}
-
 pub fn schedule_status(theme: &Theme, state: &State, backend: Backend) {
     let g = theme.glyphs;
     println!();
@@ -550,7 +558,7 @@ fn print_warnings(theme: &Theme, warnings: &[Warning]) {
         println!(
             "{PAD}{} {}",
             paint(WARN, theme.glyphs.warn),
-            paint(VALUE, &warning_label(w))
+            paint(VALUE, &w.to_string())
         );
     }
 }
