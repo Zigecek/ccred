@@ -280,6 +280,16 @@ pub fn refresh(ctx: &Ctx, opts: &RefreshOptions) -> crate::Result<RefreshReport>
             state.next_attempt_after_ms = None;
             state.last_attempt_ms = None;
         }
+        // A forced run backdates the access token so an exchange happens, so
+        // the gate that skips a profile with a live one does not apply.
+        let tokens = if opts.force {
+            TokenState {
+                access_expired: true,
+                ..tokens
+            }
+        } else {
+            tokens
+        };
         let effective_policy = if opts.force {
             RefreshPolicy {
                 // Everything below this is "refresh now"; i64::MAX would
@@ -345,7 +355,8 @@ pub fn refresh(ctx: &Ctx, opts: &RefreshOptions) -> crate::Result<RefreshReport>
                     }
                 }
                 let cli = cli.as_ref().expect("discovered just above");
-                let outcome = refresh_one(ctx, &name, cli, &state, &effective_policy, now)?;
+                let outcome =
+                    refresh_one(ctx, &name, cli, &state, &effective_policy, now, opts.force)?;
                 decision = outcome.0;
                 detail = outcome.1;
                 window_after = store
@@ -437,6 +448,7 @@ fn refresh_one(
     state: &crate::profile::RefreshState,
     policy: &RefreshPolicy,
     now: i64,
+    force: bool,
 ) -> crate::Result<(Decision, Option<String>)> {
     let dir = ctx.paths().profile_dir(name)?;
     let scope = scope_for(&dir, false);
@@ -457,6 +469,27 @@ fn refresh_one(
     let before = pre
         .as_ref()
         .and_then(|l| l.creds.oauth.refresh_token_expires_at);
+
+    // `--force` means "make it happen now", and the one thing that stops it
+    // happening is an access token that has not expired: Claude Code only
+    // exchanges tokens when it needs a new access token, and only an exchange
+    // moves the refresh window. Backdating the stored expiry is what turns a
+    // forced run into an actual exchange.
+    //
+    // Safe to write: `assert_safe_replacement` guards the refresh window,
+    // which this does not touch. If the probe then fails, the profile is left
+    // claiming an expiry that has passed -- which only means the next run
+    // tries again, and the first success corrects it.
+    if force
+        && let Some(good) = &pre
+        && !validate_credentials(&good.creds.oauth, now)
+            .map(|h| h.access_expired)
+            .unwrap_or(false)
+    {
+        let mut backdated = good.creds.clone();
+        backdated.oauth.expires_at = now - 60_000;
+        store.replace(&backdated)?;
+    }
 
     // Try the rung that worked last time first, then the rest of the ladder.
     let mut ladder: Vec<Probe> = Vec::new();
