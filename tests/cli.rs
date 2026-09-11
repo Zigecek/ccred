@@ -797,3 +797,32 @@ fn doctor_reports_credentials_other_users_can_read() {
     assert!(out.contains("readable by other users"), "{out}");
     assert!(out.contains("644"), "the mode found must be named: {out}");
 }
+
+/// One broken profile must not end the run for the rest.
+///
+/// An unattended job that gives up on every account because one is unreadable
+/// is worse than one that reports the unreadable account and carries on.
+#[test]
+fn a_profile_that_cannot_be_read_does_not_end_the_run() {
+    let sb = Sandbox::new();
+    sb.run(&["save", "work"]);
+    sb.login_b();
+    sb.run(&["save", "personal"]);
+
+    // Valid JSON, unusable credentials: it parses, so it reaches the refresh
+    // logic rather than being skipped at load.
+    std::fs::write(
+        sb.path().join(".ccred/profiles/work/.credentials.json"),
+        r#"{"claudeAiOauth":{"accessToken":"","refreshToken":"","expiresAt":0,
+           "refreshTokenExpiresAt":0,"scopes":["user:inference"]}}"#,
+    )
+    .unwrap();
+
+    let (out, err, code) = sb.run(&["refresh"]);
+    assert_eq!(code, 4, "a broken profile needs attention: {err}{out}");
+    assert!(out.contains("work"), "the broken one must be named: {out}");
+    assert!(
+        out.contains("personal"),
+        "the healthy one must still be reported: {out}"
+    );
+}

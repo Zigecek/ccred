@@ -394,10 +394,22 @@ pub fn refresh(ctx: &Ctx, opts: &RefreshOptions) -> crate::Result<RefreshReport>
                     }
                 }
                 let cli = cli.as_ref().expect("discovered just above");
-                let outcome =
-                    refresh_one(ctx, &name, cli, &state, &effective_policy, now, opts.force)?;
-                decision = outcome.0;
-                detail = outcome.1;
+                // Contained to this profile. A store that will not load, a
+                // spawn that will not start, a metadata write that fails --
+                // any of them used to end the whole run, taking the other
+                // profiles' work with it. An unattended job that gives up on
+                // everything because one account is broken is worse than one
+                // that reports the broken account.
+                match refresh_one(ctx, &name, cli, &state, &effective_policy, now, opts.force) {
+                    Ok((d, note)) => {
+                        decision = d;
+                        detail = note;
+                    }
+                    Err(e) => {
+                        decision = Decision::Broken;
+                        detail = Some(e.to_string());
+                    }
+                }
                 window_after = store
                     .load()
                     .ok()
