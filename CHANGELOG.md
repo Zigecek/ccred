@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.2.3
+
+**Upgrade from 0.2.1 or 0.2.2.** Both shipped a check that reported healthy
+profiles as broken.
+
+### The environment oracle is gone
+
+0.2.1 added a check meant to prove the spawned `claude` had really used the
+profile's credential store, by comparing the account it reported against the
+profile's own. It reads that account from the cached `oauthAccount` in the
+shared `.claude.json` -- which we deliberately leave shared -- so it names the
+live account regardless of which store was read. On a real machine it declared
+an untouched profile "ignored the credential directory".
+
+No oracle is needed. Measured against claude 2.1.236: pointing
+`CLAUDE_SECURESTORAGE_CONFIG_DIR` at empty credentials makes it report
+`loggedIn: false`, while without the variable it is logged in. The variable is
+honoured, so the existing window-movement test is the whole proof -- had
+another store been read, the profile's own file could not have changed.
+
+### A spent refresh token is now reported as needing a login
+
+When a refresh token has already been used, Claude Code prints:
+
+    Failed to authenticate: OAuth session expired and could not be refreshed
+
+None of the phrases this looked for appear in it, so the profile was reported
+as broken rather than as needing a login -- which is the one thing the user
+can actually act on.
+
+### Added
+
+- `ccred refresh --force` tries every profile now, ignoring the backoff, the
+  window threshold and the run-level rate limit. Those are right for a timer
+  and wrong for someone who has just fixed what was broken and wants to watch
+  it work. It does not clear `needs_login`: a human is genuinely required
+  there, and spawning a process that cannot succeed only wastes a rate limit.
+
 ## 0.2.2
 
 ### A spawned `claude` can no longer empty a profile
