@@ -826,3 +826,32 @@ fn a_profile_that_cannot_be_read_does_not_end_the_run() {
         "the healthy one must still be reported: {out}"
     );
 }
+
+/// `doctor` must produce a report even when the thing it reports on is
+/// broken. Refusing to say anything is the one response that cannot help
+/// somebody who has just run it because something is wrong.
+#[cfg(unix)]
+#[test]
+fn doctor_still_reports_when_the_profiles_directory_is_unreadable() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let sb = Sandbox::new();
+    sb.run(&["save", "work"]);
+
+    let dir = sb.path().join(".ccred/profiles");
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+    let (out, err, code) = sb.run(&["doctor"]);
+    // Restore before asserting, or a failure leaves the tempdir undeletable.
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+
+    assert_eq!(code, 7, "it must fail loudly: {err}{out}");
+    assert!(
+        out.contains("config directory"),
+        "the rest of the report must still be there: {out}"
+    );
+    assert!(
+        out.contains("cannot be read") || out.contains("unreadable"),
+        "and it must say what it could not read: {out}"
+    );
+}

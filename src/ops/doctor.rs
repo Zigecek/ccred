@@ -151,7 +151,20 @@ pub fn doctor(ctx: &Ctx) -> crate::Result<Vec<Finding>> {
     // This is the check that would have caught a real near-miss: after logging
     // in as a second account, the pointer still named the first, and a
     // scheduled sync was minutes away from storing the wrong credentials.
-    let active = ctx.repo().active()?;
+    // A diagnostic command must not fail to diagnose. Anything unreadable
+    // here is itself a finding -- and this is exactly the moment someone
+    // reaches for `doctor`, so refusing to produce a report is the one
+    // response that cannot help.
+    let active = match ctx.repo().active() {
+        Ok(a) => a,
+        Err(e) => {
+            findings.push(Finding::error(
+                "the active-profile pointer is unreadable",
+                e.to_string(),
+            ));
+            None
+        }
+    };
     match &active {
         None => findings.push(Finding::warn(
             "no active profile",
@@ -186,7 +199,16 @@ pub fn doctor(ctx: &Ctx) -> crate::Result<Vec<Finding>> {
     }
 
     // --- each profile -----------------------------------------------------
-    let profiles = ctx.repo().list()?;
+    let profiles = match ctx.repo().list() {
+        Ok(p) => p,
+        Err(e) => {
+            findings.push(Finding::error(
+                "the profiles directory cannot be read",
+                e.to_string(),
+            ));
+            Vec::new()
+        }
+    };
     let profile_count = profiles.len();
     if profiles.is_empty() {
         findings.push(Finding::warn(
@@ -195,7 +217,15 @@ pub fn doctor(ctx: &Ctx) -> crate::Result<Vec<Finding>> {
         ));
     }
     for name in profiles {
-        match ctx.repo().store(&name)?.load() {
+        let Ok(store) = ctx.repo().store(&name) else {
+            findings.push(broken_profile(
+                ctx,
+                &name,
+                "its directory cannot be resolved",
+            ));
+            continue;
+        };
+        match store.load() {
             Ok(Some(loaded)) => match validate_credentials(&loaded.creds.oauth, now) {
                 Ok(h) if h.refresh_expired => findings.push(Finding::error(
                     format!("profile '{name}' has expired"),
