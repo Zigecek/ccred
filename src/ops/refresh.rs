@@ -282,6 +282,15 @@ pub fn refresh(ctx: &Ctx, opts: &RefreshOptions) -> crate::Result<RefreshReport>
 ///
 /// Success is judged by an observed change in the credential store, never by
 /// an exit code. Exit codes lie; a refresh window that moved forward does not.
+/// The address this profile is recorded as belonging to, when one is known.
+///
+/// `None` means the profile predates identity capture or the account was never
+/// resolved. An unknown identity must never be treated as a mismatch -- the
+/// same rule the switch gate follows, and for the same reason.
+fn expected_email(ctx: &Ctx, name: &ProfileName) -> crate::Result<Option<String>> {
+    Ok(ctx.repo().meta(name)?.and_then(|m| m.account.email))
+}
+
 fn refresh_one(
     ctx: &Ctx,
     name: &ProfileName,
@@ -329,20 +338,30 @@ fn refresh_one(
             ));
         }
 
-        // Did the environment actually take effect? When the build reports it,
-        // this turns a hope into a check -- otherwise we might "refresh" the
-        // default account several times and call it success.
+        // Did the environment actually take effect?
+        //
+        // The identity Claude Code reports is the direct evidence: if our
+        // credential directory was honoured, the account it authenticated as
+        // is this profile's. `projectsDirectory` cannot answer this -- it
+        // follows `CLAUDE_CONFIG_DIR`, which we deliberately do not set, so it
+        // reports the shared configuration either way.
+        //
+        // Without this check a build that ignored the variable would refresh
+        // the default account, and we would have no way to tell that from a
+        // profile that simply had nothing to do.
         if probe == Probe::AuthStatus
             && outcome.succeeded()
             && let Ok(status) =
                 serde_json::from_str::<crate::claude_cli::AuthStatus>(outcome.stdout.trim())
-            && let Some(reported) = status.projects_directory
-            && !reported.starts_with(&dir.to_string_lossy().to_string())
+            && let Some(reported) = status.email.as_deref()
+            && let Some(expected) = expected_email(ctx, name)?
+            && !reported.eq_ignore_ascii_case(&expected)
         {
             return Ok((
                 Decision::Broken,
                 Some(format!(
-                    "claude ignored the credential directory (reported {reported})"
+                    "claude ignored the credential directory: it authenticated as \
+                     {reported}, not this profile's account"
                 )),
             ));
         }

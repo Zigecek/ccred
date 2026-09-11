@@ -94,18 +94,23 @@ pub fn keychain_service_name(scope: &StorageScope) -> String {
 
 /// Environment to hand a spawned `claude` so it uses a specific store.
 ///
-/// Both variables are set on purpose. `CLAUDE_SECURESTORAGE_CONFIG_DIR` moves
-/// only the credential store, leaving `.claude.json`, `projects/` and MCP
-/// config shared -- which is what we want, since accounts should be separate
-/// but project history should not be. Setting `CLAUDE_CONFIG_DIR` too removes
-/// any doubt about which value feeds the service-name hash.
+/// **Only** `CLAUDE_SECURESTORAGE_CONFIG_DIR`. It relocates the credential
+/// store and nothing else, leaving `.claude.json`, `projects/`, `sessions/`
+/// and MCP config where they are -- which is what we want, since accounts
+/// should be separate but project history should not be.
+///
+/// `CLAUDE_CONFIG_DIR` must **not** be set alongside it. It moves the whole
+/// configuration, so a spawned probe would find an empty directory: no
+/// `.claude.json`, no trust state for the working directory, no MCP config.
+/// A non-interactive run in that state has nothing to refresh and may stop on
+/// a trust prompt instead, which is the likeliest reason a refresh appears to
+/// do nothing at all.
 pub fn env_pairs_for(scope: &StorageScope) -> Vec<(&'static str, String)> {
     match scope {
         StorageScope::Default => Vec::new(),
-        StorageScope::Custom(dir) => vec![
-            ("CLAUDE_SECURESTORAGE_CONFIG_DIR", dir.clone()),
-            ("CLAUDE_CONFIG_DIR", dir.clone()),
-        ],
+        StorageScope::Custom(dir) => {
+            vec![("CLAUDE_SECURESTORAGE_CONFIG_DIR", dir.clone())]
+        }
     }
 }
 
@@ -222,14 +227,21 @@ mod tests {
         assert!(env_pairs_for(&StorageScope::Default).is_empty());
     }
 
+    /// Only the credential store moves. Setting `CLAUDE_CONFIG_DIR` as well
+    /// relocates the *whole* configuration, so a spawned probe finds no
+    /// `.claude.json`, no trust state and no MCP config -- it has nothing to
+    /// refresh and may stop on a trust prompt. An earlier revision set both,
+    /// which is the likeliest reason a refresh appeared to do nothing.
     #[test]
-    fn custom_scope_sets_both_variables_to_the_same_string() {
+    fn custom_scope_moves_the_credential_store_and_nothing_else() {
         let pairs = env_pairs_for(&StorageScope::Custom("/x/y".into()));
-        assert_eq!(pairs.len(), 2);
-        assert!(pairs.iter().all(|(_, v)| v == "/x/y"));
         let keys: Vec<_> = pairs.iter().map(|(k, _)| *k).collect();
-        assert!(keys.contains(&"CLAUDE_SECURESTORAGE_CONFIG_DIR"));
-        assert!(keys.contains(&"CLAUDE_CONFIG_DIR"));
+        assert_eq!(keys, vec!["CLAUDE_SECURESTORAGE_CONFIG_DIR"]);
+        assert!(pairs.iter().all(|(_, v)| v == "/x/y"));
+        assert!(
+            !keys.contains(&"CLAUDE_CONFIG_DIR"),
+            "CLAUDE_CONFIG_DIR shreds the shared configuration for the spawned probe"
+        );
     }
 
     #[test]
