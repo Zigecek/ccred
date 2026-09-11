@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.2.6
+
+### A failed probe says which kind of failure it was
+
+"Did not move the refresh window" covered two situations that call for
+opposite reactions: the probe was too weak and did nothing, or it did exchange
+tokens and the server refused. Only the first is worth trying a harder rung
+for; only the second means the account is in trouble. Comparing the store
+revision separates them, which is what that method was written for and never
+used for.
+
+### Documented
+
+- The README claimed nothing was published anywhere. The Scoop bucket is live
+  and verified, and every release carries a `.deb` for amd64 and arm64; both
+  now come first, with the registries named as waiting on account setup rather
+  than implied to be missing.
+- Why the scheduler passes `--if-older-than 48` and not the 72 the design
+  sketch suggested: the shortest real gap between runs is 72 hours, so 72
+  would sit exactly on the interval and could swallow a run it was meant to
+  allow.
+
+### Tested
+
+Every source file now has tests. The last three to get them were the exit-code
+mapping, the load contract, and the schedule spec -- respectively the thing
+schedulers read, the thing that stopped the shell version destroying a
+profile, and the two properties that decide whether a registered job can start
+at all.
+
 ## 0.2.5
 
 ### A profile with a live access token is no longer spawned for
