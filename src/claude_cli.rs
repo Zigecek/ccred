@@ -49,12 +49,23 @@ pub struct AuthStatus {
 /// Ordered cheapest first. Whether the cheap ones are enough is a question
 /// about a specific Claude Code build, so it is answered by observation at
 /// runtime rather than assumed here.
+///
+/// # What was observed
+///
+/// Against claude 2.1.236 with an expired access token, the second rung is
+/// the one that works: `mcp list` renews the token, `auth status --json` does
+/// not, and the prompt is never reached. The ladder remembers that per
+/// profile, so a refresh normally costs one cheap invocation and no quota at
+/// all. This is the question the design sketch left open.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Probe {
-    /// Free. Reports auth state; may or may not refresh an expired token.
+    /// Free, and observed NOT to refresh: it reports what is stored without
+    /// exchanging anything.
     AuthStatus,
-    /// Free. Touches the auth layer without a model call.
+    /// Free, and the rung that actually works. Touching the auth layer is
+    /// enough to make Claude Code renew an expired access token, with no
+    /// model call and no quota spent.
     McpList,
     /// Costs a negligible slice of quota, but hits the API, so it must refresh.
     ///
