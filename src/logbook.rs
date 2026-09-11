@@ -69,14 +69,21 @@ pub fn append(log_dir: &Path, entry: &Entry) -> crate::Result<()> {
     })?;
     line.push('\n');
 
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-        .map_err(|source| CcredError::Io {
-            path: path.clone(),
-            source,
-        })?;
+    // 0600 at creation, like everything else this tool writes. The contents
+    // hold no secret by design, but profile names are the user's business and
+    // the file sits among their credentials; a mode that differs from its
+    // neighbours invites the question of which one is wrong.
+    let mut opts = OpenOptions::new();
+    opts.create(true).append(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    let mut file = opts.open(&path).map_err(|source| CcredError::Io {
+        path: path.clone(),
+        source,
+    })?;
     file.write_all(line.as_bytes())
         .map_err(|source| CcredError::Io { path, source })
 }
@@ -189,6 +196,23 @@ mod tests {
             "the live file starts again"
         );
         assert_eq!(tail(d.path(), 10).len(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_log_is_created_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = tempfile::TempDir::new().unwrap();
+        append(d.path(), &entry("ran")).unwrap();
+        let mode = fs::metadata(log_path(d.path()))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(
+            mode & 0o077,
+            0,
+            "group and other must have nothing: {mode:o}"
+        );
     }
 
     /// The project rule is to persist error kinds, never rendered messages: a
