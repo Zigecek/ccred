@@ -1,5 +1,58 @@
 # Changelog
 
+## 0.2.1
+
+### Refreshing could not have worked
+
+`env_pairs_for` set `CLAUDE_CONFIG_DIR` alongside
+`CLAUDE_SECURESTORAGE_CONFIG_DIR`. Only the second was wanted: it relocates
+the credential store and leaves `.claude.json`, `projects/`, `sessions/` and
+MCP config shared. The first moves the whole configuration, so every spawned
+probe ran against an empty directory -- no config, no trust state for the
+working directory, no MCP. A non-interactive run in that state has nothing to
+refresh and may stop on a trust prompt instead.
+
+The oracle that proved the environment took effect went with it.
+`projectsDirectory` follows `CLAUDE_CONFIG_DIR`, so it can no longer answer
+that question. The account Claude Code reports having authenticated as is
+direct evidence instead.
+
+### `switch` could destroy an account outright
+
+The outgoing mirror is deliberately skipped when the live account is not the
+one the pointer names -- which is exactly the case where those credentials are
+stored in no profile. The next step overwrote them. Someone logged into an
+account they had not saved lost it by running the command meant to organise
+their accounts. Those credentials are now copied aside first, and the report
+says where.
+
+### Fixed
+
+- `scopes` round-trips faithfully. With `skip_serializing_if` on an empty
+  `Vec`, an input of `"scopes": []` re-serialised to nothing, the lossless
+  guard correctly called that a dropped key, and every command touching such a
+  file failed with exit 7.
+- The release job's `--target` is gone. Supplying `target_commitish` makes
+  GitHub demand `workflows: write` on top of `contents: write` whenever the
+  released commit range touches `.github/workflows`, and `GITHUB_TOKEN` cannot
+  hold that scope. This is the 403 that made every release be assembled by
+  hand.
+- `packaging` now chains off the release workflow. It triggered on
+  `release: published`, which never fires for a release created with
+  `GITHUB_TOKEN`, so no `.deb` or AUR package had ever been built.
+- `publish-npm` pinned Node 22.14 and then installed `npm@latest`, which
+  requires 22.22.2. It could never reach the registry.
+- Both called publish workflows download release assets but were granted no
+  `contents` permission.
+- The Homebrew job is gated on its token existing, so an unconfigured tap no
+  longer fails every release.
+- The nfpm download was verified against a filename that was never written to
+  disk, and the checksum grep also matched the `.sbom.json` line.
+- Every action in `release.yml` is pinned to a commit, including
+  `actions/attest`, which mints this tool's provenance.
+- The Scoop manifest carried a placeholder hash and an `extract_dir` for a
+  directory the archive does not contain.
+
 ## 0.2.0
 
 ### The refresh schedule registers itself
