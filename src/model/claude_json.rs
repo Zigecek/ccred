@@ -55,29 +55,6 @@ impl ClaudeJsonDoc {
         Ok(())
     }
 
-    /// Mark a directory as trusted so a non-interactive `claude` run in it does
-    /// not stop on the trust prompt.
-    pub fn trust_dir(&mut self, dir: &Path) -> crate::Result<()> {
-        let key = dir.to_string_lossy().to_string();
-        let obj = self
-            .root
-            .as_object_mut()
-            .ok_or_else(|| CcredError::UnsafeWrite("`.claude.json` is not an object".into()))?;
-        let projects = obj
-            .entry("projects")
-            .or_insert_with(|| Value::Object(Default::default()));
-        let projects = projects.as_object_mut().ok_or_else(|| {
-            CcredError::UnsafeWrite("`projects` in `.claude.json` is not an object".into())
-        })?;
-        let entry = projects
-            .entry(key)
-            .or_insert_with(|| Value::Object(Default::default()));
-        if let Some(map) = entry.as_object_mut() {
-            map.insert("hasTrustDialogAccepted".to_string(), Value::Bool(true));
-        }
-        Ok(())
-    }
-
     /// Write back atomically, refusing an implausible shrink.
     ///
     /// If a bug ever reduced this document to a handful of keys, writing it
@@ -285,24 +262,6 @@ mod tests {
         // The file on disk must be untouched.
         let raw: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         assert_eq!(raw["numStartups"], json!(412));
-    }
-
-    #[test]
-    fn trust_dir_adds_the_flag_without_disturbing_others() {
-        let (_d, path) = doc_with(realistic());
-        let mut doc = ClaudeJsonDoc::load(&path).unwrap();
-        doc.trust_dir(Path::new("/tmp/profile")).unwrap();
-        doc.save_atomic(&path).unwrap();
-
-        let raw: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-        assert_eq!(
-            raw["projects"]["/tmp/profile"]["hasTrustDialogAccepted"],
-            json!(true)
-        );
-        assert_eq!(
-            raw["projects"]["/home/user/code"]["hasTrustDialogAccepted"],
-            json!(true)
-        );
     }
 
     #[test]

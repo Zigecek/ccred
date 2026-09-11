@@ -57,6 +57,13 @@ pub enum Probe {
     /// Free. Touches the auth layer without a model call.
     McpList,
     /// Costs a negligible slice of quota, but hits the API, so it must refresh.
+    ///
+    /// This is the rung that could in principle stop on a directory-trust
+    /// prompt. It does not in practice: `CLAUDE_CONFIG_DIR` is deliberately
+    /// left alone, so the spawned process reads the user's own
+    /// `.claude.json` and already has whatever trust they granted. Marking a
+    /// directory trusted on their behalf to be sure would mean editing their
+    /// security posture without asking, which is worse than the prompt.
     MinimalPrompt,
 }
 
