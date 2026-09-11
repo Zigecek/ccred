@@ -520,7 +520,9 @@ fn refresh_one(
     // deadline is a fixed ceiling set at login, and each rotated token
     // inherits it. Judging by the window meant every successful exchange was
     // recorded as a failure and earned a backoff.
-    let access_before = pre.as_ref().map(|l| l.creds.oauth.expires_at);
+    let mut access_before = pre.as_ref().map(|l| l.creds.oauth.expires_at);
+
+    let mut last_note = String::new();
 
     // `--force` means "make it happen now", and the one thing that stops it
     // happening is an access token that has not expired: Claude Code only
@@ -538,9 +540,20 @@ fn refresh_one(
             .map(|h| h.access_expired)
             .unwrap_or(false)
     {
+        let stale = now - 60_000;
         let mut backdated = good.creds.clone();
-        backdated.oauth.expires_at = now - 60_000;
-        store.replace(&backdated)?;
+        backdated.oauth.expires_at = stale;
+        match store.replace(&backdated) {
+            // The baseline has to be what the probe will actually find, not
+            // what was there a moment ago. Comparing against the original
+            // would call a real exchange a failure whenever the token it
+            // replaced happened to live longer than the new one.
+            Ok(()) => access_before = Some(stale),
+            // Not fatal. Everything else on this path degrades per profile,
+            // and a forced run that cannot backdate is merely a forced run
+            // that will find nothing to do.
+            Err(e) => last_note = format!("could not force an exchange: {e}"),
+        }
     }
 
     // Try the rung that worked last time first, then the rest of the ladder.
@@ -565,7 +578,6 @@ fn refresh_one(
     // first is worth trying a harder rung for.
     let revision_before = store.revision().ok().flatten();
 
-    let mut last_note = String::new();
     for probe in ladder {
         let outcome = cli.run(&scope, probe, policy.spawn_timeout)?;
 
