@@ -105,6 +105,15 @@ pub enum Command {
         /// Do nothing if the last run was more recent than this many hours.
         #[arg(long, value_name = "HOURS")]
         if_older_than: Option<u32>,
+        /// Try every profile now, ignoring the backoff and the window
+        /// threshold.
+        ///
+        /// The schedule deliberately leaves a profile alone until its window
+        /// runs low, and backs off after a failure. Both are right for a
+        /// timer and wrong for someone who has just fixed whatever was broken
+        /// and wants to see it work.
+        #[arg(long)]
+        force: bool,
         /// Accepted for symmetry with schedulers; all profiles are the default.
         #[arg(long)]
         all: bool,

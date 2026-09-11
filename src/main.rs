@@ -83,12 +83,14 @@ fn run(cli: &Cli, theme: &Theme) -> ccred::Result<ExitCode> {
 
         Some(Command::Refresh {
             if_older_than,
+            force,
             all: _,
             claude_path,
         }) => {
             let opts = refresh::RefreshOptions {
                 if_older_than_ms: if_older_than.map(|h| i64::from(h) * 3_600_000),
                 claude_path: claude_path.clone(),
+                force: *force,
                 ..Default::default()
             };
             let report = refresh::refresh(&ctx, &opts)?;

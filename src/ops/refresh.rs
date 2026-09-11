@@ -184,13 +184,21 @@ pub struct RefreshOptions {
     /// Do nothing if the last successful run was more recent than this.
     pub if_older_than_ms: Option<i64>,
     pub claude_path: Option<std::path::PathBuf>,
+    /// Ignore the backoff and the window threshold and try everything now.
+    ///
+    /// Never set by the scheduler. It exists for the person who has just
+    /// fixed whatever was wrong and wants to watch it work, rather than
+    /// waiting out a backoff that is measured in hours.
+    pub force: bool,
 }
 
 pub fn refresh(ctx: &Ctx, opts: &RefreshOptions) -> crate::Result<RefreshReport> {
     let now = now_ms();
 
-    // The self-rate-limit that makes over-firing harmless.
-    if let Some(window) = opts.if_older_than_ms
+    // The self-rate-limit that makes over-firing harmless. `--force` is a
+    // person asking directly, so it outranks the limit meant for schedulers.
+    if !opts.force
+        && let Some(window) = opts.if_older_than_ms
         && let Some(last) = read_last_run(ctx)?
         && now - last.finished_at_ms < window
         && !last.needed_attention
@@ -220,7 +228,25 @@ pub fn refresh(ctx: &Ctx, opts: &RefreshOptions) -> crate::Result<RefreshReport>
         };
 
         let meta = ctx.repo().meta(&name)?;
-        let state = meta.map(|m| m.refresh).unwrap_or_default();
+        let mut state = meta.map(|m| m.refresh).unwrap_or_default();
+        if opts.force {
+            // Clear only the timing gates. `needs_login` stays: a person is
+            // genuinely required there, and pretending otherwise would spawn
+            // a process that cannot succeed.
+            state.next_attempt_after_ms = None;
+            state.last_attempt_ms = None;
+        }
+        let effective_policy = if opts.force {
+            RefreshPolicy {
+                // Everything below this is "refresh now"; i64::MAX would
+                // overflow the comparison, so use a century.
+                window_below_ms: i64::MAX / 4,
+                min_interval_ms: 0,
+                ..opts.policy.clone()
+            }
+        } else {
+            opts.policy.clone()
+        };
         let mut decision = decide(
             is_active,
             window_before,
@@ -228,7 +254,7 @@ pub fn refresh(ctx: &Ctx, opts: &RefreshOptions) -> crate::Result<RefreshReport>
             usable,
             &state,
             now,
-            &opts.policy,
+            &effective_policy,
         );
 
         if decision == Decision::Refresh && spawned >= opts.policy.max_spawns {
@@ -269,7 +295,7 @@ pub fn refresh(ctx: &Ctx, opts: &RefreshOptions) -> crate::Result<RefreshReport>
                         cli.as_ref().unwrap()
                     }
                 };
-                let outcome = refresh_one(ctx, &name, cli, &state, &opts.policy, now)?;
+                let outcome = refresh_one(ctx, &name, cli, &state, &effective_policy, now)?;
                 decision = outcome.0;
                 detail = outcome.1;
                 window_after = store
@@ -749,5 +775,66 @@ mod tests {
         let dir = tempfile::TempDir::new().unwrap();
         let store = FileStore::new(dir.path().to_path_buf());
         assert_eq!(restore_if_cleared(&store, None, false, NOW), None);
+    }
+
+    /// `--force` exists for the person who has just fixed whatever was broken
+    /// and wants to watch it work, rather than waiting out a backoff measured
+    /// in hours or a window threshold measured in days.
+    #[test]
+    fn force_clears_the_timing_gates_but_not_the_need_for_a_human() {
+        let backed_off = RefreshState {
+            next_attempt_after_ms: Some(NOW + DAY_MS),
+            last_attempt_ms: Some(NOW),
+            consecutive_failures: 3,
+            ..Default::default()
+        };
+        // Without force: the backoff wins.
+        assert_eq!(
+            decide(
+                false,
+                Some(20 * DAY_MS),
+                false,
+                true,
+                &backed_off,
+                NOW,
+                &policy()
+            ),
+            Decision::SkipBackoff
+        );
+        // With force, the caller has already cleared the timing state and
+        // widened the window, which is what `refresh` does for --force.
+        let cleared = RefreshState {
+            next_attempt_after_ms: None,
+            last_attempt_ms: None,
+            ..backed_off.clone()
+        };
+        let wide = RefreshPolicy {
+            window_below_ms: i64::MAX / 4,
+            min_interval_ms: 0,
+            ..policy()
+        };
+        assert_eq!(
+            decide(false, Some(20 * DAY_MS), false, true, &cleared, NOW, &wide),
+            Decision::Refresh
+        );
+
+        // But a latched needs_login still wins: forcing a spawn there would
+        // start a process that cannot possibly succeed.
+        let logged_out = RefreshState {
+            needs_login: true,
+            ..cleared
+        };
+        assert_eq!(
+            decide(
+                false,
+                Some(20 * DAY_MS),
+                false,
+                true,
+                &logged_out,
+                NOW,
+                &wide
+            ),
+            Decision::NeedsLogin
+        );
     }
 }
