@@ -92,7 +92,7 @@ jobs:
       # never the key itself.
       - name: Check whether the AUR key is configured
         id: gate
-        run: echo "ready=${{ secrets.AUR_SSH_PRIVATE_KEY !=  }}" >> "$GITHUB_OUTPUT"
+        run: echo "ready=${{ secrets.AUR_SSH_PRIVATE_KEY != '' }}" >> "$GITHUB_OUTPUT"
 
       - name: Stamp the version into the PKGBUILD
         if: steps.gate.outputs.ready == 'true'
