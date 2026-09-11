@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.2.10
+
+### The schedule warns before the deadline it cannot move
+
+0.2.9 established that the refresh window is fixed at login: no amount of
+refreshing postpones it. That makes warning ahead of it the only useful thing
+an unattended run can do about it -- and until now `refresh` said nothing
+until the token was already dead, which is the one moment a warning is
+worthless.
+
+A profile inside five days of its deadline is reported as expiring, ahead of
+every gate that would otherwise stay quiet: a backoff, a recent attempt, a
+window still above the refresh threshold. It counts as needing attention, so
+a scheduled run surfaces it instead of exiting clean. Five days is two
+scheduled runs.
+
+It does not displace the two states that outrank it -- the active profile,
+which Claude Code refreshes anyway, and one already past the deadline, where
+the advice differs.
+
 ## 0.2.9
 
 **The refresh path was working the whole time. The test for whether it worked
