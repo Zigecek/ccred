@@ -37,8 +37,14 @@ configure trusted publishing for every release after it.
 ## 3. npm trusted publishing
 
 Eight packages are published: `ccred` and seven `@ccred/<platform>` ones. Each
-needs its own trusted publisher, pointing at `publish-npm.yml` and the `npm`
+needs its own trusted publisher, pointing at **`release.yml`** and the `npm`
 environment.
+
+Not `publish-npm.yml`, even though that is the file holding the publish step.
+With a reusable workflow npm validates the *calling* workflow's name, so a
+publisher registered against the inner file never matches. crates.io is the
+other way round only by coincidence: it matches the `workflow_ref` claim,
+which is also the entry workflow, so `release.yml` is right in both places.
 
 Reserve the `@ccred` organisation on npm first, so the scope cannot be taken.
 
@@ -58,14 +64,30 @@ gh secret set AUR_EMAIL --repo Zigecek/ccred
 
 The job skips itself while these are unset, so releases do not fail without it.
 
-## Known issue: the `host` job cannot create the release
+## Solved: why the `host` job could not create the release
 
-`dist`'s `host` job fails with `HTTP 403: Resource not accessible by
+`dist`'s `host` job failed with `HTTP 403: Resource not accessible by
 integration` on `POST /repos/Zigecek/ccred/releases`, even though the job's own
-log reports `Contents: write`. Builds all seven targets fine; only the final
-step fails.
+log reported `Contents: write`.
 
-**This is unsolved.** A diagnostic workflow reproduced the release job's
+**Cause.** The call passed `--target "$RELEASE_COMMIT"`. When
+`target_commitish` is supplied and the commit range being released touches
+`.github/workflows/**`, GitHub requires `workflows: write` *in addition to*
+`contents: write` -- and `GITHUB_TOKEN` cannot be granted that scope at all;
+it is not a valid key in a `permissions:` block. The API advertises this in
+`X-Accepted-Github-Permissions` and then denies with the generic message.
+
+The tag already exists and already points at the right commit by the time
+`host` runs, so `--target` was pure redundancy. It is gone.
+
+**Why every hypothesis "passed".** The diagnostic workflow pushed each probe
+tag at the tip of `main`, so the commit range was always empty and no workflow
+file was ever in it. v0.1.0's three attempts all released a commit that `main`
+had already moved past -- past a commit touching `.github/workflows/`. v0.2.0
+succeeded for the same accidental reason the probes did, with two unrelated
+commits landing 117 seconds later. It was a near-miss, not a fix.
+
+**The old table, kept because the reasoning is still instructive:** A diagnostic workflow reproduced the release job's
 conditions one variable at a time, and every one of them succeeded in
 isolation:
 

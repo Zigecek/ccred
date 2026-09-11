@@ -6,8 +6,7 @@
     "architecture": {
         "64bit": {
             "url": "https://github.com/Zigecek/ccred/releases/download/v0.2.0/ccred-x86_64-pc-windows-msvc.zip",
-            "hash": "0000000000000000000000000000000000000000000000000000000000000000",
-            "extract_dir": "ccred-x86_64-pc-windows-msvc"
+            "hash": "546c1d196776a4e992204263efeb98ef51fe2effdd306f25cb195287d7b6bad5"
         }
     },
     "bin": "ccred.exe",
@@ -15,8 +14,7 @@
     "autoupdate": {
         "architecture": {
             "64bit": {
-                "url": "https://github.com/Zigecek/ccred/releases/download/v$version/ccred-x86_64-pc-windows-msvc.zip",
-                "extract_dir": "ccred-x86_64-pc-windows-msvc"
+                "url": "https://github.com/Zigecek/ccred/releases/download/v$version/ccred-x86_64-pc-windows-msvc.zip"
             }
         },
         "hash": {

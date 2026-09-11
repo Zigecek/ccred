@@ -84,12 +84,17 @@ jobs:
         run: |
           set -euo pipefail
           base="https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VERSION}"
-          curl -sSLo nfpm.tar.gz "${base}/nfpm_${NFPM_VERSION}_Linux_x86_64.tar.gz"
+          archive="nfpm_${NFPM_VERSION}_Linux_x86_64.tar.gz"
+          # Keep the published filename: `sha256sum -c` looks the name up on
+          # disk, so downloading to nfpm.tar.gz made verification check a file
+          # that was never there -- and still exit 0 on the grep.
+          curl -sSLo "$archive" "${base}/${archive}"
           curl -sSLo checksums.txt "${base}/checksums.txt"
           # Verifying the download beats trusting a third-party action with the
-          # release pipeline of a credential tool.
-          grep "nfpm_${NFPM_VERSION}_Linux_x86_64.tar.gz" checksums.txt | sha256sum -c -
-          tar xzf nfpm.tar.gz nfpm
+          # release pipeline of a credential tool. Anchor the match: the plain
+          # substring also selects the .sbom.json line.
+          grep -E "  ${archive}\$" checksums.txt | sha256sum -c -
+          tar xzf "$archive" nfpm
           chmod +x nfpm
 
       - name: Fetch the binary from the release
