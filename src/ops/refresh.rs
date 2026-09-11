@@ -440,15 +440,22 @@ fn refresh_one(
                 m.refresh.needs_login = true;
                 m.refresh.last_attempt_ms = Some(now);
             })?;
+            // NeedsLogin, not Broken. The credentials are back and readable;
+            // what is gone is the server's willingness to refresh them, and
+            // the only thing that fixes that is a person logging in.
             return Ok((
-                Decision::Broken,
+                Decision::NeedsLogin,
                 Some(format!(
-                    "claude cleared this profile's credentials; {}. Run                      `claude auth login` and `ccred save {name}`",
+                    concat!(
+                        "claude cleared this profile's credentials; {}. ",
+                        "Run `claude auth login` and `ccred save {}`"
+                    ),
                     if restored {
                         "the previous copy was put back"
                     } else {
                         "restoring the previous copy FAILED, see the backups directory"
-                    }
+                    },
+                    name
                 )),
             ));
         }
