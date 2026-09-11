@@ -855,3 +855,25 @@ fn doctor_still_reports_when_the_profiles_directory_is_unreadable() {
         "and it must say what it could not read: {out}"
     );
 }
+
+/// `list` is how someone finds out which profile is the broken one, so it has
+/// to survive meeting it.
+#[test]
+fn list_shows_a_profile_whose_metadata_will_not_parse() {
+    let sb = Sandbox::new();
+    sb.run(&["save", "work"]);
+    sb.login_b();
+    sb.run(&["save", "personal"]);
+
+    std::fs::write(
+        sb.path().join(".ccred/profiles/work/ccred.json"),
+        "{ not json",
+    )
+    .unwrap();
+
+    let (out, err, code) = sb.run(&["list"]);
+    assert_eq!(code, 0, "{err}{out}");
+    assert!(out.contains("work"), "the broken one must appear: {out}");
+    assert!(out.contains("personal"), "and so must the rest: {out}");
+    assert!(out.contains("unreadable"), "{out}");
+}

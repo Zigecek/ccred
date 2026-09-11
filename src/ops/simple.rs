@@ -29,6 +29,23 @@ pub struct ProfileRow {
     pub needs_login: bool,
 }
 
+impl ProfileRow {
+    /// A row for a profile that could not be read at all.
+    fn unreadable(name: &ProfileName, active: Option<&ProfileName>, note: String) -> Self {
+        ProfileRow {
+            name: name.as_str().to_string(),
+            active: active == Some(name),
+            account: "<unreadable>".into(),
+            subscription: None,
+            refresh_days_left: None,
+            healthy: false,
+            note: Some(note),
+            last_synced_at_ms: None,
+            needs_login: false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct CurrentReport {
     pub active_profile: Option<String>,
@@ -118,8 +135,28 @@ pub fn list(ctx: &Ctx) -> crate::Result<Vec<ProfileRow>> {
     let mut rows = Vec::new();
 
     for name in ctx.repo().list()? {
-        let meta = ctx.repo().meta(&name)?;
-        let store = ctx.repo().store(&name)?;
+        // A profile whose metadata will not parse is a row that says so, not
+        // a reason to refuse the whole listing. `list` is how someone finds
+        // out which profile is the broken one; it has to survive meeting it.
+        let meta = match ctx.repo().meta(&name) {
+            Ok(m) => m,
+            Err(e) => {
+                rows.push(ProfileRow::unreadable(
+                    &name,
+                    active.as_ref(),
+                    e.to_string(),
+                ));
+                continue;
+            }
+        };
+        let Ok(store) = ctx.repo().store(&name) else {
+            rows.push(ProfileRow::unreadable(
+                &name,
+                active.as_ref(),
+                "its directory cannot be resolved".into(),
+            ));
+            continue;
+        };
 
         let (healthy, refresh_days_left, note) = match store.load() {
             Ok(Some(loaded)) => match validate_credentials(&loaded.creds.oauth, now) {
