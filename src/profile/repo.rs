@@ -30,7 +30,7 @@ use crate::model::{AccountIdentity, AccountSnapshot};
 use crate::paths::Paths;
 use crate::store::file::FileStore;
 use crate::store::{CredentialStore, now_ms};
-use crate::validate::{ProfileName, validate_profile_name};
+use crate::validate::{ProfileName, validate_credentials, validate_profile_name};
 
 /// How many timestamped backups to keep per profile.
 const BACKUPS_KEPT: usize = 10;
@@ -345,14 +345,40 @@ impl ProfileRepo {
         let Ok(Some(loaded)) = store.load() else {
             return Ok(()); // nothing worth keeping
         };
+        self.backup_raw(name.as_str(), &loaded.raw).map(|_| ())
+    }
 
-        let dir = self.paths.backups_dir().join(name.as_str());
+    /// Copy live credentials that belong to no profile out of harm's way.
+    ///
+    /// A switch overwrites the live store. Normally the outgoing credentials
+    /// are mirrored into their profile first, but that mirror is deliberately
+    /// skipped when the live account is not the one the pointer names -- which
+    /// is exactly the case where those credentials exist nowhere else. Without
+    /// this they would be destroyed by the very command meant to organise
+    /// them.
+    ///
+    /// The label cannot collide with a profile: profile names must start with
+    /// a letter or digit.
+    pub fn backup_orphaned_live(
+        &self,
+        store: &dyn CredentialStore,
+    ) -> crate::Result<Option<PathBuf>> {
+        let Ok(Some(loaded)) = store.load() else {
+            return Ok(None); // logged out; nothing to lose
+        };
+        // Only what is usable is worth keeping. Preserving a logged-out blob
+        // would push a real backup out of the rotation for nothing.
+        if validate_credentials(&loaded.creds.oauth, now_ms()).is_err() {
+            return Ok(None);
+        }
+        self.backup_raw(".orphaned", &loaded.raw).map(Some)
+    }
+
+    fn backup_raw(&self, label: &str, raw: &[u8]) -> crate::Result<PathBuf> {
+        let dir = self.paths.backups_dir().join(label);
         let stamp = now_ms();
-        write_atomic(
-            &dir.join(format!("credentials.{stamp}.json")),
-            &loaded.raw,
-            true,
-        )?;
+        let path = dir.join(format!("credentials.{stamp}.json"));
+        write_atomic(&path, raw, true)?;
 
         // Prune oldest. Names sort lexicographically the same as numerically
         // for as long as epoch-ms has 13 digits, i.e. until the year 2286.
@@ -375,7 +401,7 @@ impl ProfileRepo {
                 let _ = fs::remove_file(old);
             }
         }
-        Ok(())
+        Ok(path)
     }
 }
 

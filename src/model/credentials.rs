@@ -59,8 +59,14 @@ pub struct OAuthCredentials {
     )]
     pub refresh_token_expires_at: Option<i64>,
 
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub scopes: Vec<String>,
+    /// `Option` rather than `Vec`, so absent and empty stay distinguishable.
+    ///
+    /// With `skip_serializing_if = "Vec::is_empty"` an input of `"scopes": []`
+    /// re-serialised to nothing at all, `assert_lossless` correctly refused
+    /// the write, and every command that touches that file failed. Round-trip
+    /// fidelity is the whole contract here; an empty list is a value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scopes: Option<Vec<String>>,
 
     #[serde(
         rename = "subscriptionType",
@@ -173,6 +179,33 @@ mod tests {
         let back = serde_json::to_value(&parsed).unwrap();
         assert_eq!(back["futureUnknownField"]["nested"][2].as_i64(), Some(3));
         assert_lossless(with_future.as_bytes(), &back).expect("round-trip must be lossless");
+    }
+
+    /// An empty `scopes` array is a value, not an absence.
+    ///
+    /// It used to re-serialise to nothing, which made `assert_lossless` refuse
+    /// the write and turned every command that touched such a file into a
+    /// hard failure. Absent and empty must stay distinguishable in both
+    /// directions.
+    #[test]
+    fn an_empty_scopes_array_survives_the_round_trip() {
+        let raw = r#"{"claudeAiOauth":{"accessToken":"a","refreshToken":"r",
+                      "expiresAt":1,"scopes":[]}}"#;
+        let parsed: CredentialsFile = serde_json::from_str(raw).unwrap();
+        let back = serde_json::to_value(&parsed).unwrap();
+        assert_eq!(back["claudeAiOauth"]["scopes"], serde_json::json!([]));
+        assert_lossless(raw.as_bytes(), &back).expect("an empty array must not read as dropped");
+    }
+
+    #[test]
+    fn an_absent_scopes_key_is_not_invented() {
+        let raw = r#"{"claudeAiOauth":{"accessToken":"a","refreshToken":"r","expiresAt":1}}"#;
+        let parsed: CredentialsFile = serde_json::from_str(raw).unwrap();
+        let back = serde_json::to_value(&parsed).unwrap();
+        assert!(
+            back["claudeAiOauth"].get("scopes").is_none(),
+            "a key that was not there must not appear: {back}"
+        );
     }
 
     #[test]

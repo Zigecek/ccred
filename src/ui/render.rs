@@ -364,8 +364,20 @@ pub fn switch(theme: &Theme, r: &SwitchReport) {
             MUTED,
             format!("the credentials that were live are now saved in '{name}'"),
         )),
-        OutgoingSync::Skipped { profile, reason } => {
-            notes.push((ERR, format!("did not update '{profile}': {reason}")))
+        OutgoingSync::Skipped {
+            profile,
+            reason,
+            backup,
+        } => {
+            notes.push((ERR, format!("did not update '{profile}': {reason}")));
+            if let Some(path) = backup {
+                notes.push((
+                    WARN,
+                    format!(
+                        "the credentials that were live are not in any profile; copied to {path}"
+                    ),
+                ));
+            }
         }
         OutgoingSync::NothingActive => {}
     }

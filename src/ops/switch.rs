@@ -30,6 +30,10 @@ pub enum OutgoingSync {
     Skipped {
         profile: String,
         reason: String,
+        /// Where the live credentials were copied before being overwritten.
+        /// `None` means there was nothing usable to keep.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        backup: Option<String>,
     },
 }
 
@@ -91,7 +95,19 @@ pub fn switch(ctx: &Ctx, target: &ProfileName, force: bool) -> crate::Result<Swi
     );
     journal.save(&journal_path)?;
 
-    let outgoing = sync_outgoing(ctx, from.as_ref())?;
+    let mut outgoing = sync_outgoing(ctx, from.as_ref())?;
+
+    // The mirror above is skipped precisely when the live account is not the
+    // one the pointer names -- which is the case where those credentials are
+    // stored nowhere else. The next line destroys them, so copy them aside
+    // first. This is the step whose absence made `switch` able to lose an
+    // account outright.
+    if let OutgoingSync::Skipped { backup, .. } = &mut outgoing {
+        *backup = ctx
+            .repo()
+            .backup_orphaned_live(&live)?
+            .map(|p| p.display().to_string());
+    }
     journal.advance(&journal_path, SwitchPhase::OutgoingSynced)?;
 
     // A deliberate account change, so the monotonic window rule is skipped.
@@ -141,6 +157,7 @@ fn sync_outgoing(ctx: &Ctx, from: Option<&ProfileName>) -> crate::Result<Outgoin
         return Ok(OutgoingSync::Skipped {
             profile: from.as_str().to_string(),
             reason: "the profile no longer exists".into(),
+            backup: None,
         });
     }
 
@@ -155,6 +172,7 @@ fn sync_outgoing(ctx: &Ctx, from: Option<&ProfileName>) -> crate::Result<Outgoin
         ) => Ok(OutgoingSync::Skipped {
             profile: from.as_str().to_string(),
             reason: e.to_string(),
+            backup: None,
         }),
         Err(other) => Err(other),
     }

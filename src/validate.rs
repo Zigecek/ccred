@@ -222,7 +222,7 @@ mod tests {
             refresh_token: Secret::new(format!("sk-ant-ort01-{}", refresh.repeat(30))),
             expires_at,
             refresh_token_expires_at: refresh_exp,
-            scopes: vec![],
+            scopes: None,
             subscription_type: None,
             extra: Map::new(),
         }

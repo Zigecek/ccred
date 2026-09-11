@@ -455,3 +455,80 @@ fn walk(root: &Path) -> Vec<std::path::PathBuf> {
     out.sort();
     out
 }
+
+/// Switching must not be able to destroy an account outright.
+///
+/// The setup is the shape of a real near-miss: the live login is an account
+/// that belongs to no profile, because the pointer still names the profile
+/// that was active before the login. `sync_outgoing` deliberately refuses to
+/// mirror those credentials into the wrong profile -- and the switch then
+/// overwrites the live file. Until this was fixed, that account's credentials
+/// existed nowhere afterwards.
+#[test]
+fn switching_away_from_an_unsaved_account_keeps_a_copy_of_it() {
+    const TOKEN_C: &str = "sk-ant-oat01-SENTINELACCESSCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC";
+    const REFRESH_C: &str = "sk-ant-ort01-SENTINELREFRESHCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC";
+
+    let sb = Sandbox::new();
+    sb.run(&["save", "work"]); // alice -> profile 'work'
+    sb.login_b();
+    sb.run(&["save", "personal"]); // bob -> profile 'personal', now active
+
+    // A third account logs in. It matches no profile, and the pointer still
+    // says 'personal'.
+    sb.write_login(
+        TOKEN_C,
+        REFRESH_C,
+        FAR_FUTURE,
+        "carol@example.com",
+        "uuid-c",
+    );
+
+    let (out, err, code) = sb.run(&["switch", "work"]);
+    assert_eq!(code, 0, "{err}{out}");
+
+    let orphaned: Vec<_> =
+        std::fs::read_dir(sb.path().join(".ccred").join("backups").join(".orphaned"))
+            .expect("no .orphaned backup directory was created")
+            .flatten()
+            .map(|e| e.path())
+            .collect();
+    assert_eq!(orphaned.len(), 1, "expected exactly one copy: {orphaned:?}");
+
+    let kept = std::fs::read_to_string(&orphaned[0]).unwrap();
+    assert!(
+        kept.contains(REFRESH_C),
+        "the copy must hold the account that was about to be overwritten"
+    );
+
+    // And the user has to be told where it went, or the copy is useless.
+    assert!(out.contains(".orphaned"), "{out}");
+}
+
+/// The counter-case: a logged-out live store has nothing worth keeping, and a
+/// copy of it would push a real backup out of the rotation.
+#[test]
+fn switching_away_from_a_logged_out_store_keeps_nothing() {
+    let sb = Sandbox::new();
+    sb.run(&["save", "work"]);
+    sb.login_b();
+    sb.run(&["save", "personal"]);
+
+    std::fs::write(
+        sb.path().join(".claude").join(".credentials.json"),
+        r#"{"claudeAiOauth":{"accessToken":"","refreshToken":"","expiresAt":0,
+           "refreshTokenExpiresAt":0,"scopes":["user:inference"]}}"#,
+    )
+    .unwrap();
+
+    let (_, err, code) = sb.run(&["switch", "work"]);
+    assert_eq!(code, 0, "{err}");
+    assert!(
+        !sb.path()
+            .join(".ccred")
+            .join("backups")
+            .join(".orphaned")
+            .exists(),
+        "an unusable credential blob must not be backed up"
+    );
+}
