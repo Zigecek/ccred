@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.2.12
+
+### `current` reports an unreadable live store
+
+A credential file that will not parse ended the command with a bare error.
+`current` is the first thing anyone runs, and the first thing they run when
+something looks wrong, so it now says what it found and points at `doctor` --
+which is where an unreadable credential file is a loud failure with an exit
+code to match.
+
+That completes the pass begun in 0.2.11: `doctor`, `list` and `current` all
+produce a report on the trouble they exist to describe, instead of failing on
+contact with it.
+
+### Documentation caught up with the code
+
+- `docs/install.md` opened with "nothing is published yet", which had been
+  wrong for several releases. The table now says which channels are live --
+  Scoop, the `.deb`, the release installer -- and what each of the rest is
+  waiting for.
+- `SECURITY.md` promised Windows ACL hardening as future work. It is not
+  needed: the inherited DACL was measured and already grants only SYSTEM,
+  Administrators and the owner. What the document was missing is that `doctor`
+  checks the outcome on both platforms, and that the run log is `0600` and
+  carries no rendered error messages.
+- The README now states the two rules this work established: that Claude Code,
+  pointed at a profile's store, is the one writer our gates do not cover and
+  can be wrong; and that a failure belongs to the profile it happened to.
+
 ## 0.2.11
 
 ### One broken profile no longer ends the run
