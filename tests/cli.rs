@@ -35,6 +35,17 @@ impl Sandbox {
         self.home.path()
     }
 
+    /// Both files get 0600, because that is what a real install has: Claude
+    /// Code writes its credential file that way, measured on a live machine.
+    /// A fixture that writes 0644 is not a sandbox of anything.
+    #[cfg(unix)]
+    fn make_private(path: &Path) {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
+    #[cfg(not(unix))]
+    fn make_private(_path: &Path) {}
+
     fn write_login(&self, access: &str, refresh: &str, expiry: i64, email: &str, uuid: &str) {
         std::fs::write(
             self.path().join(".claude").join(".credentials.json"),
@@ -57,6 +68,8 @@ impl Sandbox {
             ),
         )
         .unwrap();
+        Self::make_private(&self.path().join(".claude").join(".credentials.json"));
+        Self::make_private(&self.path().join(".claude.json"));
     }
 
     fn login_a(&self) {
