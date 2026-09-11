@@ -318,6 +318,35 @@ fn expected_email(ctx: &Ctx, name: &ProfileName) -> crate::Result<Option<String>
     Ok(ctx.repo().meta(name)?.and_then(|m| m.account.email))
 }
 
+/// Put a profile back if the spawned `claude` emptied it.
+///
+/// Returns `None` when there is nothing to do, and `Some(restored)` when the
+/// store went from usable to unusable -- `restored` saying whether writing the
+/// good copy back worked.
+///
+/// Restoring a token that later turns out to be dead costs nothing, because
+/// `validate` will say so on the next run. Not restoring costs the account.
+fn restore_if_cleared(
+    store: &dyn CredentialStore,
+    pre: Option<&crate::store::Loaded>,
+    pre_was_usable: bool,
+    now: i64,
+) -> Option<bool> {
+    if !pre_was_usable {
+        return None;
+    }
+    let good = pre?;
+    let still_usable = store
+        .load()
+        .ok()
+        .flatten()
+        .is_some_and(|l| validate_credentials(&l.creds.oauth, now).is_ok());
+    if still_usable {
+        return None;
+    }
+    Some(store.replace(&good.creds).is_ok())
+}
+
 fn refresh_one(
     ctx: &Ctx,
     name: &ProfileName,
@@ -330,8 +359,20 @@ fn refresh_one(
     let scope = scope_for(&dir, false);
     let store = ctx.repo().store(name)?;
 
-    let before = store
-        .load()?
+    // Keep the credentials as they stand before anything is spawned.
+    //
+    // Everything else in this tool guards what *we* write. This is the one
+    // place a third party writes into a profile: `claude` is pointed at the
+    // profile's own store and may do whatever it likes there, including
+    // clearing it. That is not hypothetical -- a real run on a real machine
+    // emptied a profile's tokens outright, and only a last-known-good copy
+    // made it recoverable.
+    let pre = store.load()?;
+    let pre_was_usable = pre
+        .as_ref()
+        .is_some_and(|l| validate_credentials(&l.creds.oauth, now).is_ok());
+    let before = pre
+        .as_ref()
         .and_then(|l| l.creds.oauth.refresh_token_expires_at);
 
     // Try the rung that worked last time first, then the rest of the ladder.
@@ -352,6 +393,25 @@ fn refresh_one(
     let mut last_note = String::new();
     for probe in ladder {
         let outcome = cli.run(&scope, probe, policy.spawn_timeout)?;
+
+        // Did the probe leave the profile worse than it found it?
+        if let Some(restored) = restore_if_cleared(&store, pre.as_ref(), pre_was_usable, now) {
+            ctx.repo().update_meta(name, |m| {
+                m.refresh.needs_login = true;
+                m.refresh.last_attempt_ms = Some(now);
+            })?;
+            return Ok((
+                Decision::Broken,
+                Some(format!(
+                    "claude cleared this profile's credentials; {}. Run                      `claude auth login` and `ccred save {name}`",
+                    if restored {
+                        "the previous copy was put back"
+                    } else {
+                        "restoring the previous copy FAILED, see the backups directory"
+                    }
+                )),
+            ));
+        }
 
         if outcome.needs_login() {
             ctx.repo().update_meta(name, |m| {
@@ -615,5 +675,79 @@ mod tests {
             }],
         };
         assert!(!quiet.needs_attention());
+    }
+
+    /// This happened on a real machine, not in theory.
+    ///
+    /// A scheduled refresh spawned `claude`, which decided it was signed out
+    /// and wrote an empty credential blob over the profile's own store. Every
+    /// safety gate in this tool guards what *we* write; that write was not
+    /// ours, so nothing stopped it. The profile survived only because a
+    /// last-known-good copy happened to exist.
+    #[test]
+    fn a_probe_that_empties_the_profile_has_its_damage_undone() {
+        use crate::store::CredentialStore;
+        use crate::store::file::FileStore;
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let store = FileStore::new(dir.path().to_path_buf());
+
+        let good: crate::model::CredentialsFile = serde_json::from_str(
+            r#"{"claudeAiOauth":{"accessToken":"sk-ant-oat01-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+               "refreshToken":"sk-ant-ort01-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+               "expiresAt":1788003600000,"refreshTokenExpiresAt":1790000000000,
+               "scopes":["user:inference"]}}"#,
+        )
+        .unwrap();
+        store.replace(&good).unwrap();
+        let pre = store.load().unwrap();
+        assert!(pre.is_some());
+
+        // What the spawned binary did: a logged-out blob, straight over the top.
+        std::fs::write(
+            dir.path().join(".credentials.json"),
+            r#"{"claudeAiOauth":{"accessToken":"","refreshToken":"","expiresAt":0,
+               "refreshTokenExpiresAt":0,"scopes":["user:inference"]}}"#,
+        )
+        .unwrap();
+
+        let restored = restore_if_cleared(&store, pre.as_ref(), true, NOW);
+        assert_eq!(restored, Some(true), "the wipe must be detected and undone");
+
+        let after = store.load().unwrap().expect("credentials must be back");
+        assert!(
+            validate_credentials(&after.creds.oauth, NOW).is_ok(),
+            "the restored profile must be usable again"
+        );
+    }
+
+    #[test]
+    fn a_probe_that_changes_nothing_is_left_alone() {
+        use crate::store::CredentialStore;
+        use crate::store::file::FileStore;
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let store = FileStore::new(dir.path().to_path_buf());
+        let good: crate::model::CredentialsFile = serde_json::from_str(
+            r#"{"claudeAiOauth":{"accessToken":"sk-ant-oat01-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+               "refreshToken":"sk-ant-ort01-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+               "expiresAt":1788003600000,"refreshTokenExpiresAt":1790000000000,
+               "scopes":["user:inference"]}}"#,
+        )
+        .unwrap();
+        store.replace(&good).unwrap();
+        let pre = store.load().unwrap();
+
+        assert_eq!(restore_if_cleared(&store, pre.as_ref(), true, NOW), None);
+    }
+
+    /// A profile that was already unusable cannot be made worse, and writing
+    /// a dead blob back over whatever is there now would be pure noise.
+    #[test]
+    fn an_already_broken_profile_is_not_restored_over() {
+        use crate::store::file::FileStore;
+        let dir = tempfile::TempDir::new().unwrap();
+        let store = FileStore::new(dir.path().to_path_buf());
+        assert_eq!(restore_if_cleared(&store, None, false, NOW), None);
     }
 }
