@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.2.5
+
+### A profile with a live access token is no longer spawned for
+
+Measured on a live machine: a profile with twenty-one days of refresh window
+and six hours left on its access token ran all three probes, moved nothing,
+and was recorded as a failure with a backoff.
+
+The refresh window only extends when Claude Code performs a token exchange,
+and it only does that when the access token needs renewing. A profile whose
+access token is still valid therefore cannot be refreshed at all -- the run
+was judging a correct no-op by a yardstick that did not apply. It now waits
+instead, which is a short wait: an access token lives about eight hours
+against a schedule measured in days.
+
+Without this, every recently saved profile collected spurious failures.
+
+### Fixed
+
+- `trust_dir` is gone rather than wired up. Connecting it would have meant
+  marking a directory trusted in the user's own configuration on their behalf,
+  to avoid a prompt that does not appear.
+
+### Tested
+
+- The journal recovery arms that decide whether an interrupted switch rolls
+  back or is merely litter. Two of the five phases had never executed.
+- The helpers in `src/ui/render.rs`, the file the conventions name as the one
+  place to audit for "no output may ever contain a token", which had none.
+
 ## 0.2.4
 
 ### `ccred restore <name>`
