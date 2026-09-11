@@ -592,3 +592,70 @@ fn restoring_a_profile_with_no_usable_copy_is_refused() {
     assert_eq!(code, 7, "{err}");
     assert!(err.contains("no usable earlier copy"), "{err}");
 }
+
+/// The crash-safety rule, driven through the real recovery rather than the
+/// pure function: a switch interrupted **before** the live store was touched
+/// must roll the pointer back, not carry on forwards.
+#[test]
+fn a_switch_interrupted_before_the_live_write_rolls_back() {
+    let sb = Sandbox::new();
+    sb.run(&["save", "work"]);
+    sb.login_b();
+    sb.run(&["save", "personal"]); // active is now 'personal'
+
+    let journal = sb.path().join(".ccred/state/switch.journal");
+    for phase in ["started", "outgoing_synced"] {
+        std::fs::write(
+            &journal,
+            format!(
+                r#"{{"from":"personal","to":"work","phase":"{phase}",
+                    "started_at_ms":1788000000000,"pid":999999}}"#
+            ),
+        )
+        .unwrap();
+
+        let (out, err, code) = sb.run(&["save", "personal"]);
+        assert_eq!(code, 0, "{phase}: {err}{out}");
+        assert!(!journal.exists(), "{phase}: the journal must be cleared");
+
+        let active = std::fs::read_to_string(sb.path().join(".ccred/state/current")).unwrap();
+        assert_eq!(
+            active.trim(),
+            "personal",
+            "{phase}: the pointer must go back to where the switch started"
+        );
+    }
+}
+
+/// A journal left behind after the switch had finished is not a switch to
+/// redo -- it is litter. Healing it must not move anything.
+#[test]
+fn a_finished_switch_journal_is_only_cleared() {
+    let sb = Sandbox::new();
+    sb.run(&["save", "work"]);
+    sb.login_b();
+    sb.run(&["save", "personal"]);
+
+    let journal = sb.path().join(".ccred/state/switch.journal");
+    std::fs::write(
+        &journal,
+        r#"{"from":"work","to":"personal","phase":"pointer_updated",
+            "started_at_ms":1788000000000,"pid":999999}"#,
+    )
+    .unwrap();
+    let before = std::fs::read_to_string(sb.path().join(".ccred/state/current")).unwrap();
+
+    let (out, err, code) = sb.run(&["list"]);
+    assert_eq!(code, 0, "{err}{out}");
+    // `list` is read-only, so the journal survives it.
+    assert!(journal.exists(), "a read-only command must not heal");
+
+    let (_, err, code) = sb.run(&["save", "personal"]);
+    assert_eq!(code, 0, "{err}");
+    assert!(!journal.exists(), "a mutating command must clear it");
+    assert_eq!(
+        std::fs::read_to_string(sb.path().join(".ccred/state/current")).unwrap(),
+        before,
+        "a finished switch must not be replayed"
+    );
+}
