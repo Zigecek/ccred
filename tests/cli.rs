@@ -659,3 +659,59 @@ fn a_finished_switch_journal_is_only_cleared() {
         "a finished switch must not be replayed"
     );
 }
+
+/// `restore_identity` degrading rather than failing.
+///
+/// A profile saved before account details were captured has no
+/// `oauth-account.json`. Switching to it must still work -- Claude Code
+/// refetches the account on next start -- and must say so rather than
+/// leaving the user to notice.
+#[test]
+fn switching_to_a_profile_with_no_stored_account_details_still_works() {
+    let sb = Sandbox::new();
+    sb.run(&["save", "work"]);
+    sb.login_b();
+    sb.run(&["save", "personal"]);
+
+    std::fs::remove_file(sb.path().join(".ccred/profiles/work/oauth-account.json")).unwrap();
+
+    let (out, err, code) = sb.run(&["switch", "work"]);
+    assert_eq!(code, 0, "{err}{out}");
+    assert!(
+        out.contains("account details were not restored"),
+        "the degradation must be stated: {out}"
+    );
+
+    // The credentials are what matter, and they must have moved.
+    let live = std::fs::read_to_string(sb.path().join(".claude/.credentials.json")).unwrap();
+    assert!(
+        live.contains(REFRESH_A),
+        "the target's credentials must be live"
+    );
+}
+
+/// The outgoing mirror is skipped when the profile it names has been deleted
+/// from under the pointer. That must not stop the switch, and must not be
+/// silent either.
+#[test]
+fn switching_away_from_a_deleted_profile_is_reported_not_fatal() {
+    let sb = Sandbox::new();
+    sb.run(&["save", "work"]);
+    sb.login_b();
+    sb.run(&["save", "personal"]); // pointer names 'personal'
+
+    std::fs::remove_dir_all(sb.path().join(".ccred/profiles/personal")).unwrap();
+
+    let (out, err, code) = sb.run(&["switch", "work"]);
+    assert_eq!(code, 0, "{err}{out}");
+    assert!(
+        out.contains("no longer exists"),
+        "the skipped mirror must be explained: {out}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(sb.path().join(".ccred/state/current"))
+            .unwrap()
+            .trim(),
+        "work"
+    );
+}
