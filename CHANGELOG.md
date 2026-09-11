@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.2.8
+
+### `--force` now forces something
+
+It cleared the timing gates and still changed nothing, because none of them
+was what stood in the way. Claude Code exchanges tokens only when it needs a
+new access token, and only an exchange moves the refresh window -- so a
+profile with hours left on its access token ran the entire probe ladder and
+came back "left the store untouched". Correct, and useless.
+
+A forced run backdates the stored access-token expiry first, which turns it
+into a real exchange. This is also the only way to exercise the refresh path
+without waiting for a token to age out, which is why that path went unverified
+for as long as it did.
+
+### `doctor` checks the permissions instead of assuming them
+
+The writer asks for 0600, but a mode is only what was requested: a file
+restored from a backup, copied with `cp -p`, or synced from another machine
+can arrive readable by everyone, and nothing said so. Every credential file
+`doctor` can find is now checked, and a loose one fails loudly with the mode
+named.
+
+On Windows there is no mode to read. What is there was measured rather than
+assumed: a credential file under a default `%USERPROFILE%` inherits exactly
+SYSTEM, Administrators and the owner -- no `Users`, no `Everyone` -- which is
+what 0600 buys on unix, where root reads it anyway. Writing unsafe ACL code to
+reach a state the file is already in would add risk, not remove it, so the
+note in `write_atomic` records that measurement instead of promising work.
+
+### Fixed
+
+- The run log is created 0600 like everything else this tool writes, rather
+  than 0664.
+
 ## 0.2.7
 
 ### `ccred log`

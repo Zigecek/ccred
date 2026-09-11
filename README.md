@@ -39,8 +39,8 @@ scheduled refresh first, so no task is left pointing at a binary that is gone.
 Every release carries one for `amd64` and `arm64`:
 
 ```sh
-curl -fsSLO https://github.com/Zigecek/ccred/releases/download/v0.2.7/ccred_0.2.7_amd64.deb
-sudo apt install ./ccred_0.2.7_amd64.deb
+curl -fsSLO https://github.com/Zigecek/ccred/releases/download/v0.2.8/ccred_0.2.8_amd64.deb
+sudo apt install ./ccred_0.2.8_amd64.deb
 ```
 
 It carries no maintainer scripts on purpose: a `postinst` must not install the
@@ -56,12 +56,12 @@ are worth maintaining at all is in [docs/install.md](docs/install.md).
 
 ```sh
 # Linux and macOS
-curl --proto '=https' --tlsv1.2 -LsSf https://github.com/Zigecek/ccred/releases/download/v0.2.7/ccred-installer.sh | sh
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/Zigecek/ccred/releases/download/v0.2.8/ccred-installer.sh | sh
 ```
 
 ```powershell
 # Windows
-powershell -ExecutionPolicy Bypass -c "irm https://github.com/Zigecek/ccred/releases/download/v0.2.7/ccred-installer.ps1 | iex"
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/Zigecek/ccred/releases/download/v0.2.8/ccred-installer.ps1 | iex"
 ```
 
 `-ExecutionPolicy Bypass` is not bypassing a protection. Execution policy does
@@ -73,7 +73,7 @@ That, and why Defender intermittently flags this command line, is written up in
 To read every byte before running anything:
 
 ```powershell
-$v = "0.2.7"
+$v = "0.2.8"
 $z = "ccred-x86_64-pc-windows-msvc.zip"
 irm "https://github.com/Zigecek/ccred/releases/download/v$v/$z" -OutFile $z
 (Get-FileHash $z -Algorithm SHA256).Hash    # compare against the .sha256 on the release

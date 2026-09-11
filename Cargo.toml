@@ -1,6 +1,6 @@
 [package]
 name = "ccred"
-version = "0.2.7"
+version = "0.2.8"
 edition = "2024"
 # let-chains (`if let ... && ...`) are used throughout; they were
 # stabilised for edition 2024 in 1.88, and CI checks this floor.
