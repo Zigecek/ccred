@@ -25,8 +25,13 @@ run from a console.
 
 `Secret` deliberately does not implement `Display`, so `println!("{}", token)`
 is a compile error. `Debug` is redacted. `Secret::expose()` is the only way to
-the raw value -- keep its call sites confined to `store`, `validate` and
-`claude_cli`, and never widen that set casually.
+the raw value, and there are exactly two call sites: `redact.rs`, where the
+type lives, and `validate.rs`, which has to look at the bytes to judge them.
+CI fails the build if a third appears.
+
+Note that `claude_cli` is not on that list and does not need to be. Refreshing
+points Claude Code at a credential directory; this program never handles the
+token itself.
 
 Persist error *kinds*, never rendered error messages: a message can echo its
 input, and that input can be a token.

@@ -66,7 +66,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: expose() stays confined
         run: |
-          allowed='^src/(redact|validate)\.rs$|^src/store/'
+          # Exactly the two files that legitimately see raw bytes. The
+          # allowlist used to include all of src/store/, which no longer
+          # needs it -- a narrower list catches more.
+          allowed='^src/(redact|validate)\.rs$'
           offenders=$(grep -rln '\.expose()' src | grep -Ev "$allowed" || true)
           if [ -n "$offenders" ]; then
             echo "::error::.expose() used outside the modules allowed to see raw tokens:"
