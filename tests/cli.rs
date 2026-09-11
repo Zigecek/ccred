@@ -877,3 +877,25 @@ fn list_shows_a_profile_whose_metadata_will_not_parse() {
     assert!(out.contains("personal"), "and so must the rest: {out}");
     assert!(out.contains("unreadable"), "{out}");
 }
+
+/// `current` is the first thing anyone runs. A live credential file that will
+/// not parse must produce a report saying so, not a bare error -- `doctor` is
+/// where that fails loudly.
+#[test]
+fn current_reports_an_unreadable_live_store_instead_of_refusing() {
+    let sb = Sandbox::new();
+    sb.run(&["save", "work"]);
+    std::fs::write(
+        sb.path().join(".claude/.credentials.json"),
+        "{ this is not json",
+    )
+    .unwrap();
+
+    let (out, err, code) = sb.run(&["current"]);
+    assert_eq!(code, 0, "{err}{out}");
+    assert!(out.contains("cannot be read"), "{out}");
+
+    // And doctor is where it is an error.
+    let (dout, _, dcode) = sb.run(&["doctor"]);
+    assert_eq!(dcode, 7, "{dout}");
+}

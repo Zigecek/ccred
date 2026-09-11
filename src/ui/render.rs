@@ -133,6 +133,13 @@ pub fn current(theme: &Theme, r: &CurrentReport) {
             ),
         );
         println!("{}", f.render(PAD));
+    } else if let Some(why) = &r.live_error {
+        callout(
+            ERR,
+            g.err,
+            "the live credentials cannot be read",
+            &[why, "`ccred doctor` has the details"],
+        );
     } else {
         callout(
             ERR,

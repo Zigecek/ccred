@@ -67,6 +67,12 @@ pub struct CurrentReport {
     /// Set when the active pointer disagrees with the live account. This is
     /// the shape of a near-miss that once nearly destroyed a profile.
     pub pointer_mismatch: Option<String>,
+    /// Set when the live credential file exists but could not be read.
+    ///
+    /// `current` is the first thing anyone runs, so it reports this rather
+    /// than refusing to say anything. `doctor` is where it fails loudly.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub live_error: Option<String>,
 }
 
 pub fn current(ctx: &Ctx) -> crate::Result<CurrentReport> {
@@ -75,7 +81,10 @@ pub fn current(ctx: &Ctx) -> crate::Result<CurrentReport> {
     let account = ctx.live_account();
     let active = ctx.repo().active()?;
 
-    let loaded = live.load()?;
+    let (loaded, live_error) = match live.load() {
+        Ok(l) => (l, None),
+        Err(e) => (None, Some(e.to_string())),
+    };
     let (logged_in, access_ms_left, refresh_ms_left) = match &loaded {
         Some(l) => match validate_credentials(&l.creds.oauth, now) {
             Ok(_) => (
@@ -126,6 +135,7 @@ pub fn current(ctx: &Ctx) -> crate::Result<CurrentReport> {
         profile_count: ctx.repo().list()?.len(),
         claude_running: crate::proc::running_claude_pids(ctx.paths().claude_config_dir()),
         pointer_mismatch,
+        live_error,
     })
 }
 
