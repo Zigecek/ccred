@@ -439,6 +439,7 @@ fn decision_label(d: Decision) -> (&'static str, anstyle::Style) {
         Decision::SkipBackoff => ("backing off", WARN),
         Decision::SkipCap => ("rate capped", WARN),
         Decision::Refresh => ("refreshed", OK),
+        Decision::ExpiringSoon => ("expiring", WARN),
         Decision::NeedsLogin => ("needs login", ERR),
         Decision::Broken => ("broken", ERR),
     }

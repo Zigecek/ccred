@@ -49,6 +49,13 @@ use crate::validate::{ProfileName, validate_credentials};
 
 const DAY_MS: i64 = 86_400_000;
 
+/// Start saying so this many days before the refresh deadline.
+///
+/// The deadline cannot be moved, so the warning is the whole remedy: it has
+/// to arrive with enough time for someone to notice a scheduled run and log
+/// in. Two scheduled runs fit inside five days.
+const EXPIRY_WARN_DAYS: i64 = 5;
+
 /// How long to wait for the credential store lock.
 ///
 /// Shorter than the switch timeout on purpose: this runs unattended, so
@@ -117,6 +124,13 @@ pub enum Decision {
     /// cannot extend anything -- and, because success is judged by the window
     /// moving, it would be recorded as a failure and earn a backoff.
     SkipAccessLive,
+    /// The refresh deadline is close and nothing can postpone it.
+    ///
+    /// That deadline is fixed at login and inherited by every rotated token,
+    /// so there is no version of "try harder" that helps. Warning ahead of it
+    /// is the only thing a schedule can usefully do about it -- which makes
+    /// this the most valuable thing an unattended run reports.
+    ExpiringSoon,
     /// The refresh token is gone; only a person can fix this.
     NeedsLogin,
     Broken,
@@ -148,9 +162,12 @@ impl RefreshReport {
 
     /// Did anything happen that a person needs to act on?
     pub fn needs_attention(&self) -> bool {
-        self.profiles
-            .iter()
-            .any(|p| matches!(p.decision, Decision::NeedsLogin | Decision::Broken))
+        self.profiles.iter().any(|p| {
+            matches!(
+                p.decision,
+                Decision::NeedsLogin | Decision::Broken | Decision::ExpiringSoon
+            )
+        })
     }
 }
 
@@ -194,6 +211,15 @@ pub fn decide(
     }
     if refresh_expired || state.needs_login {
         return Decision::NeedsLogin;
+    }
+    // Ahead of every gate that would otherwise stay quiet. The deadline
+    // cannot be postponed, so saying so in time is the only remedy there is;
+    // a profile four days from being locked out must not be reported as
+    // "backing off" or "up to date".
+    if let Some(left) = window_left_ms
+        && left < EXPIRY_WARN_DAYS * DAY_MS
+    {
+        return Decision::ExpiringSoon;
     }
     if let Some(after) = state.next_attempt_after_ms
         && now < after
@@ -382,6 +408,12 @@ pub fn refresh(ctx: &Ctx, opts: &RefreshOptions) -> crate::Result<RefreshReport>
             Decision::SkipAccessLive => {
                 detail =
                     Some("the access token has not expired yet; nothing would be exchanged".into());
+            }
+            Decision::ExpiringSoon => {
+                let days = window_before.map(|ms| ms / DAY_MS).unwrap_or(0);
+                detail = Some(format!(
+                    "log in again within {days} days -- this deadline is fixed at                      login and refreshing cannot move it"
+                ));
             }
             Decision::NeedsLogin => {
                 detail = Some(format!(
@@ -733,7 +765,7 @@ mod tests {
         let d = decide(
             false,
             TokenState {
-                window_left_ms: Some(3 * DAY_MS),
+                window_left_ms: Some(7 * DAY_MS),
                 refresh_expired: false,
                 access_expired: true,
                 usable: true,
@@ -772,7 +804,7 @@ mod tests {
         let d = decide(
             false,
             TokenState {
-                window_left_ms: Some(3 * DAY_MS),
+                window_left_ms: Some(7 * DAY_MS),
                 refresh_expired: false,
                 access_expired: true,
                 usable: true,
@@ -793,7 +825,7 @@ mod tests {
         let d = decide(
             false,
             TokenState {
-                window_left_ms: Some(DAY_MS),
+                window_left_ms: Some(8 * DAY_MS),
                 refresh_expired: false,
                 access_expired: true,
                 usable: true,
@@ -814,7 +846,7 @@ mod tests {
         let d = decide(
             false,
             TokenState {
-                window_left_ms: Some(DAY_MS),
+                window_left_ms: Some(8 * DAY_MS),
                 refresh_expired: false,
                 access_expired: true,
                 usable: true,
@@ -1054,7 +1086,7 @@ mod tests {
     /// judging a correct no-op by a yardstick that did not apply.
     #[test]
     fn a_profile_whose_access_token_is_still_live_is_not_spawned_for() {
-        let low_window = Some(3 * DAY_MS);
+        let low_window = Some(7 * DAY_MS);
         assert_eq!(
             decide(
                 false,
@@ -1142,6 +1174,57 @@ mod tests {
         assert!(
             after_window <= before_window,
             "judging by the window would have called this exchange a failure"
+        );
+    }
+
+    /// The deadline cannot be postponed, so saying so in time is the only
+    /// remedy there is -- and it has to outrank every gate that would
+    /// otherwise stay quiet. A profile four days from being locked out must
+    /// not be reported as "backing off" or "up to date".
+    #[test]
+    fn an_approaching_deadline_outranks_every_reason_to_stay_quiet() {
+        let nearly_gone = TokenState {
+            window_left_ms: Some(4 * DAY_MS),
+            refresh_expired: false,
+            access_expired: false,
+            usable: true,
+        };
+        let backed_off = RefreshState {
+            next_attempt_after_ms: Some(NOW + DAY_MS),
+            last_attempt_ms: Some(NOW),
+            ..Default::default()
+        };
+        for state in [RefreshState::default(), backed_off] {
+            assert_eq!(
+                decide(false, nearly_gone, &state, NOW, &policy()),
+                Decision::ExpiringSoon
+            );
+        }
+    }
+
+    /// It must not shout about the active profile, which Claude Code is
+    /// refreshing anyway, nor about one that is already past the deadline --
+    /// that is NeedsLogin, and the advice differs.
+    #[test]
+    fn the_warning_does_not_displace_the_two_states_that_outrank_it() {
+        let nearly_gone = TokenState {
+            window_left_ms: Some(4 * DAY_MS),
+            refresh_expired: false,
+            access_expired: false,
+            usable: true,
+        };
+        assert_eq!(
+            decide(true, nearly_gone, &RefreshState::default(), NOW, &policy()),
+            Decision::MirrorActive
+        );
+        let gone = TokenState {
+            window_left_ms: Some(-1),
+            refresh_expired: true,
+            ..nearly_gone
+        };
+        assert_eq!(
+            decide(false, gone, &RefreshState::default(), NOW, &policy()),
+            Decision::NeedsLogin
         );
     }
 }
