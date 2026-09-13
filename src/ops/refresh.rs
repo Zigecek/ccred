@@ -96,13 +96,17 @@ impl Default for RefreshPolicy {
 pub struct LastRun {
     pub finished_at_ms: i64,
     pub status: String,
-    /// Whether that run left anything a person has to deal with.
+    /// Whether that run hit something a retry might fix.
     ///
-    /// The rate limit exists so a scheduler that double-fires costs nothing.
-    /// Arming it from a run where every profile came back broken turns a
-    /// transient failure into two days of silence, which is the opposite of
-    /// what it is for. Old records without the field read as clean, so an
-    /// upgrade does not suddenly re-run everything.
+    /// The rate limit exists so a scheduler that double-fires costs nothing,
+    /// and a transient failure should not buy two days of silence. But only
+    /// *transient* trouble may bypass it: keying this on "needs attention"
+    /// included a spent refresh token and an approaching deadline, neither of
+    /// which a retry can help, so the limit stayed off for as long as they
+    /// lasted -- permanently, on a machine with no `claude` installed.
+    ///
+    /// The name is kept for the on-disk shape. Old records without the field
+    /// read as clean, so an upgrade does not re-run everything at once.
     #[serde(default)]
     pub needed_attention: bool,
 }
@@ -169,6 +173,21 @@ impl RefreshReport {
             )
         })
     }
+
+    /// Did anything happen that trying again might fix?
+    ///
+    /// Distinct from `needs_attention`, and the distinction matters: that one
+    /// includes states a retry cannot help -- a spent refresh token, a
+    /// deadline five days out -- and using it to bypass the over-fire rate
+    /// limit disabled the limit for as long as those states persisted, which
+    /// is to say permanently. On a machine with no `claude` installed, every
+    /// run was `Broken` and the idempotency this module promises was void
+    /// from the first one.
+    pub fn worth_retrying_sooner(&self) -> bool {
+        self.profiles
+            .iter()
+            .any(|p| matches!(p.decision, Decision::Broken))
+    }
 }
 
 /// Decide what to do with one profile. Pure, so the policy is testable.
@@ -212,36 +231,48 @@ pub fn decide(
     if refresh_expired || state.needs_login {
         return Decision::NeedsLogin;
     }
-    // Ahead of every gate that would otherwise stay quiet. The deadline
-    // cannot be postponed, so saying so in time is the only remedy there is;
-    // a profile four days from being locked out must not be reported as
-    // "backing off" or "up to date".
-    if let Some(left) = window_left_ms
-        && left < EXPIRY_WARN_DAYS * DAY_MS
-    {
+    // The warning replaces only the *quiet* outcomes, never the work.
+    //
+    // Returning it unconditionally made a profile inside five days
+    // unrefreshable -- the one a person is most likely to reach for `--force`
+    // over -- because `Refresh` sat below it and could never be reached. The
+    // deadline cannot be moved, but the access token still needs renewing,
+    // and both things can be true at once: refresh if there is an exchange to
+    // make, and say so either way.
+    let expiring = window_left_ms.is_some_and(|left| left < EXPIRY_WARN_DAYS * DAY_MS);
+    if expiring && !access_expired {
+        // Nothing to exchange, so there is no work to displace.
         return Decision::ExpiringSoon;
     }
-    if let Some(after) = state.next_attempt_after_ms
-        && now < after
-    {
-        return Decision::SkipBackoff;
-    }
-    if let Some(last) = state.last_attempt_ms
-        && now - last < policy.min_interval_ms
-    {
-        return Decision::SkipBackoff;
-    }
-    match window_left_ms {
-        Some(left) if left > policy.window_below_ms => Decision::SkipFresh,
-        // No stated expiry means we cannot tell how urgent it is; leave it be
-        // rather than refreshing something that may not need it.
-        None => Decision::SkipFresh,
-        // The window is low enough to act on, but acting only works once the
-        // access token has expired. An idle profile's access token is expired
-        // almost all of the time -- eight hours against a schedule measured in
-        // days -- so this is a short wait, not a dead end.
-        Some(_) if !access_expired => Decision::SkipAccessLive,
-        Some(_) => Decision::Refresh,
+    let backed_off = state.next_attempt_after_ms.is_some_and(|after| now < after)
+        || state
+            .last_attempt_ms
+            .is_some_and(|last| now - last < policy.min_interval_ms);
+
+    let decision = if backed_off {
+        Decision::SkipBackoff
+    } else {
+        match window_left_ms {
+            Some(left) if left > policy.window_below_ms => Decision::SkipFresh,
+            // No stated expiry means we cannot tell how urgent it is; leave
+            // it be rather than refreshing something that may not need it.
+            None => Decision::SkipFresh,
+            // The window is low enough to act on, but acting only works once the
+            // access token has expired. An idle profile's access token is expired
+            // almost all of the time -- eight hours against a schedule measured in
+            // days -- so this is a short wait, not a dead end.
+            Some(_) if !access_expired => Decision::SkipAccessLive,
+            Some(_) => Decision::Refresh,
+        }
+    };
+
+    // A backoff or a recent attempt would otherwise silence the deadline, and
+    // that is the one thing about this profile worth saying.
+    match decision {
+        Decision::SkipBackoff | Decision::SkipFresh | Decision::SkipCap if expiring => {
+            Decision::ExpiringSoon
+        }
+        other => other,
     }
 }
 
@@ -382,6 +413,16 @@ pub fn refresh(ctx: &Ctx, opts: &RefreshOptions) -> crate::Result<RefreshReport>
                         Ok(found) => cli = Some(found),
                         Err(e) => {
                             missing_claude = true;
+                            // Same reasoning as above: without an attempt
+                            // recorded, a machine with no `claude` retries
+                            // every profile on every firing for ever.
+                            let failures = state.consecutive_failures.saturating_add(1);
+                            let next = now + backoff_ms(failures);
+                            let _ = ctx.repo().update_meta(&name, |m| {
+                                m.refresh.last_attempt_ms = Some(now);
+                                m.refresh.consecutive_failures = failures;
+                                m.refresh.next_attempt_after_ms = Some(next);
+                            });
                             results.push(ProfileResult {
                                 name: name.as_str().to_string(),
                                 decision: Decision::Broken,
@@ -406,6 +447,17 @@ pub fn refresh(ctx: &Ctx, opts: &RefreshOptions) -> crate::Result<RefreshReport>
                         detail = note;
                     }
                     Err(e) => {
+                        // Record the attempt, or there is no backoff: a
+                        // machine where the spawn always fails would retry
+                        // `max_spawns` profiles at the full timeout on every
+                        // firing, for ever.
+                        let failures = state.consecutive_failures.saturating_add(1);
+                        let next = now + backoff_ms(failures);
+                        let _ = ctx.repo().update_meta(&name, |m| {
+                            m.refresh.last_attempt_ms = Some(now);
+                            m.refresh.consecutive_failures = failures;
+                            m.refresh.next_attempt_after_ms = Some(next);
+                        });
                         decision = Decision::Broken;
                         detail = Some(e.to_string());
                     }
@@ -739,7 +791,7 @@ fn write_last_run(ctx: &Ctx, now: i64, report: &RefreshReport) -> crate::Result<
     let record = LastRun {
         finished_at_ms: now,
         status: report.status.clone(),
-        needed_attention: report.needs_attention(),
+        needed_attention: report.worth_retrying_sooner(),
     };
     let bytes = serde_json::to_vec_pretty(&record).map_err(|source| CcredError::Json {
         path: ctx.paths().last_run(),
@@ -1266,5 +1318,83 @@ mod tests {
             decide(false, gone, &RefreshState::default(), NOW, &policy()),
             Decision::NeedsLogin
         );
+    }
+
+    /// The warning must displace only the quiet outcomes, never the work.
+    ///
+    /// Returned unconditionally, it made a profile inside five days
+    /// unrefreshable -- the very profile someone is most likely to reach for
+    /// `--force` over -- because `Refresh` sat below it and could not be
+    /// reached. The deadline cannot be moved, but the access token still
+    /// needs renewing, and both are true at once.
+    #[test]
+    fn an_approaching_deadline_does_not_cancel_the_refresh_it_cannot_replace() {
+        let due = TokenState {
+            window_left_ms: Some(4 * DAY_MS),
+            refresh_expired: false,
+            access_expired: true, // there IS an exchange to make
+            usable: true,
+        };
+        assert_eq!(
+            decide(false, due, &RefreshState::default(), NOW, &policy()),
+            Decision::Refresh,
+            "a renewable profile must still be renewed while it is warned about"
+        );
+
+        // With nothing to exchange, the warning is all there is to say.
+        let nothing_to_do = TokenState {
+            access_expired: false,
+            ..due
+        };
+        assert_eq!(
+            decide(
+                false,
+                nothing_to_do,
+                &RefreshState::default(),
+                NOW,
+                &policy()
+            ),
+            Decision::ExpiringSoon
+        );
+    }
+
+    /// Only trouble a retry might fix may bypass the over-fire rate limit.
+    ///
+    /// Keyed on "needs attention" it included a spent refresh token and an
+    /// approaching deadline, neither of which retrying helps -- so the limit
+    /// stayed off for as long as those lasted. On a machine with no `claude`
+    /// installed that is permanent, and the idempotency this module promises
+    /// was void from the first run.
+    #[test]
+    fn only_transient_trouble_lifts_the_rate_limit() {
+        let line = |d: Decision| ProfileResult {
+            name: "p".into(),
+            decision: d,
+            detail: None,
+            window_days_before: None,
+            window_days_after: None,
+        };
+        let report = |d: Decision| RefreshReport {
+            status: "ran".into(),
+            profiles: vec![line(d)],
+        };
+
+        for persistent in [Decision::NeedsLogin, Decision::ExpiringSoon] {
+            let r = report(persistent);
+            assert!(
+                r.needs_attention(),
+                "{persistent:?} still concerns a person"
+            );
+            assert!(
+                !r.worth_retrying_sooner(),
+                "{persistent:?} cannot be fixed by running again"
+            );
+        }
+
+        let r = report(Decision::Broken);
+        assert!(r.worth_retrying_sooner(), "a broken run is worth retrying");
+
+        let quiet = report(Decision::SkipFresh);
+        assert!(!quiet.needs_attention() && !quiet.worth_retrying_sooner());
     }
 }
