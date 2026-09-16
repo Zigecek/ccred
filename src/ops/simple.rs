@@ -382,7 +382,11 @@ pub fn restore(ctx: &Ctx, name: &ProfileName) -> crate::Result<()> {
     }
     if !ctx.repo().restore_last_known_good(name)? {
         return Err(CcredError::UnsafeWrite(format!(
-            "'{name}' has no usable earlier copy to restore; switch to it and              run `claude auth login`, then `ccred save {name}`"
+            concat!(
+                "'{0}' has no usable earlier copy to restore; switch to it and ",
+                "run `claude auth login`, then `ccred save {0}`"
+            ),
+            name
         )));
     }
     Ok(())

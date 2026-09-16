@@ -476,7 +476,11 @@ pub fn refresh(ctx: &Ctx, opts: &RefreshOptions) -> crate::Result<RefreshReport>
             Decision::ExpiringSoon => {
                 let days = window_before.map(|ms| ms / DAY_MS).unwrap_or(0);
                 detail = Some(format!(
-                    "log in again within {days} days -- this deadline is fixed at                      login and refreshing cannot move it"
+                    concat!(
+                        "log in again within {} days -- this deadline is fixed at ",
+                        "login and refreshing cannot move it"
+                    ),
+                    days
                 ));
             }
             Decision::NeedsLogin => {
