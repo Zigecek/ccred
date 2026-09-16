@@ -115,13 +115,32 @@ impl ProbeOutcome {
     }
 
     /// Does the output say the account needs a human to log in again?
+    ///
+    /// Only structured evidence, and stderr, count. The phrases below used to
+    /// be looked for anywhere in stdout -- which is where `mcp list` prints
+    /// the user's own MCP server names and the prompt rung prints the model's
+    /// reply. Text this program does not control decided something that
+    /// latches: a profile marked this way is never probed again until a
+    /// person runs `ccred save`.
     pub fn needs_login(&self) -> bool {
-        if let Ok(status) = serde_json::from_str::<AuthStatus>(self.stdout.trim())
+        let stdout = self.stdout.trim();
+        if let Ok(status) = serde_json::from_str::<AuthStatus>(stdout)
             && !status.logged_in
         {
             return true;
         }
-        let text = format!("{} {}", self.stdout, self.stderr).to_ascii_lowercase();
+        // The prompt rung answers in JSON, and says whether its result is an
+        // error. A successful answer is never searched.
+        let failed_result = serde_json::from_str::<serde_json::Value>(stdout)
+            .ok()
+            .filter(|v| v.get("is_error").and_then(serde_json::Value::as_bool) == Some(true))
+            .and_then(|v| {
+                v.get("result")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string)
+            })
+            .unwrap_or_default();
+        let text = format!("{failed_result} {}", self.stderr).to_ascii_lowercase();
         text.contains("please run /login")
             || text.contains("invalid_grant")
             || text.contains("authentication_error")
@@ -454,6 +473,46 @@ mod tests {
             outcome.needs_login(),
             "the message a real Claude Code prints must be recognised"
         );
+    }
+
+    /// The same phrases in text this program does not control: an MCP server
+    /// the user named after an error, and a model reply that quotes one. A
+    /// latch that stops a profile being refreshed until a person intervenes
+    /// must not be set by either.
+    #[test]
+    fn someone_elses_words_do_not_latch_a_profile() {
+        let mcp_list = ProbeOutcome {
+            exit_code: Some(0),
+            stdout: "oauth session expired: connected
+invalid_grant: connected
+"
+            .to_string(),
+            stderr: String::new(),
+            timed_out: false,
+        };
+        assert!(
+            !mcp_list.needs_login(),
+            "an MCP server name is not evidence"
+        );
+
+        let answer = ProbeOutcome {
+            exit_code: Some(0),
+            stdout: r#"{"is_error":false,"subtype":"success","result":"invalid_grant means please run /login"}"#.to_string(),
+            stderr: String::new(),
+            timed_out: false,
+        };
+        assert!(
+            !answer.needs_login(),
+            "the model's own words are not evidence"
+        );
+
+        let on_stderr = ProbeOutcome {
+            exit_code: Some(1),
+            stdout: String::new(),
+            stderr: "Error: invalid_grant".to_string(),
+            timed_out: false,
+        };
+        assert!(on_stderr.needs_login(), "a real error still counts");
     }
 
     /// `run_with_timeout` is hand-rolled concurrency -- a poll loop, a reader

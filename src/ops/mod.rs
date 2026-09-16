@@ -99,7 +99,7 @@ impl Ctx {
 /// an hour in the past came out as `0` and the list read `0d` -- "expires
 /// today" rather than "expired".
 pub fn days_until(deadline_ms: i64, now_ms: i64) -> i64 {
-    (deadline_ms - now_ms).div_euclid(86_400_000)
+    deadline_ms.saturating_sub(now_ms).div_euclid(86_400_000)
 }
 
 #[cfg(test)]

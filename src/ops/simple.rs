@@ -89,8 +89,11 @@ pub fn current(ctx: &Ctx) -> crate::Result<CurrentReport> {
         Some(l) => match validate_credentials(&l.creds.oauth, now) {
             Ok(_) => (
                 true,
-                Some(l.creds.oauth.expires_at - now),
-                l.creds.oauth.refresh_token_expires_at.map(|t| t - now),
+                Some(l.creds.oauth.expires_at.saturating_sub(now)),
+                l.creds
+                    .oauth
+                    .refresh_token_expires_at
+                    .map(|t| t.saturating_sub(now)),
             ),
             Err(_) => (false, None, None),
         },
@@ -348,6 +351,9 @@ fn auto_schedule(ctx: &Ctx, outcome: SaveOutcome) -> Option<ScheduleSetup> {
 }
 
 pub fn save(ctx: &Ctx, name: &ProfileName) -> crate::Result<SaveReport> {
+    // In the spelling the profile is stored under, where the file system
+    // does not tell spellings apart.
+    let name = &ctx.repo().canonical_name(name);
     // Read the live store under the lock Claude Code also takes. Without it a
     // refresh landing mid-read stores half of one token pair and half of the
     // next. The lock is taken here rather than inside `save_from`, because
@@ -427,6 +433,7 @@ pub fn save(ctx: &Ctx, name: &ProfileName) -> crate::Result<SaveReport> {
 /// Put a profile's last-known-good credentials back.
 pub fn restore(ctx: &Ctx, name: &ProfileName) -> crate::Result<()> {
     let _profiles = ctx.lock_profiles(SAVE_LOCK_TIMEOUT)?;
+    let name = &ctx.repo().canonical_name(name);
     if !ctx.repo().exists(name)? {
         return Err(CcredError::ProfileNotFound(name.as_str().to_string()));
     }
@@ -445,6 +452,7 @@ pub fn restore(ctx: &Ctx, name: &ProfileName) -> crate::Result<()> {
 pub fn remove(ctx: &Ctx, name: &ProfileName) -> crate::Result<RemoveReport> {
     // A refresh may be running `claude` against this very directory.
     let _profiles = ctx.lock_profiles(SAVE_LOCK_TIMEOUT)?;
+    let name = &ctx.repo().canonical_name(name);
     if !ctx.repo().exists(name)? {
         return Err(CcredError::ProfileNotFound(name.as_str().to_string()));
     }

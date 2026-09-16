@@ -51,6 +51,7 @@ pub struct SwitchReport {
 }
 
 pub fn switch(ctx: &Ctx, target: &ProfileName, force: bool) -> crate::Result<SwitchReport> {
+    let target = &ctx.repo().canonical_name(target);
     let mut warnings = Vec::new();
 
     // Held from before recovery to the end. A journal left by a crash and a
@@ -217,8 +218,22 @@ fn restore_identity(
             return Ok(false);
         }
     };
-    doc.set_oauth_account(blob)?;
-    doc.save_atomic(config_path)?;
+    // Warned about, not raised, and for the same reason the load above is:
+    // by the time this runs the live credentials are already the target's,
+    // so failing here leaves the switch half-applied *and* stops every later
+    // `save` and `switch`, since both replay the journal first. A stale
+    // account name is a mismatch `current` and `doctor` both report, and the
+    // next successful switch or save fixes it.
+    if let Err(e) = doc
+        .set_oauth_account(blob)
+        .and_then(|()| doc.save_atomic(config_path))
+    {
+        warnings.push(format!(
+            "could not update {}: {e}; `ccred doctor` says how it looks now",
+            config_path.display()
+        ));
+        return Ok(false);
+    }
     Ok(true)
 }
 

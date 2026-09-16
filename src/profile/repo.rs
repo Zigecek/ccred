@@ -141,6 +141,33 @@ impl ProfileRepo {
         Ok(self.meta_path(name)?.exists())
     }
 
+    /// The stored spelling of a profile, matched the way the file system
+    /// matches names.
+    ///
+    /// Windows and a default macOS volume do not tell `Work` from `work`.
+    /// A profile saved as `work` and then switched to as `WORK` wrote `WORK`
+    /// into the pointer while the directory stayed `work`, so `list` showed
+    /// no active profile at all -- and `rm work`, the profile whose
+    /// credentials were live, walked straight past the guard that refuses to
+    /// delete the active one.
+    ///
+    /// An unknown name is returned as given, so the caller still reports
+    /// "no such profile" in the spelling the person typed.
+    pub fn canonical_name(&self, name: &ProfileName) -> ProfileName {
+        const CASE_INSENSITIVE_PATHS: bool = cfg!(windows) || cfg!(target_os = "macos");
+        // Deliberately not short-circuited on `exists`: on these platforms
+        // `profiles/WORK/ccred.json` *does* exist when the directory is
+        // `work`, which is the whole problem.
+        if !CASE_INSENSITIVE_PATHS {
+            return name.clone();
+        }
+        self.list()
+            .unwrap_or_default()
+            .into_iter()
+            .find(|stored| stored.as_str().eq_ignore_ascii_case(name.as_str()))
+            .unwrap_or_else(|| name.clone())
+    }
+
     fn meta_path(&self, name: &ProfileName) -> crate::Result<PathBuf> {
         Ok(self.paths.profile_dir(name)?.join("ccred.json"))
     }
@@ -206,7 +233,9 @@ impl ProfileRepo {
                 if trimmed.is_empty() {
                     return Ok(None);
                 }
-                Ok(Some(validate_profile_name(trimmed)?))
+                // In the stored spelling: a pointer written as `WORK` for a
+                // directory named `work` otherwise matches nothing.
+                Ok(Some(self.canonical_name(&validate_profile_name(trimmed)?)))
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(source) => Err(CcredError::Io { path, source }),
@@ -311,7 +340,9 @@ impl ProfileRepo {
         // with pretty printing, so the stored bytes never equal the source
         // bytes and a raw comparison would rewrite the profile on every run.
         // `Value` equality ignores key order, so this is a true content check.
-        if let Some(current) = target.load()?
+        // `unwrap_or(None)`, not `?`: a file that will not parse is exactly
+        // what a save is being asked to replace.
+        if let Some(current) = target.load().unwrap_or(None)
             && let (Ok(a), Ok(b)) = (
                 serde_json::to_value(&current.creds),
                 serde_json::to_value(&loaded.creds),

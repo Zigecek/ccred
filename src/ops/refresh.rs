@@ -606,7 +606,7 @@ pub fn refresh(ctx: &Ctx, opts: &RefreshOptions) -> crate::Result<RefreshReport>
                     .ok()
                     .flatten()
                     .and_then(|l| l.creds.oauth.refresh_token_expires_at)
-                    .map(|t| (t - now) / DAY_MS);
+                    .map(|t| t.saturating_sub(now) / DAY_MS);
             }
             Decision::SkipAccessLive => {
                 detail =

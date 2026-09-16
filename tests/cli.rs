@@ -1902,3 +1902,100 @@ fn a_switch_and_a_refresh_never_work_on_the_profiles_at_once() {
     let (out, err, code) = sb.run(&["switch", "work"]);
     assert_eq!(code, 0, "{out}{err}");
 }
+
+/// Windows and macOS do not tell `work` from `WORK`, so switching to a
+/// different spelling wrote a pointer that matched no directory: the active
+/// marker vanished and `rm` would delete the profile whose credentials were
+/// live.
+#[test]
+fn a_profile_is_the_same_profile_however_it_is_spelled() {
+    let sb = Sandbox::new();
+    sb.run(&["save", "work"]);
+    sb.login_b();
+    sb.run(&["save", "personal"]);
+
+    let (out, err, code) = sb.run(&["switch", "WORK"]);
+    if cfg!(windows) || cfg!(target_os = "macos") {
+        assert_eq!(code, 0, "{out}{err}");
+        let (out, _, _) = sb.run(&["list"]);
+        let active_line = out
+            .lines()
+            .find(|l| l.contains("work"))
+            .expect("work must be listed");
+        assert!(
+            active_line.contains('*') || active_line.contains('\u{25cf}'),
+            "work is live but not marked active: {out}"
+        );
+
+        let (out, err, code) = sb.run(&["rm", "work"]);
+        assert_eq!(
+            code, 7,
+            "the live profile must not be removable:\n{out}{err}"
+        );
+        assert!(
+            sb.path().join(".ccred/profiles/work").is_dir(),
+            "the active profile was deleted"
+        );
+
+        // And saving under the other spelling updates it, rather than being
+        // refused as another profile's credentials.
+        let (out, err, code) = sb.run(&["save", "WORK"]);
+        assert_eq!(code, 0, "{out}{err}");
+        let dirs: Vec<String> = std::fs::read_dir(sb.path().join(".ccred/profiles"))
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            dirs,
+            ["personal", "work"],
+            "a second directory was created for the other spelling"
+        );
+    } else {
+        assert_eq!(code, 3, "on a case-sensitive file system it is not found");
+    }
+}
+
+/// `current` and `list` are what someone runs *because* a file looks wrong.
+/// A timestamp of i64::MIN made the subtraction overflow and the process
+/// panicked with exit 101, outside the documented codes.
+#[test]
+fn an_absurd_timestamp_is_reported_not_panicked_on() {
+    let sb = Sandbox::new();
+    sb.run(&["save", "work"]);
+    let live = sb.path().join(".claude/.credentials.json");
+    let text = std::fs::read_to_string(&live)
+        .unwrap()
+        .replace(&FAR_FUTURE.to_string(), "-9223372036854775808");
+    std::fs::write(&live, text).unwrap();
+
+    for args in [&["current"][..], &["list"][..], &["doctor"][..]] {
+        let (out, err, code) = sb.run(args);
+        assert_ne!(code, 101, "`ccred {}` panicked:\n{out}{err}", args[0]);
+        assert!(
+            (0..=8).contains(&code),
+            "exit {code} is outside the contract"
+        );
+    }
+}
+
+/// A profile whose credential file no longer parses is exactly what `save`
+/// is for; it used to refuse, because reading the old file came first.
+#[test]
+fn a_profile_whose_file_is_corrupt_can_be_saved_over() {
+    let sb = Sandbox::new();
+    sb.run(&["save", "work"]);
+    let creds = sb.path().join(".ccred/profiles/work/.credentials.json");
+    std::fs::write(&creds, b"{ this is not json").unwrap();
+
+    let (out, err, code) = sb.run(&["save", "work"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let repaired = std::fs::read_to_string(&creds).unwrap();
+    assert!(repaired.contains(REFRESH_A), "the profile was not repaired");
+    // The damaged bytes are kept, as every overwrite is.
+    let backups: Vec<_> = walk(&sb.path().join(".ccred/backups"))
+        .into_iter()
+        .filter(|p| p.is_file())
+        .collect();
+    assert!(!backups.is_empty(), "no copy of the damaged file was kept");
+}

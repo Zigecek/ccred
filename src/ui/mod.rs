@@ -372,7 +372,9 @@ pub fn left(ms: i64) -> String {
         // Say how long ago. A bare "expired" hides the one number that tells
         // a real lapse ("20 days ago") from a misread timestamp ("20 000 days
         // ago"), and that difference is the whole diagnosis.
-        return format!("expired {} ago", span(-ms));
+        // Saturating: a damaged file can hold i64::MIN, and negating that
+        // overflows -- in the command someone runs to find out what is wrong.
+        return format!("expired {} ago", span(ms.saturating_neg()));
     }
     span(ms)
 }

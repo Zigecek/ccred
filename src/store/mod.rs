@@ -133,7 +133,10 @@ pub fn check_before_store(
     now_ms: i64,
 ) -> crate::Result<()> {
     validate_credentials(&incoming.oauth, now_ms)?;
-    let existing = store.load()?;
+    // A store that cannot be parsed is treated as absent, not as a reason to
+    // refuse: `save` is how a profile whose file was damaged gets repaired,
+    // and the caller has already copied the old bytes aside.
+    let existing = store.load().unwrap_or(None);
     crate::validate::assert_safe_replacement(
         existing.as_ref().map(|l| &l.creds.oauth),
         &incoming.oauth,

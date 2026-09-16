@@ -82,7 +82,12 @@ pub fn validate_credentials(creds: &OAuthCredentials, now_ms: i64) -> Result<Hea
     Ok(Health {
         access_expired: creds.expires_at <= now_ms,
         refresh_expired: creds.refresh_token_expires_at.is_some_and(|t| t <= now_ms),
-        refresh_window_left_ms: creds.refresh_token_expires_at.map(|t| t - now_ms),
+        // Saturating: a file can hold i64::MIN, and `current` -- one of the
+        // commands someone runs *because* a file looks damaged -- must
+        // report that rather than panicking on the subtraction.
+        refresh_window_left_ms: creds
+            .refresh_token_expires_at
+            .map(|t| t.saturating_sub(now_ms)),
     })
 }
 
