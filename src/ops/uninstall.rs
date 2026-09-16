@@ -80,6 +80,27 @@ pub fn owner_of(exe: &Path, receipt_exists: bool, exists: impl Fn(&str) -> bool)
     Owner::Unmanaged
 }
 
+/// Judge the executable by the path it was started from and by where that
+/// path really leads.
+///
+/// Homebrew links `/usr/local/bin/ccred` to a file in its Cellar. The link's
+/// own path says nothing about Homebrew, so judging by it alone deleted the
+/// link behind brew's back.
+pub fn owner_of_paths(
+    exe: &Path,
+    resolved: Option<&Path>,
+    receipt_exists: bool,
+    exists: impl Fn(&str) -> bool,
+) -> Owner {
+    if let Some(real) = resolved {
+        let owner = owner_of(real, false, &exists);
+        if matches!(owner, Owner::PackageManager { .. }) {
+            return owner;
+        }
+    }
+    owner_of(exe, receipt_exists, exists)
+}
+
 /// What an uninstall will do, worked out before anything is touched.
 #[derive(Debug, Clone, Serialize)]
 pub struct Plan {
@@ -298,7 +319,10 @@ pub fn plan(ctx: &Ctx, purge: bool) -> crate::Result<Plan> {
     })?;
     let receipt = receipt_path()
         .filter(|p| std::fs::read_to_string(p).is_ok_and(|text| receipt_covers(&text, &exe)));
-    let owner = owner_of(&exe, receipt.is_some(), |p| Path::new(p).exists());
+    let resolved = std::fs::canonicalize(&exe).ok();
+    let owner = owner_of_paths(&exe, resolved.as_deref(), receipt.is_some(), |p| {
+        Path::new(p).exists()
+    });
 
     let registered = match super::schedule::backend().status() {
         Ok(crate::schedule::State::Installed(h)) => Some(h.command),
@@ -523,6 +547,30 @@ mod tests {
             owner_of(exe, false, nothing),
             Owner::PackageManager { command, .. } if command == "cargo uninstall ccred"
         ));
+    }
+
+    #[test]
+    fn a_link_into_a_package_managers_tree_belongs_to_it() {
+        let owner = owner_of_paths(
+            Path::new("/usr/local/bin/ccred"),
+            Some(Path::new("/usr/local/Cellar/ccred/0.2.16/bin/ccred")),
+            false,
+            nothing,
+        );
+        assert!(
+            matches!(&owner, Owner::PackageManager { command, .. } if command == "brew uninstall ccred"),
+            "{owner:?}"
+        );
+        // A link to an ordinary file changes nothing.
+        assert_eq!(
+            owner_of_paths(
+                Path::new("/home/x/bin/ccred"),
+                Some(Path::new("/home/x/tools/ccred")),
+                false,
+                nothing
+            ),
+            Owner::Unmanaged
+        );
     }
 
     #[test]
