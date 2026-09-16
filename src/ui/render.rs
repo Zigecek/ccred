@@ -530,11 +530,12 @@ pub fn refresh(theme: &Theme, r: &RefreshReport) {
     println!("{}", t.render(theme, PAD));
     println!();
 
-    let needs = r
-        .profiles
-        .iter()
-        .filter(|p| matches!(p.decision, Decision::NeedsLogin | Decision::Broken))
-        .count();
+    let count = |d: Decision| r.profiles.iter().filter(|p| p.decision == d).count();
+    // Separately: "log in again" is the wrong advice for a profile that is
+    // broken for some other reason, such as a mirror refused because another
+    // account is logged in.
+    let logins = count(Decision::NeedsLogin);
+    let broken = count(Decision::Broken);
     let moved = r
         .profiles
         .iter()
@@ -547,10 +548,16 @@ pub fn refresh(theme: &Theme, r: &RefreshReport) {
             plural(r.profiles.len(), "profile", "profiles")
         ),
     );
-    if needs > 0 {
+    if logins > 0 {
         summary.push_str(&format!(
             "  {}",
-            paint(ERR, &format!("{needs} need a login"))
+            paint(ERR, &format!("{logins} need a login"))
+        ));
+    }
+    if broken > 0 {
+        summary.push_str(&format!(
+            "  {}",
+            paint(ERR, &format!("{broken} need attention"))
         ));
     }
     println!("{PAD}{summary}");

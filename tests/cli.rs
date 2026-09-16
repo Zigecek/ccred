@@ -1591,3 +1591,80 @@ fn a_forced_run_that_meets_a_signed_out_account_leaves_the_real_expiry() {
     assert_eq!(out.status.code(), Some(4));
     assert_eq!(stored_oauth(&creds), before);
 }
+
+/// After Claude Code renews the live tokens, the old refresh token is dead
+/// and the new pair exists only in the live store until ccred copies it.
+/// Each exchange recomputes the fixed refresh deadline and can land it a
+/// fraction of a second *earlier* -- measured: 809 ms -- and the write gate
+/// used to refuse that as a shrinking window, so the profile kept the dead
+/// token.
+#[test]
+fn renewed_live_tokens_are_kept_even_when_the_deadline_jitters_back() {
+    const TOKEN_A2: &str = "sk-ant-oat01-SENTINELACCESSA2A2A2A2A2A2A2A2A2A2A2A2A2A2A2A2A2";
+    const REFRESH_A2: &str = "sk-ant-ort01-SENTINELREFRESHA2A2A2A2A2A2A2A2A2A2A2A2A2A2A2A2";
+    const REFRESH_A3: &str = "sk-ant-ort01-SENTINELREFRESHA3A3A3A3A3A3A3A3A3A3A3A3A3A3A3A3";
+
+    let sb = Sandbox::new();
+    sb.run(&["save", "work"]); // alice
+    sb.login_b();
+    sb.run(&["save", "personal"]);
+    let (_, err, code) = sb.run(&["switch", "work"]);
+    assert_eq!(code, 0, "{err}");
+    let work = sb.path().join(".ccred/profiles/work/.credentials.json");
+
+    // Claude Code renews alice's tokens in the live store.
+    sb.write_login(
+        TOKEN_A2,
+        REFRESH_A2,
+        FAR_FUTURE - 809,
+        "alice@example.com",
+        "uuid-a",
+    );
+    // The scheduled mirror of the active profile must keep them.
+    let (out, err, code) = sb.run(&["refresh"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let stored = std::fs::read_to_string(&work).unwrap();
+    assert!(
+        stored.contains(REFRESH_A2),
+        "the mirror dropped them:\n{out}"
+    );
+
+    // And again, with switching away doing the copy.
+    sb.write_login(
+        TOKEN_A2,
+        REFRESH_A3,
+        FAR_FUTURE - 1_618,
+        "alice@example.com",
+        "uuid-a",
+    );
+    let (out, err, code) = sb.run(&["switch", "personal"]);
+    assert_eq!(code, 0, "{out}{err}");
+    let stored = std::fs::read_to_string(&work).unwrap();
+    assert!(
+        stored.contains(REFRESH_A3),
+        "switching away left a dead token behind:\n{out}"
+    );
+}
+
+/// A mirror that cannot be done is something a person has to look at: the
+/// live account is not the one the active profile names. It used to be
+/// listed as "mirrored", with the refusal in small print, and exit 0.
+#[test]
+fn a_mirror_that_is_refused_is_not_reported_as_done() {
+    let sb = Sandbox::new();
+    sb.run(&["save", "work"]); // alice, active
+    sb.login_b(); // bob logs in; the pointer still says work
+
+    let (out, err, code) = sb.run(&["refresh"]);
+    assert_eq!(code, 4, "a person is needed:\n{out}{err}");
+    assert!(out.contains("broken"), "{out}");
+    assert!(
+        out.contains("not mirrored"),
+        "the reason must be given: {out}"
+    );
+    assert!(out.contains("1 need attention"), "{out}");
+    assert!(
+        !out.contains("need a login"),
+        "logging in is not the fix: {out}"
+    );
+}

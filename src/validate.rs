@@ -86,11 +86,21 @@ pub fn validate_credentials(creds: &OAuthCredentials, now_ms: i64) -> Result<Hea
     })
 }
 
+/// How far a refresh deadline may read earlier than the one it replaces and
+/// still count as the same login's.
+///
+/// The deadline is fixed at login and every rotated token inherits it, but it
+/// is recomputed from whole seconds on each exchange, so it jitters: measured
+/// on a live account, a real exchange moved it 809 ms *earlier*. A different,
+/// older login is hours or days earlier, far outside this.
+const WINDOW_JITTER_MS: i64 = 10 * 60 * 1000;
+
 /// The gate **every** credential write must pass.
 ///
-/// The refresh-token window acts as a monotonic clock: a successful refresh
-/// always slides it weeks forward and never backward. That makes "newer"
-/// decidable without trusting the local system clock.
+/// The refresh deadline is set when an account logs in and never moves
+/// after that, so a later login has a later deadline. A write whose deadline
+/// is clearly earlier than the stored one therefore comes from an older login
+/// -- decidable without trusting the local system clock.
 ///
 /// Note what this deliberately does NOT cover: account identity. Two different
 /// accounts can both be valid and both have advancing windows, so callers must
@@ -112,11 +122,14 @@ pub fn assert_safe_replacement(
         return Ok(());
     }
 
-    // 2. The refresh window must not shrink.
+    // 2. The refresh window must not shrink -- beyond the jitter every
+    //    exchange carries. Without that allowance, about half of all real
+    //    exchanges were refused, and the profile kept a refresh token the
+    //    server had already rotated away.
     if let (Some(old_exp), Some(new_exp)) = (
         old.refresh_token_expires_at,
         incoming.refresh_token_expires_at,
-    ) && new_exp < old_exp
+    ) && new_exp < old_exp - WINDOW_JITTER_MS
     {
         let hours = (old_exp - new_exp) / 3_600_000;
         return Err(CcredError::UnsafeWrite(format!(
@@ -301,6 +314,18 @@ mod tests {
         let incoming = creds(NOW + DAY, Some(NOW + 20 * DAY), "D");
         let err = assert_safe_replacement(Some(&existing), &incoming, NOW).unwrap_err();
         assert!(matches!(err, CcredError::UnsafeWrite(_)), "{err}");
+    }
+
+    /// Measured against a live account: after a real token exchange the
+    /// refresh deadline read 809 ms *earlier* than before. It is fixed at
+    /// login and recomputed from whole seconds on every exchange, so it
+    /// jitters. Refusing that as a regression refused to store the tokens
+    /// Claude Code had just renewed.
+    #[test]
+    fn a_real_exchange_whose_deadline_jitters_back_is_accepted() {
+        let before = creds(NOW + 3_600_000, Some(1_790_964_987_824), "C");
+        let after = creds(NOW + 8 * 3_600_000, Some(1_790_964_987_015), "D");
+        assert!(assert_safe_replacement(Some(&before), &after, NOW).is_ok());
     }
 
     #[test]

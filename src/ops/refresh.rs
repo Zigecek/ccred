@@ -418,10 +418,22 @@ pub fn refresh(ctx: &Ctx, opts: &RefreshOptions) -> crate::Result<RefreshReport>
                         let account = ctx.live_account();
                         match ctx.repo().save_from(&name, &live, &account) {
                             Ok(outcome) => detail = Some(format!("{outcome:?}").to_lowercase()),
-                            Err(e) => detail = Some(format!("not mirrored: {e}")),
+                            // Reported as "mirrored" with the reason in small
+                            // print, and exit 0, this hid exactly the failure
+                            // that loses tokens: the live pair renewed, the
+                            // profile still holding the rotated-away one.
+                            Err(e) => {
+                                decision = Decision::Broken;
+                                detail = Some(format!("not mirrored: {e}"));
+                            }
                         }
                     }
-                    Err(e) => detail = Some(format!("not mirrored, store is busy: {e}")),
+                    // Claude Code writing at this moment: the next run
+                    // copies it, so nobody needs to act.
+                    Err(e) => {
+                        decision = Decision::SkipBackoff;
+                        detail = Some(format!("not mirrored, store is busy: {e}"));
+                    }
                 }
             }
             Decision::Refresh => {
@@ -649,7 +661,7 @@ fn refresh_one(
     // It used to be the refresh window moving, and that window does not move.
     // Measured against a live account: a probe rotates both tokens -- their
     // hashes change -- and renews `expiresAt` by eight hours, while
-    // `refreshTokenExpiresAt` shifts by half a millisecond. The refresh
+    // `refreshTokenExpiresAt` moves by under a second, either way. The refresh
     // deadline is a fixed ceiling set at login, and each rotated token
     // inherits it. Judging by the window meant every successful exchange was
     // recorded as a failure and earned a backoff.
@@ -1283,7 +1295,7 @@ mod tests {
 
     /// Measured against a live account, twice: a probe rotates both tokens
     /// and renews `expiresAt` by eight hours, while `refreshTokenExpiresAt`
-    /// moves by half a millisecond. The refresh deadline is a ceiling fixed at
+    /// moves by under a second. The refresh deadline is a ceiling fixed at
     /// login and inherited by every rotated token -- so judging success by the
     /// window recorded every real exchange as a failure.
     ///
