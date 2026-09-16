@@ -193,6 +193,25 @@ Switching refuses to run while Claude Code is open. A live session holds the
 old account in memory and would write its next refreshed token into what is by
 then a different profile's file. Quit it first, or pass `--force` knowing that.
 
+### Exit codes
+
+For scripts and schedulers, each code means one thing to do:
+
+| Code | Meaning | What to do |
+|---|---|---|
+| 0 | Done, or nothing needed doing | nothing |
+| 1 | Internal error, or `uninstall` could not finish | read the message |
+| 2 | Usage error, or a confirmation was declined | fix the command |
+| 3 | No such profile, or a name that cannot be one | check `ccred list` |
+| 4 | `refresh` found something a person must handle: a login, a blocked or broken profile, no `claude` to refresh with, a deadline within five days | read the output; retrying soon will not help |
+| 6 | Busy: Claude Code or another `ccred` holds a lock | retry shortly |
+| 7 | A write was refused as unsafe, or `doctor` found an error | stop and read the message |
+| 8 | Misconfigured: the scheduler cannot be used here | fix the setup |
+
+A lost network connection during `refresh` exits 0 on purpose, so a laptop
+that was offline does not mark the job as failed; the profile is retried on
+the next run. Code 5 is reserved.
+
 ### What it looks like
 
 ```

@@ -106,9 +106,11 @@ pub enum ExitCode {
     Internal = 1,
     Usage = 2,
     NotFound = 3,
-    /// Needs a manual login. Do **not** retry -- this needs a human.
+    /// A person is needed: a login, or a state only they can settle. Do
+    /// **not** retry.
     NeedsLogin = 4,
-    /// Transient failure, retry according to the backoff.
+    /// Reserved. Transient trouble deliberately exits 0 -- see `refresh` in
+    /// `main.rs` -- and the per-profile backoff does the retrying.
     Transient = 5,
     /// Locked, or `claude` is running. Retry soon.
     Busy = 6,
