@@ -108,6 +108,9 @@ pub trait CredentialStore: Send + Sync {
 /// fails loudly at load time rather than silently dropping it on the next
 /// write.
 pub fn parse_loaded(raw: Vec<u8>, path: &Path) -> crate::Result<Loaded> {
+    // Dropped before anything looks at the bytes, including the lossless
+    // check, which re-parses them.
+    let raw = without_bom(raw);
     let creds: CredentialsFile =
         serde_json::from_slice(&raw).map_err(|source| crate::CcredError::Json {
             path: path.to_path_buf(),
@@ -119,6 +122,24 @@ pub fn parse_loaded(raw: Vec<u8>, path: &Path) -> crate::Result<Loaded> {
     })?;
     assert_lossless(&raw, &reserialized)?;
     Ok(Loaded { creds, raw })
+}
+
+/// A document without its byte-order mark, if it had one.
+///
+/// JSON has no BOM: a parser is entitled to refuse one, and serde_json does.
+/// Windows hands them out anyway -- Notepad writes one into every UTF-8 file
+/// it saves, and so does PowerShell 5.1 redirection -- so someone who opens
+/// their credential file to look at it can leave ccred reporting "malformed
+/// JSON" about a file that reads perfectly well. RFC 8259 allows ignoring it,
+/// which is what every JSON implementation that meets real files does.
+///
+/// Never written back: the mark is not part of the document, so a file that
+/// arrives with one leaves without it.
+pub fn without_bom(mut raw: Vec<u8>) -> Vec<u8> {
+    if raw.starts_with(&[0xEF, 0xBB, 0xBF]) {
+        raw.drain(..3);
+    }
+    raw
 }
 
 /// The gate every write passes, regardless of backend.
@@ -154,6 +175,7 @@ pub fn now_ms() -> i64 {
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
 
     /// The rule the bash predecessor did not have: a load must distinguish
@@ -163,6 +185,42 @@ mod tests {
     fn malformed_content_is_an_error_and_never_mistaken_for_absence() {
         let err = parse_loaded(b"{ not json".to_vec(), Path::new("/tmp/x")).unwrap_err();
         assert!(matches!(err, crate::CcredError::Json { .. }), "got {err:?}");
+    }
+
+    /// Notepad writes one into every UTF-8 file it saves, and so does
+    /// PowerShell 5.1 redirection. JSON has no place for it, so it goes --
+    /// and only the whole mark, only at the start.
+    #[test]
+    fn a_byte_order_mark_is_not_part_of_the_document() {
+        const BOM: &[u8] = b"\xef\xbb\xbf";
+
+        let mut marked = BOM.to_vec();
+        marked.extend_from_slice(b"{}");
+        assert_eq!(without_bom(marked), b"{}".to_vec());
+
+        assert_eq!(without_bom(b"{}".to_vec()), b"{}".to_vec());
+        assert!(without_bom(Vec::new()).is_empty());
+
+        // Not a mark: two of its three bytes, and a whole one in the middle.
+        assert_eq!(without_bom(b"\xef\xbb".to_vec()), b"\xef\xbb".to_vec());
+        let mut inside = b"{".to_vec();
+        inside.extend_from_slice(BOM);
+        inside.push(b'}');
+        assert_eq!(without_bom(inside.clone()), inside);
+    }
+
+    /// A credential file someone opened in an editor and saved again still
+    /// loads, and the copy that goes back out has no mark in it.
+    #[test]
+    fn a_marked_credential_file_still_loads() {
+        let mut raw = b"\xef\xbb\xbf".to_vec();
+        raw.extend_from_slice(
+            br#"{"claudeAiOauth":{"accessToken":"sk-ant-oat01-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+                 "refreshToken":"sk-ant-ort01-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+                 "expiresAt":1}}"#,
+        );
+        let loaded = parse_loaded(raw, Path::new("/tmp/x")).expect("a mark is not a malformation");
+        assert!(!loaded.raw.starts_with(b"\xef\xbb\xbf"));
     }
 
     /// Claude Code adds keys over time, and a rewrite that dropped one would

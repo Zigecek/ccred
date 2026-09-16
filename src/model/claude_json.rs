@@ -30,6 +30,8 @@ impl ClaudeJsonDoc {
             path: path.to_path_buf(),
             source,
         })?;
+        // See `store::without_bom`: a Windows editor may have left one here.
+        let raw = crate::store::without_bom(raw);
         let root: Value = serde_json::from_slice(&raw).map_err(|source| CcredError::Json {
             path: path.to_path_buf(),
             source,
@@ -291,6 +293,27 @@ mod tests {
             raw["oauthAccount"]["emailAddress"],
             json!("other@example.com")
         );
+    }
+
+    /// The same for the document next to it: someone opened `.claude.json`
+    /// to look at something and their editor put a mark on the front.
+    #[test]
+    fn a_marked_document_loads_and_is_written_back_without_the_mark() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join(".claude.json");
+        let mut raw = b"\xef\xbb\xbf".to_vec();
+        raw.extend_from_slice(serde_json::to_vec_pretty(&realistic()).unwrap().as_slice());
+        std::fs::write(&path, raw).unwrap();
+
+        let mut doc = ClaudeJsonDoc::load(&path).expect("a mark is not a malformation");
+        doc.set_oauth_account(json!({"emailAddress": "other@example.com"}))
+            .unwrap();
+        doc.save_atomic(&path).unwrap();
+
+        let written = std::fs::read(&path).unwrap();
+        assert!(!written.starts_with(b"\xef\xbb\xbf"), "the mark went back");
+        let reloaded = ClaudeJsonDoc::load(&path).unwrap();
+        assert_eq!(reloaded.top_level_key_count(), doc.top_level_key_count());
     }
 
     /// A patch must not move a number it never touched.
