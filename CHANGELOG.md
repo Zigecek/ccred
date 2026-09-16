@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.2.23
+
+**Upgrade, especially on Windows and macOS.**
+
+### Credentials that could be lost or refused
+
+- **A profile spelled differently was treated as a different profile**, while
+  the file system treats it as the same one. `ccred switch WORK` for a profile
+  saved as `work` wrote a pointer that matched no directory: `list` showed
+  nothing active, and `ccred rm work` -- the profile whose credentials were
+  live -- passed the guard that refuses to delete the active one. Saving
+  under the other spelling was refused as another profile's credentials.
+  Names are now resolved to the stored spelling on Windows and macOS.
+- **`save` can repair a profile whose credential file no longer parses**,
+  which is what the write gate always promised. Reading the damaged file
+  came first, so it refused instead.
+
+### Commands that stopped working
+
+- **A timestamp of `i64::MIN` made `current`, `list` and `doctor` panic**
+  with exit 101 -- in exactly the commands someone runs because a file looks
+  wrong. Every subtraction on a stored time now saturates.
+- **A failed `.claude.json` write no longer wedges `save` and `switch`.** It
+  left the switch half-applied and every later command failing on the same
+  error, since both replay the journal first. It is a warning now, like the
+  read of that file already was, and the mismatch it leaves is one `current`
+  and `doctor` report.
+- **A profile is no longer latched as "needs login" by text ccred does not
+  control.** The phrases were searched for anywhere in the output -- which
+  includes the names of the user's own MCP servers and the model's reply.
+  They are now read from stderr and from the prompt rung's own error result.
+
 ## 0.2.22
 
 - **An expired deadline no longer reads as `0d`.** The day count divided,
