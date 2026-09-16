@@ -369,8 +369,16 @@ pub fn ago(then_ms: i64, now_ms: i64) -> String {
 /// "22 days", "8 hours", "expired". Used for anything counting down.
 pub fn left(ms: i64) -> String {
     if ms <= 0 {
-        return "expired".to_string();
+        // Say how long ago. A bare "expired" hides the one number that tells
+        // a real lapse ("20 days ago") from a misread timestamp ("20 000 days
+        // ago"), and that difference is the whole diagnosis.
+        return format!("expired {} ago", span(-ms));
     }
+    span(ms)
+}
+
+/// "45 min", "8 hours", "22 days" -- the unit a reader acts on.
+fn span(ms: i64) -> String {
     let mins = ms / 60_000;
     match mins {
         m if m < 90 => format!("{m} min"),
@@ -448,8 +456,11 @@ mod tests {
 
     #[test]
     fn countdowns_round_to_the_unit_a_reader_acts_on() {
-        assert_eq!(left(0), "expired");
-        assert_eq!(left(-1), "expired");
+        assert_eq!(left(0), "expired 0 min ago");
+        assert_eq!(left(-20 * 86_400_000), "expired 20 days ago");
+        // A misread timestamp is visible for what it is, rather than hiding
+        // behind the same word as a real lapse.
+        assert_eq!(left(-20_000 * 86_400_000), "expired 20000 days ago");
         assert_eq!(left(45 * 60_000), "45 min");
         assert_eq!(left(8 * 3_600_000), "8 hours");
         assert_eq!(left(22 * 86_400_000), "22 days");

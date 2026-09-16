@@ -266,6 +266,7 @@ pub fn doctor(ctx: &Ctx) -> crate::Result<Vec<Finding>> {
         }
     }
 
+    findings.push(env_auth_finding());
     findings.push(permissions_finding(ctx));
     findings.push(schedule_finding(detect().status(), profile_count));
 
@@ -283,6 +284,45 @@ pub fn doctor(ctx: &Ctx) -> crate::Result<Vec<Finding>> {
 /// profile is already owner-plus-SYSTEM-plus-Administrators -- measured, see
 /// `atomic::write_atomic` -- but this cannot confirm it without an ACL API,
 /// so it says so rather than implying the check passed.
+/// Variables that make Claude Code authenticate from the environment and
+/// ignore the credential file entirely.
+const ENV_AUTH: &[&str] = &[
+    "CLAUDE_CODE_OAUTH_TOKEN",
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    "CLAUDE_CODE_USE_BEDROCK",
+    "CLAUDE_CODE_USE_VERTEX",
+];
+
+/// Is Claude Code likely logged in through something other than the file?
+///
+/// When one of these is set, Claude Code works perfectly while
+/// `.credentials.json` sits untouched and ages out -- so this tool, which only
+/// reads that file, reports an account as expired that the user is actively
+/// using. The report is then correct about the file and wrong about the
+/// situation, which is the most confusing thing it can be.
+///
+/// This checks the environment `ccred` was started from, which is normally
+/// the same shell Claude Code was. Only the variable's *name* is ever
+/// reported, never its value.
+fn env_auth_finding() -> Finding {
+    env_auth_finding_from(|k| std::env::var_os(k).is_some())
+}
+
+fn env_auth_finding_from(is_set: impl Fn(&str) -> bool) -> Finding {
+    let set: Vec<&str> = ENV_AUTH.iter().copied().filter(|k| is_set(k)).collect();
+    if set.is_empty() {
+        Finding::ok("no credential override in this shell's environment")
+    } else {
+        Finding::warn(
+            format!("Claude Code is authenticating from {}", set.join(", ")),
+            "it ignores the credential file while that is set, so the file ages out \
+             and the account shows as expired here even though Claude Code works. \
+             ccred manages file-based logins only",
+        )
+    }
+}
+
 fn permissions_finding(ctx: &Ctx) -> Finding {
     #[cfg(not(unix))]
     {
@@ -505,5 +545,18 @@ mod tests {
         let f = schedule_finding(Err(CcredError::Schedule("no session bus".into())), 2);
         assert_eq!(f.severity, Severity::Warn, "{f:?}");
         assert!(f.detail.unwrap().contains("no session bus"));
+    }
+
+    /// A login held in the environment makes Claude Code ignore the file, so
+    /// the file ages out while the account works -- and this tool, which reads
+    /// only the file, reports it expired. That has to be said, by name only.
+    #[test]
+    fn a_login_held_in_the_environment_is_named_but_not_revealed() {
+        let f = env_auth_finding_from(|k| k == "CLAUDE_CODE_OAUTH_TOKEN");
+        assert_eq!(f.severity, Severity::Warn, "{f:?}");
+        assert!(f.title.contains("CLAUDE_CODE_OAUTH_TOKEN"), "{f:?}");
+
+        let clean = env_auth_finding_from(|_| false);
+        assert_eq!(clean.severity, Severity::Ok);
     }
 }

@@ -7,10 +7,10 @@ use crate::error::CcredError;
 use crate::model::AccountSnapshot;
 use crate::profile::SaveOutcome;
 use crate::store::{CredentialStore, now_ms};
+use crate::validate::{ProfileName, validate_credentials};
 
 /// How long `save` waits for the credential store lock.
 const SAVE_LOCK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
-use crate::validate::{ProfileName, validate_credentials};
 
 /// One row of `ccred list`. Contains no secret.
 #[derive(Debug, Clone, Serialize)]
@@ -243,6 +243,13 @@ pub struct SaveReport {
     /// guaranteed to be watching.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub schedule: Option<ScheduleSetup>,
+    /// The credentials just stored are already past their refresh deadline.
+    ///
+    /// Saving them is still right -- they are what is logged in -- but a
+    /// report that says only "created" leaves someone believing they have a
+    /// working profile, and they find out otherwise from `list` a moment
+    /// later. The fix is a login, and that has to be said here.
+    pub already_expired: bool,
 }
 
 /// Does this save call for registering the schedule?
@@ -345,6 +352,13 @@ pub fn save(ctx: &Ctx, name: &ProfileName) -> crate::Result<SaveReport> {
     // had in fact just resolved.
     ctx.repo().set_active(name)?;
 
+    let already_expired = live
+        .load()
+        .ok()
+        .flatten()
+        .and_then(|l| validate_credentials(&l.creds.oauth, now_ms()).ok())
+        .is_some_and(|h| h.refresh_expired);
+
     let schedule = auto_schedule(ctx, outcome);
 
     Ok(SaveReport {
@@ -357,6 +371,7 @@ pub fn save(ctx: &Ctx, name: &ProfileName) -> crate::Result<SaveReport> {
         }
         .to_string(),
         schedule,
+        already_expired,
     })
 }
 

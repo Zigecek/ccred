@@ -82,7 +82,9 @@ fn plural(n: usize, one: &str, many: &str) -> String {
 /// `12 days` in the colour that says how worried to be.
 fn window_cell(days: Option<i64>) -> Cell {
     match days {
-        Some(d) if d < 0 => Cell::new("expired", ERR),
+        // Negative days, not the word: `-20d` and `-20000d` call for very
+        // different conclusions, and "expired" read the same for both.
+        Some(d) if d < 0 => Cell::new(format!("{d}d"), ERR),
         Some(d) => Cell::new(format!("{d}d"), days_style(d)),
         None => Cell::new("-", MUTED),
     }
@@ -304,6 +306,18 @@ pub fn save(theme: &Theme, r: &SaveReport) {
         paint(MUTED, &format!("({})", r.account))
     );
     println!("{PAD}  {}", paint(MUTED, &r.outcome));
+    if r.already_expired {
+        println!();
+        callout(
+            ERR,
+            g.err,
+            "but these credentials are already past their refresh deadline",
+            &[
+                "run `claude auth login`, then save again",
+                "if Claude Code works anyway, `ccred doctor` says whether it is                  logging in some other way",
+            ],
+        );
+    }
     match &r.schedule {
         Some(ScheduleSetup::Installed { next_run }) => {
             println!();
