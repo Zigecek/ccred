@@ -189,7 +189,6 @@ impl RefreshReport {
     }
 }
 
-/// Decide what to do with one profile. Pure, so the policy is testable.
 /// How one profile's stored tokens stand against the clock.
 ///
 /// Grouped rather than passed as four bare booleans: `decide(false, true,
@@ -207,6 +206,7 @@ pub struct TokenState {
     pub usable: bool,
 }
 
+/// Decide what to do with one profile. Pure, so the policy is testable.
 pub fn decide(
     is_active: bool,
     tokens: TokenState,
