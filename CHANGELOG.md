@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.19
+
+- **`doctor` checks the copies of credentials for loose permissions too.**
+  The last-known-good copy of each profile and every backup hold the same
+  tokens as the store, and a backup is the file most likely to have been
+  copied away and back. Only the stores themselves were checked.
+- The token-leak test now runs `restore`, `log`, `refresh` and `uninstall`
+  as well, and reads every non-credential file ccred writes, which is what
+  SECURITY.md said it did.
+
 ## 0.2.18
 
 **An independent review of 0.2.15 to 0.2.17 found a way to store one
