@@ -333,6 +333,7 @@ pub fn doctor(ctx: &Ctx) -> crate::Result<Vec<Finding>> {
     }
 
     findings.push(env_auth_finding());
+    findings.push(claude_binary_finding());
     findings.push(permissions_finding(ctx));
     let this_exe = std::env::current_exe().ok();
     findings.push(schedule_finding(
@@ -380,6 +381,37 @@ fn env_auth_finding_from(is_set: impl Fn(&str) -> bool) -> Finding {
              and the account shows as expired here even though Claude Code works. \
              ccred manages file-based logins only",
         )
+    }
+}
+
+/// Is there a `claude` to refresh with?
+///
+/// Every scheduled run spawns it, and a schedule that cannot find it reports
+/// exit 8 into a log nobody reads. Worse, an interactive shell finds it in
+/// places a timer never looks -- anything a shell profile puts on PATH -- so
+/// the failure is invisible from the terminal where someone would check.
+fn claude_binary_finding() -> Finding {
+    claude_binary_finding_from(
+        crate::claude_cli::ClaudeCli::discover(None).map(|c| c.path().to_path_buf()),
+    )
+}
+
+/// A warning rather than an error: switching profiles works perfectly well
+/// without ever spawning `claude`, and an exotic install this cannot see is
+/// not a broken machine. What it must not do is stay quiet.
+fn claude_binary_finding_from(found: crate::Result<std::path::PathBuf>) -> Finding {
+    match found {
+        Ok(path) => Finding::ok(format!("claude found at {}", path.display())),
+        Err(e) => Finding::warn(
+            "no `claude` binary to refresh with",
+            format!(
+                concat!(
+                    "{}. Switching still works; scheduled refreshes do nothing ",
+                    "until it can be found, and stored profiles go stale"
+                ),
+                e
+            ),
+        ),
     }
 }
 
@@ -735,6 +767,24 @@ mod tests {
     /// A login held in the environment makes Claude Code ignore the file, so
     /// the file ages out while the account works -- and this tool, which reads
     /// only the file, reports it expired. That has to be said, by name only.
+    /// Every scheduled run spawns `claude`, and the reason it cannot be found
+    /// is usually a PATH a timer never sees. A warning, not an error: nothing
+    /// about switching profiles needs it.
+    #[test]
+    fn a_missing_claude_is_a_warning_with_the_reason_in_it() {
+        let f = claude_binary_finding_from(Ok(std::path::PathBuf::from("/opt/claude/claude")));
+        assert_eq!(f.severity, Severity::Ok, "{f:?}");
+        assert!(f.title.contains("/opt/claude/claude"), "{f:?}");
+
+        let f = claude_binary_finding_from(Err(crate::CcredError::ClaudeMissing(
+            "cannot find the `claude` binary".into(),
+        )));
+        assert_eq!(f.severity, Severity::Warn, "{f:?}");
+        let detail = f.detail.clone().unwrap_or_default();
+        assert!(detail.contains("cannot find"), "{f:?}");
+        assert!(detail.contains("Switching still works"), "{f:?}");
+    }
+
     #[test]
     fn a_login_held_in_the_environment_is_named_but_not_revealed() {
         let f = env_auth_finding_from(|k| k == "CLAUDE_CODE_OAUTH_TOKEN");

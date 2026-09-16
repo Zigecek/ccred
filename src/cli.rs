@@ -217,6 +217,13 @@ pub enum ScheduleAction {
         /// Print what would be registered, without touching anything.
         #[arg(long)]
         dry_run: bool,
+        /// Path to the claude binary for the scheduled job to use.
+        ///
+        /// The job runs without a shell profile, so a `claude` that reaches
+        /// PATH from one -- nvm, volta, bun, asdf -- is not visible to it.
+        /// Those locations are searched anyway; this is for anywhere else.
+        #[arg(long, value_name = "PATH")]
+        claude_path: Option<std::path::PathBuf>,
     },
     /// Remove it again.
     Uninstall,

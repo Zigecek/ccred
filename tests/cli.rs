@@ -1006,6 +1006,44 @@ fn list_shows_a_profile_whose_metadata_will_not_parse() {
     );
 }
 
+/// A scheduled run reads no shell profile, so a `claude` that reaches PATH
+/// from one has to be named at install time. A path that is not there is
+/// refused while a person is present to fix it, rather than twice a week into
+/// a log nobody opens.
+#[test]
+fn a_scheduled_job_can_be_told_where_claude_is() {
+    let sb = Sandbox::new();
+    let claude = sb.path().join("elsewhere").join("claude");
+    std::fs::create_dir_all(claude.parent().unwrap()).unwrap();
+    std::fs::write(
+        &claude,
+        b"#!/bin/sh
+",
+    )
+    .unwrap();
+
+    let (out, err, code) = sb.run(&[
+        "schedule",
+        "install",
+        "--dry-run",
+        "--claude-path",
+        &claude.to_string_lossy(),
+    ]);
+    assert_eq!(code, 0, "{err}{out}");
+    assert!(out.contains("--claude-path"), "{out}");
+    assert!(out.contains("claude"), "{out}");
+
+    let (_, err, code) = sb.run(&[
+        "schedule",
+        "install",
+        "--dry-run",
+        "--claude-path",
+        &sb.path().join("nowhere").join("claude").to_string_lossy(),
+    ]);
+    assert_eq!(code, 8, "a path that is not there is refused: {err}");
+    assert!(err.contains("does not exist"), "{err}");
+}
+
 /// Six bytes decide which profile is live. When they turn to nonsense, the
 /// commands someone runs to find out what is wrong must still answer, and the
 /// one command that writes a new pointer must be willing to.

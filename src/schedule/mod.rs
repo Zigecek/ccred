@@ -153,6 +153,25 @@ impl ScheduleSpec {
         self
     }
 
+    /// Register the `claude` to refresh with, when it is not on a PATH the
+    /// job will have.
+    ///
+    /// A scheduled run inherits no shell profile, so a `claude` installed by
+    /// nvm, volta, bun or asdf is invisible to it even though the terminal
+    /// finds it. Discovery looks in those places directly; this is the answer
+    /// for everywhere else.
+    pub fn with_claude_path(mut self, path: Option<&Path>) -> Self {
+        if let Some(path) = path {
+            // Absolute, always. The job starts in a working directory of the
+            // scheduler's choosing, so `--claude-path ./bin/claude` would be
+            // registered as a path to nowhere and fail every run.
+            let path = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+            self.args.push("--claude-path".into());
+            self.args.push(path_arg(&path));
+        }
+        self
+    }
+
     pub fn command_line(&self) -> String {
         format!(
             "{} {}",
@@ -419,6 +438,42 @@ pub(crate) mod tests {
             PathBuf::from("/home/user/.local/state/ccred/logs"),
             "user".into(),
         )
+    }
+
+    /// The job starts wherever the scheduler puts it, so a relative path
+    /// would be registered as a path to nowhere.
+    #[test]
+    fn a_registered_claude_path_is_absolute_and_stays_one_argument() {
+        let s = spec().with_claude_path(Some(Path::new("bin/claude")));
+        let i = s
+            .args
+            .iter()
+            .position(|a| a == "--claude-path")
+            .expect("the flag is registered");
+        assert!(
+            Path::new(&s.args[i + 1]).is_absolute(),
+            "{:?}",
+            s.args[i + 1]
+        );
+
+        // The spelling differs by platform -- Windows makes it `C:\...` --
+        // so what is asserted is that the space did not split the argument.
+        let spaced = spec().with_claude_path(Some(Path::new("/opt/my tools/claude")));
+        let rendered = spaced.quoted_args();
+        assert!(rendered.contains("my tools"), "{rendered}");
+        assert!(
+            rendered.ends_with("claude\""),
+            "not quoted whole: {rendered}"
+        );
+
+        assert!(
+            !spec()
+                .with_claude_path(None)
+                .args
+                .iter()
+                .any(|a| a == "--claude-path"),
+            "nothing is added when nothing was asked for"
+        );
     }
 
     #[test]

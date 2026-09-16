@@ -132,8 +132,21 @@ fn run(cli: &Cli, theme: &Theme) -> ccred::Result<ExitCode> {
             let backend = sched_ops::backend();
             let kind = backend.backend();
             match &args.action {
-                ScheduleAction::Install { dry_run } => {
-                    let spec = sched_ops::spec_for(&ctx)?;
+                ScheduleAction::Install {
+                    dry_run,
+                    claude_path,
+                } => {
+                    // Refused here rather than twice a week in a log nobody
+                    // reads: the job cannot ask a person for a better path.
+                    if let Some(p) = claude_path
+                        && !p.is_file()
+                    {
+                        return Err(ccred::CcredError::ClaudeMissing(format!(
+                            "the path given with --claude-path does not exist: {}",
+                            p.display()
+                        )));
+                    }
+                    let spec = sched_ops::spec_for(&ctx)?.with_claude_path(claude_path.as_deref());
                     if *dry_run {
                         let files = backend.render(&spec)?;
                         if cli.json {

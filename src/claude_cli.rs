@@ -162,6 +162,25 @@ pub struct ClaudeCli {
     config_dir: Option<PathBuf>,
 }
 
+/// One bin directory per installed node version, newest name first.
+///
+/// Sorted by name rather than parsed as versions: any node that has `claude`
+/// can refresh the same credentials, so the order is a preference and not a
+/// decision. Bounded work -- one directory read, no recursion.
+fn nvm_candidates(home: &Path, exe: &str) -> Vec<PathBuf> {
+    let versions = home.join(".nvm").join("versions").join("node");
+    let Ok(entries) = std::fs::read_dir(&versions) else {
+        return Vec::new();
+    };
+    let mut dirs: Vec<PathBuf> = entries.flatten().map(|e| e.path()).collect();
+    dirs.sort();
+    dirs.reverse();
+    dirs.into_iter()
+        .map(|d| d.join("bin").join(exe))
+        .take(8)
+        .collect()
+}
+
 impl ClaudeCli {
     pub fn at(bin: PathBuf) -> Self {
         ClaudeCli {
@@ -220,6 +239,19 @@ impl ClaudeCli {
             fallbacks.push(PathBuf::from("/usr/bin/claude"));
             fallbacks.push(PathBuf::from("/usr/local/bin/claude"));
             fallbacks.push(PathBuf::from("/opt/homebrew/bin/claude"));
+            if let Some(h) = &home {
+                // Installed by a JavaScript toolchain, whose bin directory
+                // reaches PATH from a shell profile. A systemd timer reads no
+                // profile: it inherits the user manager's environment, set at
+                // login. So `claude` works when the user types it and cannot
+                // be found when the schedule fires -- the failure this list
+                // exists to prevent.
+                fallbacks.push(h.join(".bun").join("bin").join(exe));
+                fallbacks.push(h.join(".volta").join("bin").join(exe));
+                fallbacks.push(h.join(".npm-global").join("bin").join(exe));
+                fallbacks.push(h.join(".asdf").join("shims").join(exe));
+                fallbacks.extend(nvm_candidates(h, exe));
+            }
         }
         for candidate in fallbacks {
             if candidate.is_file() {
@@ -357,6 +389,34 @@ fn run_with_timeout(mut cmd: Command, timeout: Duration) -> std::io::Result<Prob
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `claude` installed under a node version manager sits in a directory
+    /// that reaches PATH from a shell profile, which a scheduled run never
+    /// reads. Looking there is the difference between a timer that works and
+    /// one that reports exit 8 twice a week into a log nobody opens.
+    #[test]
+    fn a_node_version_manager_is_looked_in() {
+        let home = tempfile::tempdir().unwrap();
+        let versions = home.path().join(".nvm").join("versions").join("node");
+        for v in ["v20.11.0", "v22.3.0"] {
+            std::fs::create_dir_all(versions.join(v).join("bin")).unwrap();
+        }
+
+        let got = nvm_candidates(home.path(), "claude");
+        assert_eq!(got.len(), 2, "{got:?}");
+        assert!(
+            got[0].to_string_lossy().contains("v22.3.0"),
+            "the later name comes first: {got:?}"
+        );
+        assert!(
+            got.iter().all(|p| p.file_name().unwrap() == "claude"),
+            "{got:?}"
+        );
+
+        // A machine without nvm asks the file system once and moves on.
+        let bare = tempfile::tempdir().unwrap();
+        assert!(nvm_candidates(bare.path(), "claude").is_empty());
+    }
 
     #[test]
     fn probe_arguments_are_stable() {

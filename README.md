@@ -227,6 +227,14 @@ often:
   the account that is logged in now.
 - **A profile that says `blocked`.** Something a person has to settle;
   the line underneath says which. Re-running the refresh will not change it.
+- **"no `claude` binary to refresh with".** Switching profiles does not need
+  it, but every scheduled refresh spawns it. The usual cause on Linux is a
+  `claude` installed by nvm, volta, bun or asdf: those put their bin
+  directory on PATH from a shell profile, and a systemd timer reads no
+  profile, so the timer cannot find what your terminal finds. Those
+  locations are searched directly, and for anywhere else
+  `ccred schedule install --claude-path /full/path/to/claude` registers the
+  path with the job.
 
 If a profile's credentials were damaged, `ccred restore <name>` puts the last
 known good copy back, and `~/.ccred/backups/<name>/` keeps the ten before
