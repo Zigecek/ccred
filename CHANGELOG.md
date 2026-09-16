@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.32
+
+- **`refresh --dry-run` meets the rate limit the real run meets.** A preview
+  of `refresh --if-older-than 48` -- the exact command the registered job
+  runs -- skipped straight to the per-profile decisions and showed work that
+  the real command would have refused, because the limit had already been met
+  that day. The gate is one function now, called by the run and the preview
+  alike, so they cannot drift apart again.
+
 ## 0.2.31
 
 - **`ccred refresh --dry-run`.** `schedule install` and `uninstall` both had
