@@ -101,6 +101,8 @@ pub struct ScheduleSpec {
     pub log_dir: PathBuf,
     /// The user account, for the Windows task principal.
     pub user: String,
+    /// Directories outside the defaults that the job writes to.
+    pub writable: Vec<PathBuf>,
 }
 
 impl ScheduleSpec {
@@ -122,17 +124,68 @@ impl ScheduleSpec {
             home,
             log_dir,
             user,
+            writable: Vec::new(),
         }
     }
 
+    /// Carry locations chosen by flag or environment into the job.
+    ///
+    /// The job does not run in the shell that set `CCRED_HOME` or
+    /// `CLAUDE_CONFIG_DIR`: a systemd user service and a Task Scheduler task
+    /// both start from an environment of their own. Without this a job
+    /// registered from such a shell refreshed the default directories -- which
+    /// hold nothing -- and reported success. Flags rather than environment,
+    /// because a Windows task definition has no way to set a variable.
+    pub fn with_locations(mut self, chosen: &crate::paths::Locations) -> Self {
+        let mut front: Vec<String> = Vec::new();
+        for (flag, dir) in [
+            ("--ccred-home", &chosen.ccred_home),
+            ("--claude-config-dir", &chosen.claude_config_dir),
+        ] {
+            if let Some(dir) = dir {
+                front.push(flag.to_string());
+                front.push(path_arg(dir));
+                self.writable.push(dir.clone());
+            }
+        }
+        front.append(&mut self.args);
+        self.args = front;
+        self
+    }
+
     pub fn command_line(&self) -> String {
-        let mut parts = vec![quote_if_needed(&self.exe.to_string_lossy())];
-        parts.extend(self.args.iter().map(|a| quote_if_needed(a)));
-        parts.join(" ")
+        format!(
+            "{} {}",
+            quote_if_needed(&self.exe.to_string_lossy()),
+            self.quoted_args()
+        )
+    }
+
+    /// The arguments as one string, each quoted if it holds a space.
+    pub fn quoted_args(&self) -> String {
+        self.args
+            .iter()
+            .map(|a| quote_if_needed(a))
+            .collect::<Vec<_>>()
+            .join(" ")
     }
 }
 
-fn quote_if_needed(s: &str) -> String {
+/// A directory as a command-line argument.
+///
+/// Without a trailing separator: on Windows `"C:\dir\"` ends in an escaped
+/// quote, and the argument runs on into whatever follows.
+fn path_arg(dir: &Path) -> String {
+    let text = dir.to_string_lossy();
+    let trimmed = text.trim_end_matches(['/', '\\']);
+    if trimmed.is_empty() || trimmed.ends_with(':') {
+        text.into_owned()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+pub(crate) fn quote_if_needed(s: &str) -> String {
     if s.contains(' ') {
         format!("\"{s}\"")
     } else {
@@ -342,6 +395,52 @@ pub(crate) mod tests {
             missing_binary(Some(Path::new("/nonexistent/ccred"))),
             Some(Warning::BinaryMissing(_))
         ));
+    }
+
+    fn relocated() -> crate::paths::Locations {
+        crate::paths::Locations {
+            ccred_home: Some(PathBuf::from("/data/my ccred/")),
+            claude_config_dir: Some(PathBuf::from("/data/claude")),
+        }
+    }
+
+    /// The job does not inherit the shell that chose these, so they have to
+    /// be in the command itself -- ahead of the subcommand, and quoted.
+    #[test]
+    fn chosen_locations_travel_with_the_job() {
+        let s = spec().with_locations(&relocated());
+        assert_eq!(
+            s.args,
+            [
+                "--ccred-home",
+                "/data/my ccred",
+                "--claude-config-dir",
+                "/data/claude",
+                "refresh",
+                "--if-older-than",
+                "48",
+            ]
+        );
+        assert!(
+            s.quoted_args()
+                .starts_with("--ccred-home \"/data/my ccred\" "),
+            "{}",
+            s.quoted_args()
+        );
+        assert_eq!(s.writable.len(), 2);
+
+        let default = spec().with_locations(&crate::paths::Locations::default());
+        assert_eq!(default.args, spec().args, "nothing chosen, nothing added");
+        assert!(default.writable.is_empty());
+    }
+
+    #[test]
+    fn a_directory_argument_never_ends_in_a_separator() {
+        assert_eq!(path_arg(Path::new(r"C:\Users\x\")), r"C:\Users\x");
+        assert_eq!(path_arg(Path::new("/srv/x/")), "/srv/x");
+        // A root is left alone rather than reduced to nothing.
+        assert_eq!(path_arg(Path::new("/")), "/");
+        assert_eq!(path_arg(Path::new(r"C:\")), r"C:\");
     }
 
     #[test]

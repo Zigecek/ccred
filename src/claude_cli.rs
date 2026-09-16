@@ -70,10 +70,10 @@ pub enum Probe {
     /// Costs a negligible slice of quota, but hits the API, so it must refresh.
     ///
     /// This is the rung that could in principle stop on a directory-trust
-    /// prompt. It does not in practice: `CLAUDE_CONFIG_DIR` is passed through
-    /// untouched -- never scrubbed, never pointed at a profile -- so the
-    /// spawned process reads the user's own `.claude.json` and already has
-    /// whatever trust they granted. Marking a
+    /// prompt. It does not in practice: `CLAUDE_CONFIG_DIR` is set to the
+    /// user's own configuration directory -- never a profile's -- so the
+    /// spawned process reads their `.claude.json` and already has whatever
+    /// trust they granted. Marking a
     /// directory trusted on their behalf to be sure would mean editing their
     /// security posture without asking, which is worse than the prompt.
     MinimalPrompt,
@@ -140,11 +140,22 @@ impl ProbeOutcome {
 #[derive(Debug, Clone)]
 pub struct ClaudeCli {
     bin: PathBuf,
+    config_dir: Option<PathBuf>,
 }
 
 impl ClaudeCli {
     pub fn at(bin: PathBuf) -> Self {
-        ClaudeCli { bin }
+        ClaudeCli {
+            bin,
+            config_dir: None,
+        }
+    }
+
+    /// The configuration directory to hand the spawned process, when one
+    /// was chosen instead of the default.
+    pub fn with_config_dir(mut self, dir: Option<PathBuf>) -> Self {
+        self.config_dir = dir;
+        self
     }
 
     pub fn path(&self) -> &Path {
@@ -223,6 +234,14 @@ impl ClaudeCli {
         for key in SCRUBBED_ENV {
             cmd.env_remove(key);
         }
+        // Exactly the configuration this program resolved -- the user's
+        // relocated one, or the default. Not merely inherited: a scheduled
+        // job gets the choice as a flag, and its environment has no trace of
+        // it. Never a profile directory; that once wiped a store.
+        match &self.config_dir {
+            Some(dir) => cmd.env("CLAUDE_CONFIG_DIR", dir),
+            None => cmd.env_remove("CLAUDE_CONFIG_DIR"),
+        };
         for (key, value) in env_pairs_for(scope) {
             cmd.env(key, value);
         }

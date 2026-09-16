@@ -27,7 +27,10 @@ fn main() {
 }
 
 fn run(cli: &Cli, theme: &Theme) -> ccred::Result<ExitCode> {
-    let ctx = Ctx::from_env()?;
+    let ctx = Ctx::resolve(ccred::paths::Locations {
+        ccred_home: cli.ccred_home.clone(),
+        claude_config_dir: cli.claude_config_dir.clone(),
+    })?;
 
     match cli.command.as_ref() {
         None | Some(Command::Current) => {

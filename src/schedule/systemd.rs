@@ -51,7 +51,10 @@ pub fn render_service(spec: &ScheduleSpec, hardened: bool) -> String {
     });
     s.push_str("\n[Service]\n");
     s.push_str("Type=oneshot\n");
-    s.push_str(&format!("ExecStart={}\n", spec.command_line()));
+    s.push_str(&format!(
+        "ExecStart={}\n",
+        unit_escape(&spec.command_line())
+    ));
     s.push_str("TimeoutStartSec=600\n");
     s.push_str("Nice=10\n");
     s.push_str("UMask=0077\n");
@@ -59,6 +62,14 @@ pub fn render_service(spec: &ScheduleSpec, hardened: bool) -> String {
     s.push_str("ReadWritePaths=-%h/.claude\n");
     s.push_str("ReadWritePaths=-%h/.claude.json\n");
     s.push_str("ReadWritePaths=-%h/.ccred\n");
+    // Relocated directories. Quoted whole, prefix included: systemd unquotes
+    // the word first and only then looks for the `-`.
+    for dir in &spec.writable {
+        s.push_str(&format!(
+            "ReadWritePaths=\"-{}\"\n",
+            unit_escape(&dir.to_string_lossy())
+        ));
+    }
     if hardened {
         s.push_str("\n# Namespace hardening (needs unprivileged user namespaces)\n");
         s.push_str("ProtectSystem=strict\n");
@@ -246,6 +257,11 @@ impl Scheduler for Systemd {
     }
 }
 
+/// `%` starts a specifier in a unit file, so a literal one is doubled.
+fn unit_escape(text: &str) -> String {
+    text.replace('%', "%%")
+}
+
 /// The program a unit starts: the first word of `ExecStart=`, which
 /// `command_line` quotes when it holds a space.
 pub fn registered_command(unit: &str) -> Option<PathBuf> {
@@ -257,7 +273,7 @@ pub fn registered_command(unit: &str) -> Option<PathBuf> {
         Some(rest) => rest.split('"').next()?,
         None => value.split_whitespace().next()?,
     };
-    (!path.is_empty()).then(|| PathBuf::from(path))
+    (!path.is_empty()).then(|| PathBuf::from(path.replace("%%", "%")))
 }
 
 /// `key=value` lines, as `systemctl show` emits them.
@@ -298,14 +314,41 @@ mod tests {
                 assert_eq!(registered_command(&unit), Some(exe.clone()), "{unit}");
             }
         }
-        assert_eq!(
-            registered_command(
-                "[Service]
-Type=oneshot
-"
-            ),
-            None
-        );
+        assert_eq!(registered_command("[Service]\nType=oneshot\n"), None);
+    }
+
+    /// Under `ProtectHome=read-only` a relocated directory is unwritable
+    /// unless the unit names it, and the refresh fails on every run.
+    #[test]
+    fn relocated_directories_are_writable_in_both_profiles() {
+        let s = crate::schedule::tests::spec().with_locations(&crate::paths::Locations {
+            ccred_home: Some("/data/my ccred".into()),
+            claude_config_dir: Some("/data/100%/claude".into()),
+        });
+        for hardened in [true, false] {
+            let unit = render_service(&s, hardened);
+            assert!(
+                unit.contains("ReadWritePaths=\"-/data/my ccred\"\n"),
+                "{unit}"
+            );
+            assert!(
+                unit.contains("ReadWritePaths=\"-/data/100%%/claude\"\n"),
+                "{unit}"
+            );
+            assert!(
+                unit.contains("--claude-config-dir /data/100%%/claude "),
+                "{unit}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_percent_in_the_binary_path_survives_the_round_trip() {
+        let mut s = crate::schedule::tests::spec();
+        s.exe = PathBuf::from("/opt/100%/ccred");
+        let unit = render_service(&s, true);
+        assert!(unit.contains("ExecStart=/opt/100%%/ccred "), "{unit}");
+        assert_eq!(registered_command(&unit), Some(s.exe));
     }
     use crate::schedule::tests::spec;
 

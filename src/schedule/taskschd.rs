@@ -182,7 +182,9 @@ pub fn render_task_xml(spec: &ScheduleSpec, privilege: Privilege) -> String {
         minute = spec.minute,
         user = xml_escape(&spec.user),
         exe = xml_escape(&spec.exe.to_string_lossy()),
-        args = xml_escape(&spec.args.join(" ")),
+        // Quoted where needed: this is one command line, and a relocated
+        // directory with a space in it would otherwise split in two.
+        args = xml_escape(&spec.quoted_args()),
         home = xml_escape(&spec.home.to_string_lossy()),
     )
 }
@@ -369,6 +371,21 @@ mod tests {
             assert_eq!(registered_command(&xml), Some(exe), "{xml}");
         }
         assert_eq!(registered_command("<Task></Task>"), None);
+    }
+
+    #[test]
+    fn a_relocated_directory_with_a_space_stays_one_argument() {
+        let s = spec().with_locations(&crate::paths::Locations {
+            ccred_home: Some(r"C:\Users\A B\ccred".into()),
+            claude_config_dir: None,
+        });
+        let xml = render_task_xml(&s, Privilege::Elevated);
+        assert!(
+            xml.contains(
+                r#"<Arguments>--ccred-home "C:\Users\A B\ccred" refresh --if-older-than 48</Arguments>"#
+            ),
+            "{xml}"
+        );
     }
 
     #[test]

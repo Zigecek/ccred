@@ -17,6 +17,20 @@ pub struct Paths {
     ccred_home: PathBuf,
     claude_config_dir: PathBuf,
     claude_config_file: PathBuf,
+    overrides: Locations,
+}
+
+/// Locations chosen instead of the defaults, by flag or by environment.
+///
+/// Kept apart from the resolved paths because some consumers need to know
+/// what was *chosen*, not just where things ended up: a scheduled job does not
+/// inherit the shell that set `CCRED_HOME`, so the choice has to be written
+/// into the job, and a spawned `claude` has to be told the same configuration
+/// directory this program is using.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Locations {
+    pub ccred_home: Option<PathBuf>,
+    pub claude_config_dir: Option<PathBuf>,
 }
 
 fn env_path(key: &str) -> Option<PathBuf> {
@@ -26,20 +40,38 @@ fn env_path(key: &str) -> Option<PathBuf> {
     }
 }
 
+/// A relative location would be read against whatever directory the process
+/// starts in -- the user's shell today, the scheduler's choice tomorrow.
+fn absolute(path: PathBuf) -> PathBuf {
+    std::path::absolute(&path).unwrap_or(path)
+}
+
 fn home_dir() -> Option<PathBuf> {
     env_path("HOME").or_else(|| env_path("USERPROFILE"))
 }
 
 impl Paths {
     pub fn from_env() -> crate::Result<Self> {
+        Self::resolve(Locations::default())
+    }
+
+    /// Explicit locations win over the environment, which wins over the
+    /// defaults.
+    pub fn resolve(explicit: Locations) -> crate::Result<Self> {
         let home = home_dir().ok_or_else(|| CcredError::Io {
             path: PathBuf::from("$HOME"),
             source: std::io::Error::other("cannot determine the home directory"),
         })?;
+        let chosen = Locations {
+            ccred_home: explicit.ccred_home.or_else(|| env_path("CCRED_HOME")),
+            claude_config_dir: explicit
+                .claude_config_dir
+                .or_else(|| env_path("CLAUDE_CONFIG_DIR")),
+        };
         Ok(Self::with_overrides(
-            home.clone(),
-            env_path("CCRED_HOME"),
-            env_path("CLAUDE_CONFIG_DIR"),
+            home,
+            chosen.ccred_home.map(absolute),
+            chosen.claude_config_dir.map(absolute),
         ))
     }
 
@@ -49,6 +81,10 @@ impl Paths {
         ccred_home: Option<PathBuf>,
         claude_config_dir: Option<PathBuf>,
     ) -> Self {
+        let overrides = Locations {
+            ccred_home: ccred_home.clone(),
+            claude_config_dir: claude_config_dir.clone(),
+        };
         let ccred_home = ccred_home.unwrap_or_else(|| home.join(".ccred"));
 
         // Mind this detail: without CLAUDE_CONFIG_DIR, `.claude.json` sits
@@ -69,7 +105,13 @@ impl Paths {
             ccred_home,
             claude_config_dir,
             claude_config_file,
+            overrides,
         }
+    }
+
+    /// What was chosen instead of the defaults, if anything.
+    pub fn overrides(&self) -> &Locations {
+        &self.overrides
     }
 
     pub fn home(&self) -> &Path {

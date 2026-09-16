@@ -12,7 +12,7 @@ pub mod switch;
 pub mod uninstall;
 
 use crate::model::{AccountSnapshot, ClaudeJsonDoc};
-use crate::paths::Paths;
+use crate::paths::{Locations, Paths};
 use crate::profile::ProfileRepo;
 use crate::store::file::FileStore;
 
@@ -23,8 +23,13 @@ pub struct Ctx {
 
 impl Ctx {
     pub fn from_env() -> crate::Result<Self> {
+        Self::resolve(Locations::default())
+    }
+
+    /// Locations given on the command line, falling back to the environment.
+    pub fn resolve(explicit: Locations) -> crate::Result<Self> {
         Ok(Ctx {
-            repo: ProfileRepo::new(Paths::from_env()?),
+            repo: ProfileRepo::new(Paths::resolve(explicit)?),
         })
     }
 

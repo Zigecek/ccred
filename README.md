@@ -136,6 +136,13 @@ ccred uninstall           remove ccred from this machine
 
 Add `--json` to any of them for machine-readable output.
 
+Profiles live in `~/.ccred` and Claude Code's configuration in `~/.claude`.
+`--ccred-home` and `--claude-config-dir` (or `CCRED_HOME` and
+`CLAUDE_CONFIG_DIR`) move them. A schedule installed with either is
+registered with the flags themselves: a systemd user service or a Windows task
+does not inherit the shell that set a variable, and without them the job would
+refresh the default directories -- empty -- and report success.
+
 A bare `ccred <name>` is deliberately not a switch alias -- a profile called
 `list` would then be unreachable -- so it prints a hint instead of guessing.
 

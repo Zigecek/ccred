@@ -12,9 +12,18 @@
 - **An interrupted switch is only healed under the switch's own lock.** A
   switch still in progress looks the same from outside, and healing it could
   leave the pointer naming one account while the live store held another.
-- **`CLAUDE_CONFIG_DIR` reaches the spawned `claude`.** It was scrubbed, so for
-  anyone with a relocated configuration the refresh probe read a different
-  `.claude.json`, and for the default scope a different credential file.
+- **A schedule registered with `CCRED_HOME` or `CLAUDE_CONFIG_DIR` set now
+  uses those directories.** The job runs in an environment of its own, so it
+  refreshed the defaults -- which hold nothing -- and reported success. The new
+  `--ccred-home` and `--claude-config-dir` options carry the choice into the
+  job, and the systemd unit makes those directories writable.
+- **The spawned `claude` is given the configuration directory `ccred` uses.**
+  It was scrubbed, so for anyone with a relocated configuration the refresh
+  probe read a different `.claude.json`, and for the default scope a different
+  credential file.
+- `doctor` reports a schedule whose binary no longer exists; a per-account
+  rotation keeps orphaned credentials from pushing each other out; the backoff
+  now actually delays a failing profile beyond the daily interval.
 
 ### Distribution
 

@@ -23,7 +23,8 @@ pub fn spec_for(ctx: &Ctx) -> crate::Result<ScheduleSpec> {
         ctx.paths().home().to_path_buf(),
         ctx.paths().log_dir(),
         user,
-    ))
+    )
+    .with_locations(ctx.paths().overrides()))
 }
 
 pub fn backend() -> Box<dyn Scheduler> {

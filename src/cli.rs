@@ -61,6 +61,22 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub json: bool,
 
+    /// Keep profiles and state in DIR [default: ~/.ccred]
+    ///
+    /// The same as $CCRED_HOME, which it overrides. A schedule installed with
+    /// either is registered with this flag, because the job does not inherit
+    /// the shell that set the variable.
+    #[arg(long, global = true, value_name = "DIR")]
+    pub ccred_home: Option<std::path::PathBuf>,
+
+    /// Claude Code's configuration directory [default: ~/.claude]
+    ///
+    /// The same as $CLAUDE_CONFIG_DIR, which it overrides. A spawned `claude`
+    /// is given this directory too, and a schedule carries it like
+    /// --ccred-home.
+    #[arg(long, global = true, value_name = "DIR")]
+    pub claude_config_dir: Option<std::path::PathBuf>,
+
     #[command(subcommand)]
     pub command: Option<Command>,
 }

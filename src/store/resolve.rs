@@ -120,14 +120,13 @@ pub fn env_pairs_for(scope: &StorageScope) -> Vec<(&'static str, String)> {
 /// `CLAUDE_CODE_OAUTH_TOKEN` is the dangerous one: it triggers a plaintext
 /// write, which on macOS deletes the Keychain item for every session.
 ///
-/// `CLAUDE_CONFIG_DIR` is deliberately **not** here. It is the variable this
-/// program's own paths are resolved from, so passing it through is what keeps
-/// the probe and `ccred` agreeing on which configuration is the user's.
-/// Removing it sent a probe for someone who relocates their configuration to
-/// the default `~/.claude.json` -- without their trust state or MCP servers,
-/// and, for the default scope, reading a different credential file from the
-/// one `ccred` had just checked. What must never happen is *setting* it to a
-/// profile directory; `env_pairs_for` does not.
+/// `CLAUDE_CONFIG_DIR` is not here because `ClaudeCli::run` sets it outright,
+/// to the directory this program resolved. Scrubbing it sent a probe for
+/// someone who relocates their configuration to the default `~/.claude.json`
+/// -- without their trust state or MCP servers, and, for the default scope,
+/// reading a different credential file from the one `ccred` had just checked.
+/// What must never happen is setting it to a profile directory;
+/// `env_pairs_for` does not.
 pub const SCRUBBED_ENV: &[&str] = &[
     "ANTHROPIC_API_KEY",
     "ANTHROPIC_AUTH_TOKEN",
@@ -260,11 +259,11 @@ mod tests {
         assert!(SCRUBBED_ENV.contains(&"ANTHROPIC_API_KEY"));
     }
 
-    /// `Paths` resolves the live configuration from `CLAUDE_CONFIG_DIR`, so a
-    /// probe that lost the variable would work on a different configuration
-    /// from the one `ccred` just checked.
+    /// `ClaudeCli::run` decides this variable itself; a scrub list entry
+    /// would be applied first and then overridden, which reads as though it
+    /// were removed.
     #[test]
-    fn the_users_own_config_dir_reaches_the_probe() {
+    fn the_config_dir_is_decided_by_the_runner_not_the_scrub_list() {
         assert!(!SCRUBBED_ENV.contains(&"CLAUDE_CONFIG_DIR"));
     }
 }

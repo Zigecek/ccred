@@ -1139,10 +1139,22 @@ impl Probe {
     }
 
     fn refresh(&self, sb: &Sandbox, mode: &str, extra: &[&str]) -> std::process::Output {
+        self.run(sb, mode, &[], extra)
+    }
+
+    /// `before` goes ahead of the subcommand, where global options live.
+    fn run(
+        &self,
+        sb: &Sandbox,
+        mode: &str,
+        before: &[&str],
+        extra: &[&str],
+    ) -> std::process::Output {
         let exe = fake_claude().to_string_lossy().to_string();
         let log = self.log.path().join("calls.log");
         let log = log.to_string_lossy().to_string();
-        let mut args = vec!["refresh"];
+        let mut args = before.to_vec();
+        args.push("refresh");
         args.extend_from_slice(extra);
         args.extend_from_slice(&["--claude-path", exe.as_str()]);
         sb.cmd_env(
@@ -1234,7 +1246,7 @@ fn a_due_profile_is_renewed_through_the_first_rung_that_works() {
     assert!(calls[1].starts_with("mcp list|"), "{calls:?}");
     for call in &calls {
         assert!(call.contains("oauth_token_set=false"), "{calls:?}");
-        assert!(call.contains("config_dir_set=false"), "{calls:?}");
+        assert!(call.contains("|config_dir=-|"), "{calls:?}");
     }
 
     // The rung that worked is tried first next time. `--force` makes the
@@ -1302,4 +1314,61 @@ fn a_signed_out_profile_is_reported_not_retried() {
     assert_eq!(out.status.code(), Some(4));
     assert_eq!(probe.calls().len(), 1, "{:?}", probe.calls());
     assert_eq!(stored_oauth(&creds), before);
+}
+
+/// A relocated configuration reaches the probe as the exact directory this
+/// program used -- even when it was given as a flag, which is how a scheduled
+/// job receives it, and the environment says nothing.
+#[test]
+fn a_chosen_config_dir_is_handed_to_the_probe() {
+    let (sb, _) = sandbox_with_a_due_profile();
+    // With the variable set, `.claude.json` lives inside the directory.
+    let dir = sb.path().join(".claude");
+    std::fs::copy(sb.path().join(".claude.json"), dir.join(".claude.json")).unwrap();
+    let dir_arg = dir.to_string_lossy().to_string();
+    let probe = Probe::new();
+
+    let out = probe.run(&sb, "", &["--claude-config-dir", &dir_arg], &[]);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let calls = probe.calls();
+    assert!(!calls.is_empty(), "the probe never ran");
+    let expected = format!(
+        "|config_dir={}|",
+        std::path::absolute(&dir).unwrap().display()
+    );
+    for call in &calls {
+        assert!(call.contains(&expected), "{calls:?}");
+    }
+}
+
+/// Everything follows `--ccred-home`, and a schedule registered with it
+/// carries it -- the job will not inherit the shell that chose it.
+#[test]
+fn a_chosen_home_is_used_and_carried_into_the_schedule() {
+    let sb = Sandbox::new();
+    let elsewhere = sb.path().join("elsewhere");
+    let arg = elsewhere.to_string_lossy().to_string();
+
+    let (out, err, code) = sb.run(&["--ccred-home", &arg, "save", "work"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(elsewhere.join("profiles").join("work").is_dir());
+    assert!(
+        !sb.path().join(".ccred").exists(),
+        "the default home was written as well"
+    );
+
+    let (out, _, _) = sb.run(&["--ccred-home", &arg, "list"]);
+    assert!(out.contains("work"), "{out}");
+
+    let (out, err, code) = sb.run(&["--ccred-home", &arg, "schedule", "install", "--dry-run"]);
+    assert_eq!(code, 0, "{err}");
+    assert!(
+        out.contains("--ccred-home"),
+        "the job would run against the default home:\n{out}"
+    );
 }

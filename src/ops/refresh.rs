@@ -432,7 +432,12 @@ pub fn refresh(ctx: &Ctx, opts: &RefreshOptions) -> crate::Result<RefreshReport>
                 // at all, and losing that work as well would be gratuitous.
                 if cli.is_none() {
                     match ClaudeCli::discover(opts.claude_path.as_deref()) {
-                        Ok(found) => cli = Some(found),
+                        Ok(found) => {
+                            cli =
+                                Some(found.with_config_dir(
+                                    ctx.paths().overrides().claude_config_dir.clone(),
+                                ))
+                        }
                         Err(e) => {
                             missing_claude = true;
                             // Same reasoning as above: without an attempt

@@ -27,9 +27,9 @@ fn main() {
     let mode = std::env::var("FAKE_CLAUDE_MODE").unwrap_or_default();
 
     let line = format!(
-        "{}|config_dir_set={}|oauth_token_set={}\n",
+        "{}|config_dir={}|oauth_token_set={}\n",
         args.join(" "),
-        std::env::var_os("CLAUDE_CONFIG_DIR").is_some(),
+        std::env::var("CLAUDE_CONFIG_DIR").unwrap_or_else(|_| "-".into()),
         std::env::var_os("CLAUDE_CODE_OAUTH_TOKEN").is_some(),
     );
     let log = std::env::var("FAKE_CLAUDE_LOG").expect("FAKE_CLAUDE_LOG");
