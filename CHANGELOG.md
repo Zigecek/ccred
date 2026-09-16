@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.2.34
+
+**A wrong clock no longer switches the schedule off.** Three decisions read
+moments an earlier run wrote down: a profile's backoff, its next-attempt
+time, and the schedule's own rate limit. A machine whose clock was wrong when
+that run happened -- a dead CMOS battery, a restored VM, a dual boot -- wrote
+a moment that has not arrived, and all three then waited for it. Silently,
+and for as long as the mistake was: a year wrong meant a year of a profile
+that is never refreshed and quietly expires.
+
+The furthest any of them can legitimately sit ahead of now is one backoff, so
+beyond that they are discarded rather than obeyed, and `ccred doctor` says so
+outright when the last run is recorded in the future.
+
 ## 0.2.33
 
 **A damaged profile is no longer a wall around the profile you are leaving.**
