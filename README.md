@@ -193,6 +193,33 @@ Switching refuses to run while Claude Code is open. A live session holds the
 old account in memory and would write its next refreshed token into what is by
 then a different profile's file. Quit it first, or pass `--force` knowing that.
 
+### When something is wrong
+
+`ccred doctor` names it and says what to do. The four answers it gives most
+often:
+
+- **"the live refresh token has expired", or a profile that says `needs
+  login`.** The refresh deadline is fixed when you log in, and no amount of
+  refreshing moves it -- so when it arrives, only a login will do:
+  `claude auth login`, then `ccred save <name>` under the same name. That
+  clears the profile's latched state too.
+- **"Claude Code is authenticating from CLAUDE_CODE_OAUTH_TOKEN"** (or
+  `ANTHROPIC_API_KEY`, or a Bedrock/Vertex variable). Claude Code then
+  ignores the credential file, which ages out while everything appears to
+  work. `ccred` manages file-based logins only: unset the variable, including
+  in your shell's startup file, and log in normally.
+- **"the active profile is not the account that is logged in"**, or **"the
+  live credentials are the ones stored as profile X"**. The pointer and
+  reality have drifted apart -- usually after logging in without saving.
+  `ccred switch <name>` to the profile you meant, or `ccred save <name>` for
+  the account that is logged in now.
+- **A profile that says `blocked`.** Something a person has to settle;
+  the line underneath says which. Re-running the refresh will not change it.
+
+If a profile's credentials were damaged, `ccred restore <name>` puts the last
+known good copy back, and `~/.ccred/backups/<name>/` keeps the ten before
+that.
+
 ### Exit codes
 
 For scripts and schedulers, each code means one thing to do:

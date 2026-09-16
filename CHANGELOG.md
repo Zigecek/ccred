@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- README now documents what each exit code asks a script or scheduler to do,
+  and what to do about the four things `doctor` reports most often.
+
 ## 0.2.21
 
 **Upgrade. A refresh running while you switched could sign out the session
