@@ -1502,16 +1502,22 @@ fn switching_is_refused_while_claude_code_runs() {
 }
 
 /// A journal nobody can read used to fail every later save and switch on the
-/// same parse error, for good.
+/// same parse error, for good. It is now moved aside -- and the command that
+/// found it still stops, because the switch it described may have left the
+/// live tokens and the named account disagreeing.
 #[test]
-fn an_unreadable_journal_does_not_wedge_saving_or_switching() {
+fn an_unreadable_journal_is_set_aside_and_stops_that_command_only() {
     let sb = Sandbox::new();
     sb.run(&["save", "work"]);
     let journal = sb.path().join(".ccred/state/switch.journal");
     std::fs::write(&journal, b"{ this is not a journal").unwrap();
 
     let (out, err, code) = sb.run(&["save", "work"]);
-    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(code, 7, "{out}{err}");
+    assert!(
+        err.contains("ccred current"),
+        "the way out must be named: {err}"
+    );
     assert!(!journal.exists(), "the journal is still in the way");
     let aside: Vec<_> = std::fs::read_dir(journal.parent().unwrap())
         .unwrap()
@@ -1527,6 +1533,76 @@ fn an_unreadable_journal_does_not_wedge_saving_or_switching() {
         1,
         "the unreadable journal must be kept, not deleted"
     );
+
+    let (out, err, code) = sb.run(&["save", "work"]);
+    assert_eq!(code, 0, "the next attempt must go through: {out}{err}");
+}
+
+/// The state a switch leaves when it dies between writing the live tokens
+/// and the account name: bob's tokens live, alice named, work active.
+fn sandbox_after_a_killed_switch(journal: &[u8]) -> (Sandbox, std::path::PathBuf, Vec<u8>) {
+    let sb = Sandbox::new();
+    sb.run(&["save", "work"]); // alice
+    sb.login_b();
+    sb.run(&["save", "personal"]); // bob
+    let (_, err, code) = sb.run(&["switch", "work"]);
+    assert_eq!(code, 0, "{err}");
+    let work = sb.path().join(".ccred/profiles/work/.credentials.json");
+    let before = std::fs::read(&work).unwrap();
+
+    std::fs::copy(
+        sb.path().join(".ccred/profiles/personal/.credentials.json"),
+        sb.path().join(".claude/.credentials.json"),
+    )
+    .unwrap();
+    std::fs::write(sb.path().join(".ccred/state/switch.journal"), journal).unwrap();
+    (sb, work, before)
+}
+
+const KILLED_AFTER_LIVE_WRITE: &[u8] =
+    br#"{"from":"work","to":"personal","phase":"live_creds_written",
+    "started_at_ms":1788000000000,"pid":999999}"#;
+
+/// The scheduled mirror copies the live tokens into the active profile. With
+/// the switch unsettled, "active" still meant work, and bob's tokens went
+/// into alice's profile.
+#[test]
+fn the_scheduled_mirror_settles_a_killed_switch_first() {
+    let (sb, work, before) = sandbox_after_a_killed_switch(KILLED_AFTER_LIVE_WRITE);
+
+    let (out, err, _) = sb.run(&["refresh"]);
+    assert_eq!(
+        std::fs::read(&work).unwrap(),
+        before,
+        "work now holds bob's tokens:\n{out}{err}"
+    );
+    let (out, _, _) = sb.run(&["current"]);
+    assert!(
+        out.contains("personal"),
+        "the switch was not finished: {out}"
+    );
+}
+
+/// Even with no journal to go on, tokens that another profile holds are not
+/// stored under a different name: the refresh token says whose they are.
+#[test]
+fn tokens_another_profile_holds_are_never_stored_under_this_one() {
+    let (sb, work, before) = sandbox_after_a_killed_switch(b"{ unreadable");
+    // First attempt stops on the journal; after that there is nothing to go on.
+    sb.run(&["save", "work"]);
+    let (_, err, code) = sb.run(&["save", "work"]);
+    assert_eq!(code, 7);
+    assert!(err.contains("stored as profile 'personal'"), "{err}");
+
+    for args in [&["refresh"][..], &["switch", "personal"][..]] {
+        let (out, err, _) = sb.run(args);
+        assert_eq!(
+            std::fs::read(&work).unwrap(),
+            before,
+            "`ccred {}` stored bob's tokens as work:\n{out}{err}",
+            args.join(" ")
+        );
+    }
 }
 
 /// A switch killed after writing the live credentials leaves three things:
@@ -1666,5 +1742,31 @@ fn a_mirror_that_is_refused_is_not_reported_as_done() {
     assert!(
         !out.contains("need a login"),
         "logging in is not the fix: {out}"
+    );
+}
+
+/// The profile a killed switch was moving to holds the very tokens that are
+/// now live. Treated as idle, it was refreshed through its own store -- which
+/// rotates the live session's refresh token away. The switch is settled
+/// before anything is decided, so it counts as active and is never probed.
+#[test]
+fn the_target_of_a_killed_switch_is_not_refreshed_as_if_idle() {
+    let (sb, _, _) = sandbox_after_a_killed_switch(KILLED_AFTER_LIVE_WRITE);
+    // Make its stored copy due for a refresh.
+    let creds = sb.path().join(".ccred/profiles/personal/.credentials.json");
+    let mut doc: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&creds).unwrap()).unwrap();
+    doc["claudeAiOauth"]["expiresAt"] = (now_ms() - 3_600_000).into();
+    doc["claudeAiOauth"]["refreshTokenExpiresAt"] = (now_ms() + 7 * DAY_MS).into();
+    std::fs::write(&creds, serde_json::to_vec(&doc).unwrap()).unwrap();
+    Sandbox::make_private(&creds);
+
+    let probe = Probe::new();
+    let out = probe.refresh(&sb, "", &[]);
+    assert!(
+        probe.calls().is_empty(),
+        "personal was probed:\n{:?}\n{}",
+        probe.calls(),
+        String::from_utf8_lossy(&out.stdout)
     );
 }

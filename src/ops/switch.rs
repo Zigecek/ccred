@@ -225,15 +225,19 @@ pub(crate) fn recover_locked(
         Ok(Some(journal)) => journal,
         Ok(None) => return Ok(None),
         Err(CcredError::Json { .. }) => {
+            // Moved aside so the next attempt is not refused for ever -- but
+            // this one stops. The journal described a switch that may have
+            // replaced the live credentials without updating the account
+            // `.claude.json` names, and carrying on would trust that name.
             let aside = SwitchJournal::set_aside(&path, now_ms())?;
-            warnings.push(format!(
+            return Err(CcredError::UnsafeWrite(format!(
                 concat!(
-                    "an unreadable switch journal was moved to {}; ",
-                    "if the active profile looks wrong, `ccred doctor` says why"
+                    "an interrupted switch left a journal that cannot be read; it was moved ",
+                    "to {}. Check that `ccred current` shows the account you expect ",
+                    "(log in again if not), then run the command again"
                 ),
                 aside.display()
-            ));
-            return Ok(Some("set aside an unreadable switch journal".to_string()));
+            )));
         }
         Err(e) => return Err(e),
     };

@@ -219,6 +219,49 @@ impl ProfileRepo {
 
     // ------------------------------------------------------------------ save
 
+    /// Refuse credentials that another profile already holds.
+    ///
+    /// The identity check compares names: what `.claude.json` says against
+    /// what the profile was saved as. It cannot see a live store whose tokens
+    /// belong to one account while `.claude.json` still names another -- the
+    /// state a switch leaves when it dies between writing the two -- and
+    /// three separate paths reached exactly that state. The tokens
+    /// themselves can: a refresh token is issued to one login, so finding it
+    /// stored under another profile says whose it is.
+    ///
+    /// It also keeps two profiles from sharing a refresh token at all, which
+    /// is dangerous on its own: refreshing one rotates the token and kills
+    /// the other.
+    fn assert_not_held_elsewhere(
+        &self,
+        name: &ProfileName,
+        incoming: &crate::model::OAuthCredentials,
+    ) -> crate::Result<()> {
+        // A blank token is refused by the validity gate, with a better
+        // message than "it matches another blank token".
+        if incoming.refresh_token.is_blank() {
+            return Ok(());
+        }
+        for other in self.list().unwrap_or_default() {
+            if &other == name {
+                continue;
+            }
+            let Ok(Some(theirs)) = self.store(&other).and_then(|s| s.load()) else {
+                continue;
+            };
+            if theirs.creds.oauth.refresh_token == incoming.refresh_token {
+                return Err(CcredError::UnsafeWrite(format!(
+                    concat!(
+                        "these credentials are the ones stored as profile '{}', not '{}'; ",
+                        "check `ccred current`, and log in again if the account shown is wrong"
+                    ),
+                    other, name
+                )));
+            }
+        }
+        Ok(())
+    }
+
     /// Copy credentials from `source` into the named profile.
     ///
     /// `account` is the account those credentials belong to. Pass what the
@@ -238,6 +281,7 @@ impl ProfileRepo {
 
         let existing_meta = self.meta(name)?;
         self.assert_same_account(name, existing_meta.as_ref(), &account.identity)?;
+        self.assert_not_held_elsewhere(name, &loaded.creds.oauth)?;
 
         let target = self.store(name)?;
 

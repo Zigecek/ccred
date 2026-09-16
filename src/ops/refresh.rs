@@ -7,8 +7,8 @@
 //! # What it can and cannot do
 //!
 //! Measured against a live account: a probe rotates both tokens and renews the
-//! access token by eight hours, while `refreshTokenExpiresAt` moves by half a
-//! millisecond. That deadline is a ceiling fixed at login and inherited by
+//! access token by eight hours, while `refreshTokenExpiresAt` moves by under a
+//! second. That deadline is a ceiling fixed at login and inherited by
 //! every rotated token, so no amount of refreshing postpones it -- when it
 //! arrives, only a new login will do.
 //!
@@ -356,6 +356,26 @@ pub fn refresh(ctx: &Ctx, opts: &RefreshOptions) -> crate::Result<RefreshReport>
         return Ok(RefreshReport::skipped("last run was recent"));
     }
 
+    // Settle a switch that died part-way before deciding which profile is
+    // active. Left alone, the profile it was moving to counts as idle -- and
+    // refreshing its stored copy, which holds the very token that is now
+    // live, rotates that token away from under the live session.
+    if !matches!(
+        crate::journal::SwitchJournal::load(&ctx.paths().switch_journal()),
+        Ok(None)
+    ) {
+        let live = ctx.live_store();
+        match live.lock(LOCK_TIMEOUT) {
+            Ok(_guard) => {
+                super::switch::recover_locked(ctx, &mut Vec::new())?;
+            }
+            Err(CcredError::Busy(_)) => {
+                return Ok(RefreshReport::skipped("a switch is in progress"));
+            }
+            Err(e) => return Err(e),
+        }
+    }
+
     let active = ctx.repo().active()?;
     let mut results = Vec::new();
     let mut spawned = 0usize;
@@ -414,20 +434,36 @@ pub fn refresh(ctx: &Ctx, opts: &RefreshOptions) -> crate::Result<RefreshReport>
                 // session more often than anything a person types.
                 let live = ctx.live_store();
                 match live.lock(LOCK_TIMEOUT) {
-                    Ok(_guard) => {
-                        let account = ctx.live_account();
-                        match ctx.repo().save_from(&name, &live, &account) {
-                            Ok(outcome) => detail = Some(format!("{outcome:?}").to_lowercase()),
-                            // Reported as "mirrored" with the reason in small
-                            // print, and exit 0, this hid exactly the failure
-                            // that loses tokens: the live pair renewed, the
-                            // profile still holding the rotated-away one.
-                            Err(e) => {
-                                decision = Decision::Broken;
-                                detail = Some(format!("not mirrored: {e}"));
+                    // A switch that died part-way leaves the live tokens and
+                    // the account `.claude.json` names disagreeing, and the
+                    // pointer naming the profile it was leaving. Mirroring
+                    // then copies one account's tokens into the other's
+                    // profile. Settle it first, and copy nothing this run:
+                    // what counts as "active" was decided before.
+                    Ok(_guard) => match super::switch::recover_locked(ctx, &mut Vec::new()) {
+                        Ok(Some(settled)) => {
+                            decision = Decision::SkipBackoff;
+                            detail = Some(format!("{settled}; copied on the next run"));
+                        }
+                        Err(e) => {
+                            decision = Decision::Broken;
+                            detail = Some(format!("not mirrored: {e}"));
+                        }
+                        Ok(None) => {
+                            let account = ctx.live_account();
+                            match ctx.repo().save_from(&name, &live, &account) {
+                                Ok(outcome) => detail = Some(format!("{outcome:?}").to_lowercase()),
+                                // Reported as "mirrored" with the reason in small
+                                // print, and exit 0, this hid exactly the failure
+                                // that loses tokens: the live pair renewed, the
+                                // profile still holding the rotated-away one.
+                                Err(e) => {
+                                    decision = Decision::Broken;
+                                    detail = Some(format!("not mirrored: {e}"));
+                                }
                             }
                         }
-                    }
+                    },
                     // Claude Code writing at this moment: the next run
                     // copies it, so nobody needs to act.
                     Err(e) => {

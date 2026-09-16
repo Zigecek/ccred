@@ -87,10 +87,10 @@ impl SwitchJournal {
     /// Move a journal that cannot be read out of the way, and say where.
     ///
     /// Leaving it would fail every later `save` and `switch` on the same
-    /// parse error, for good. Setting it aside loses nothing that cannot be
-    /// seen another way: the one thing a journal repairs is the active
-    /// pointer, and a pointer that disagrees with the live account is
-    /// reported by `current` and `doctor`.
+    /// parse error, for good. The command that sets it aside still stops, and
+    /// says so: the switch it described may have replaced the live
+    /// credentials without updating the account `.claude.json` names, which
+    /// only a person looking at `ccred current` can settle.
     pub fn set_aside(path: &Path, now_ms: i64) -> crate::Result<std::path::PathBuf> {
         let mut name = path.as_os_str().to_os_string();
         name.push(format!(".unreadable-{now_ms}"));
