@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.2.25
+
+- **The installer's PATH advice is one command per line.** The line
+  `source $HOME/.local/bin/env (sh, bash, zsh)` names the shells in the
+  same colour as the command and only a space away from it. Someone
+  installing ccred for the first time copied the whole line, and the shell
+  tried to run a file called `(sh,`. Each command now sits on its own line
+  under a heading that names the shell. The released installers for 0.2.24
+  were rewritten in place, so the link in the README already prints the
+  clearer text.
+- Build scripts in the dependency tree are held to an allowlist, which is
+  what the top of `deny.toml` has claimed all along. Thirteen crates run
+  code at build time today; a fourteenth fails CI until someone reads it.
+
 ## 0.2.24
 
 An audit of the documentation against the program found seven mismatches.
