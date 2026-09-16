@@ -35,6 +35,28 @@ pub struct Loaded {
     pub raw: Vec<u8>,
 }
 
+/// How long a reader outside the lock waits before reading a file again.
+const SETTLE: Duration = Duration::from_millis(250);
+
+/// Load, for a caller that does not hold the store's lock.
+///
+/// Claude Code writes under its lock, and a reader outside it can land
+/// between the truncate and the write and see a file that does not parse.
+/// Reporting that as damage sends a person to `ccred restore` over a file that
+/// is whole again a moment later. So a file that does not parse is read once
+/// more after a short pause, and only a second failure is reported.
+///
+/// For the read-only commands. Anything that writes takes the lock instead.
+pub fn load_unlocked(store: &dyn CredentialStore) -> crate::Result<Option<Loaded>> {
+    match store.load() {
+        Err(crate::CcredError::Json { .. } | crate::CcredError::LossyRewrite { .. }) => {
+            std::thread::sleep(SETTLE);
+            store.load()
+        }
+        other => other,
+    }
+}
+
 /// Cheap change detection: did the store change since we last looked?
 ///
 /// Used to decide whether a refresh actually happened. We judge success by an
@@ -168,6 +190,41 @@ mod tests {
                        "expiresAt":"soon"}}"#;
         let err = parse_loaded(raw.to_vec(), Path::new("/tmp/x")).unwrap_err();
         assert!(matches!(err, crate::CcredError::Json { .. }), "got {err:?}");
+    }
+
+    /// A file caught mid-write is read again rather than reported as damaged.
+    #[test]
+    fn a_file_caught_mid_write_is_read_again() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let store = file::FileStore::new(dir.path().to_path_buf());
+        let path = dir.path().join(".credentials.json");
+        std::fs::write(&path, br#"{"claudeAiOauth":{"accessTo"#).unwrap();
+
+        let writer = {
+            let path = path.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(50));
+                std::fs::write(
+                    &path,
+                    br#"{"claudeAiOauth":{"accessToken":"sk-ant-oat01-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","refreshToken":"sk-ant-ort01-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB","expiresAt":1}}"#,
+                )
+                .unwrap();
+            })
+        };
+        let loaded = load_unlocked(&store);
+        writer.join().unwrap();
+        assert!(matches!(loaded, Ok(Some(_))), "{loaded:?}");
+    }
+
+    #[test]
+    fn a_file_that_stays_broken_is_still_reported() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let store = file::FileStore::new(dir.path().to_path_buf());
+        std::fs::write(dir.path().join(".credentials.json"), b"{ not json").unwrap();
+        assert!(matches!(
+            load_unlocked(&store),
+            Err(crate::CcredError::Json { .. })
+        ));
     }
 
     /// `now_ms` is used as a monotonic-ish clock for the refresh window, so a

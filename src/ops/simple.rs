@@ -81,7 +81,7 @@ pub fn current(ctx: &Ctx) -> crate::Result<CurrentReport> {
     let account = ctx.live_account();
     let active = ctx.repo().active()?;
 
-    let (loaded, live_error) = match live.load() {
+    let (loaded, live_error) = match crate::store::load_unlocked(&live) {
         Ok(l) => (l, None),
         Err(e) => (None, Some(e.to_string())),
     };
@@ -175,7 +175,7 @@ pub fn list(ctx: &Ctx) -> crate::Result<Vec<ProfileRow>> {
             continue;
         };
 
-        let (healthy, refresh_days_left, note) = match store.load() {
+        let (healthy, refresh_days_left, note) = match crate::store::load_unlocked(&store) {
             Ok(Some(loaded)) => match validate_credentials(&loaded.creds.oauth, now) {
                 Ok(health) => {
                     let days = loaded

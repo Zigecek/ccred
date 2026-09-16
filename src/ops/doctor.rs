@@ -8,7 +8,7 @@ use crate::lockfile::lock_path_for;
 use crate::paths::storage_write_lock_target;
 use crate::proc::running_claude_pids;
 use crate::schedule::{Health, State, Warning, detect};
-use crate::store::{CredentialStore, now_ms};
+use crate::store::now_ms;
 use crate::validate::ProfileName;
 use crate::validate::validate_credentials;
 
@@ -115,7 +115,7 @@ pub fn doctor(ctx: &Ctx) -> crate::Result<Vec<Finding>> {
     // --- who is live ------------------------------------------------------
     let live = ctx.live_store();
     let account = ctx.live_account();
-    match live.load() {
+    match crate::store::load_unlocked(&live) {
         Ok(Some(loaded)) => match validate_credentials(&loaded.creds.oauth, now) {
             Ok(h) => {
                 let days = h
@@ -234,7 +234,7 @@ pub fn doctor(ctx: &Ctx) -> crate::Result<Vec<Finding>> {
             ));
             continue;
         };
-        match store.load() {
+        match crate::store::load_unlocked(&store) {
             Ok(Some(loaded)) => match validate_credentials(&loaded.creds.oauth, now) {
                 Ok(h) if h.refresh_expired => findings.push(Finding::error(
                     format!("profile '{name}' has expired"),
