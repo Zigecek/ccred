@@ -1095,6 +1095,10 @@ fn hint_for(e: &crate::CcredError) -> Option<&'static str> {
         E::Json { .. } => Some(
             "`ccred doctor` names the file; `ccred restore <name>` puts back the last good copy",
         ),
+        E::RefusedSymlink(_) => Some(concat!(
+            "a write through a symlink lands on whatever it points at, which for a ",
+            "0600 credential file is a hole; replace the link with a real file"
+        )),
         _ => None,
     }
 }

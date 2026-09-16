@@ -67,15 +67,45 @@ impl Paths {
     /// Explicit locations win over the environment, which wins over the
     /// defaults.
     pub fn resolve(explicit: Locations) -> crate::Result<Self> {
-        let home = home_dir().map(absolute).ok_or_else(|| CcredError::Io {
-            path: PathBuf::from("$HOME"),
-            source: std::io::Error::other("cannot determine the home directory"),
-        })?;
+        Self::resolve_from(home_dir().map(absolute), explicit)
+    }
+
+    /// The part that has no environment in it, so a test can say "this
+    /// machine has no home" without touching the process it runs in.
+    fn resolve_from(home: Option<PathBuf>, explicit: Locations) -> crate::Result<Self> {
         let chosen = Locations {
             ccred_home: explicit.ccred_home.or_else(|| env_path("CCRED_HOME")),
             claude_config_dir: explicit
                 .claude_config_dir
                 .or_else(|| env_path("CLAUDE_CONFIG_DIR")),
+        };
+        // A home is only needed for the directories nobody named. With no
+        // HOME and no USERPROFILE -- a container with a scrubbed environment,
+        // a service unit that sets neither -- naming both was already the
+        // answer, and ccred refused anyway while advising exactly that.
+        let home = match home {
+            Some(home) => home,
+            None => {
+                let (Some(ccred_home), Some(_)) = (&chosen.ccred_home, &chosen.claude_config_dir)
+                else {
+                    return Err(CcredError::Io {
+                        path: PathBuf::from("$HOME"),
+                        source: std::io::Error::other(concat!(
+                            "cannot determine the home directory: neither HOME nor ",
+                            "USERPROFILE is set. Set one, or name both directories ",
+                            "with --ccred-home and --claude-config-dir"
+                        )),
+                    });
+                };
+                // Recorded as "home" only for what is left that reads it: a
+                // scheduled job's working directory, and the path `--purge`
+                // refuses to delete.
+                let ccred_home = absolute(ccred_home.clone());
+                ccred_home
+                    .parent()
+                    .map(Path::to_path_buf)
+                    .unwrap_or(ccred_home)
+            }
         };
         Ok(Self::with_overrides(
             home,
@@ -252,6 +282,38 @@ mod tests {
 
     fn paths() -> Paths {
         Paths::with_overrides(PathBuf::from("/home/user"), None, None)
+    }
+
+    /// A container run with a scrubbed environment has no HOME and no
+    /// USERPROFILE. Naming both directories is the whole answer, and ccred
+    /// refused anyway -- while advising exactly that.
+    #[test]
+    fn no_home_is_only_a_problem_for_a_directory_nobody_named() {
+        let both = Locations {
+            ccred_home: Some(PathBuf::from("/data/ccred")),
+            claude_config_dir: Some(PathBuf::from("/data/claude")),
+        };
+        let p = Paths::resolve_from(None, both).expect("both were named");
+        // Compared through `absolute`, which on Windows puts a drive letter
+        // on a path that starts with a separator.
+        assert_eq!(p.ccred_home(), absolute(PathBuf::from("/data/ccred")));
+        assert_eq!(
+            p.claude_config_dir(),
+            absolute(PathBuf::from("/data/claude"))
+        );
+        // What is left calling itself "home" is the data directory's parent:
+        // a working directory for a scheduled job, and the path `--purge`
+        // refuses to delete. Never the data directory itself.
+        assert_eq!(p.home(), absolute(PathBuf::from("/data")));
+
+        let only_one = Locations {
+            ccred_home: Some(PathBuf::from("/data/ccred")),
+            claude_config_dir: None,
+        };
+        let err = Paths::resolve_from(None, only_one).unwrap_err();
+        let said = format!("{err} {}", std::error::Error::source(&err).unwrap());
+        assert!(said.contains("USERPROFILE"), "{said}");
+        assert!(said.contains("--claude-config-dir"), "{said}");
     }
 
     #[test]
