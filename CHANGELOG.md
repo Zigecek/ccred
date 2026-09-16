@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.17
 
 - **`doctor` warns when the schedule runs a different copy of ccred.** Found on
   a real machine: the scheduled task still started a copy installed months
