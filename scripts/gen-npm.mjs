@@ -21,6 +21,9 @@ import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 
+/** Shipped in every package: the terms are dual, so both texts travel. */
+const LICENSES = ["LICENSE-MIT", "LICENSE-APACHE"];
+
 /** Rust target triple -> npm platform identity. */
 const TARGETS = [
   { triple: "x86_64-unknown-linux-gnu", pkg: "linux-x64", os: "linux", cpu: "x64", libc: "glibc" },
@@ -60,6 +63,10 @@ for (const t of TARGETS) {
   const dir = join(out, "platforms", t.pkg);
   mkdirSync(dir, { recursive: true });
   copyFileSync(src, join(dir, exe));
+  // The licence travels with the thing it licenses. A `license` field names
+  // the terms; it does not hand anyone the text, and these packages are the
+  // only copy someone installing from npm ever sees.
+  for (const f of LICENSES) copyFileSync(join(root, f), join(dir, f));
 
   const manifest = {
     name: `@ccred/${t.pkg}`,
@@ -69,7 +76,7 @@ for (const t of TARGETS) {
     repository: { type: "git", url: "git+https://github.com/Zigecek/ccred.git" },
     os: [t.os],
     cpu: [t.cpu],
-    files: [exe],
+    files: [exe, ...LICENSES],
     // Yarn PnP would otherwise keep the binary inside a zip, where it cannot
     // be executed.
     preferUnplugged: true,
@@ -100,6 +107,9 @@ if (built < TARGETS.length && !process.argv.includes("--allow-partial")) {
 // Root wrapper: the committed template with versions stamped in.
 const rootDir = join(out, "ccred");
 cpSync(join(root, "npm", "ccred"), rootDir, { recursive: true });
+
+for (const f of LICENSES) copyFileSync(join(root, f), join(rootDir, f));
+copyFileSync(join(root, "README.md"), join(rootDir, "README.md"));
 
 const rootManifest = JSON.parse(readFileSync(join(rootDir, "package.json"), "utf8"));
 rootManifest.version = version;

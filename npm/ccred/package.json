@@ -22,7 +22,10 @@
     "ccred": "bin/ccred.js"
   },
   "files": [
-    "bin/"
+    "bin/",
+    "LICENSE-MIT",
+    "LICENSE-APACHE",
+    "README.md"
   ],
   "engines": {
     "node": ">=18"

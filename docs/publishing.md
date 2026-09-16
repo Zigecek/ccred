@@ -60,6 +60,21 @@ which is also the entry workflow, so `release.yml` is right in both places.
 
 Reserve the `@ccred` organisation on npm first, so the scope cannot be taken.
 
+The packages themselves are already known to work: the eight were generated
+from the real 0.2.30 artifacts, packed with `npm pack`, installed from the
+tarballs into an empty project, and run. The wrapper resolved the platform
+binary and passed its exit codes through -- `switch <missing>` came back as 3.
+To repeat it for a later release:
+
+```sh
+mkdir -p dist && for f in artifacts/*.tar.xz; do
+  n=$(basename "$f" .tar.xz); mkdir -p "dist/$n"
+  tar xJf "$f" -C "dist/$n" --strip-components=1
+done
+node scripts/gen-npm.mjs --from dist --out target/npm --version <ver>
+(cd target/npm && npm pack ccred platforms/*)
+```
+
 The same bootstrap applies: a package must exist before a trusted publisher can
 be attached to it. Plan one token-based publish per package, then switch.
 
