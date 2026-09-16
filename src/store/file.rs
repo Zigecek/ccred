@@ -82,22 +82,38 @@ impl CredentialStore for FileStore {
         lockfile::acquire(&storage_write_lock_target(&self.config_dir), timeout)
     }
 
+    /// Content, not the clock.
+    ///
+    /// This used to be the modification time and the length. Both are too
+    /// coarse to answer the question it is asked -- did `claude` rewrite this
+    /// file? -- because a token swap keeps the length, and a file system's
+    /// timestamp can be coarser than the write that follows it. The file is
+    /// under a kilobyte, so hashing it costs nothing worth counting, and
+    /// "same bytes, same revision" is the answer the caller wants.
     fn revision(&self) -> crate::Result<Option<Revision>> {
         let path = self.path();
-        match fs::metadata(&path) {
-            Ok(meta) => {
-                let nanos = meta
-                    .modified()
-                    .ok()
-                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                    .map(|d| d.as_nanos())
-                    .unwrap_or(0);
-                Ok(Some(Revision(format!("{nanos}:{}", meta.len()))))
-            }
+        match fs::read(&path) {
+            Ok(bytes) => Ok(Some(Revision(format!(
+                "{}:{:016x}",
+                bytes.len(),
+                fnv1a(&bytes)
+            )))),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(e) => Err(CcredError::Io { path, source: e }),
         }
     }
+}
+
+/// FNV-1a, 64-bit. Not a cryptographic hash and not asked to be one: it
+/// distinguishes one revision of a file from another within a single run.
+/// Written out rather than pulled from a crate, and deliberately not
+/// `DefaultHasher`, which is allowed to differ between releases.
+fn fnv1a(bytes: &[u8]) -> u64 {
+    const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+    const PRIME: u64 = 0x0000_0100_0000_01b3;
+    bytes.iter().fold(OFFSET, |hash, byte| {
+        (hash ^ u64::from(*byte)).wrapping_mul(PRIME)
+    })
 }
 
 impl FileStore {
@@ -266,15 +282,33 @@ mod tests {
         assert!(loaded.creds.extra.contains_key("organizationUuid"));
     }
 
+    /// The revision answers "did something rewrite this file", and a rewrite
+    /// that put the same bytes back did not. Keyed on the modification time,
+    /// this passed or failed depending on how fast the machine was.
     #[test]
-    fn revision_changes_after_a_write() {
+    fn the_revision_follows_the_content_not_the_clock() {
         let (_d, store) = store_with(Some(REAL_SHAPE));
         let before = store.revision().unwrap();
+
         let loaded = store.load().unwrap().unwrap();
-        // Same bytes as before, so only the timestamp can tell them apart.
         store.store(&loaded.creds).unwrap();
-        let after = store.revision().unwrap();
-        assert_ne!(before, after);
+        assert_eq!(
+            store.revision().unwrap(),
+            before,
+            "the same bytes went back"
+        );
+
+        // A token swap keeps the length, which is the other half of what the
+        // old revision looked at.
+        let mut swapped = loaded.creds.clone();
+        swapped.oauth.access_token =
+            Secret::new("sk-ant-oat01-CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC");
+        store.store(&swapped).unwrap();
+        assert_ne!(
+            store.revision().unwrap(),
+            before,
+            "a different token is a different revision"
+        );
     }
 
     #[test]
