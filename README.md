@@ -51,6 +51,15 @@ curl -fsSLO https://github.com/Zigecek/ccred/releases/download/v0.2.25/ccred_0.2
 sudo apt install ./ccred_0.2.25_amd64.deb
 ```
 
+`apt install` runs as root, so it is worth checking what you are handing it.
+The package carries a checksum and a provenance attestation of its own:
+
+```sh
+curl -fsSLO https://github.com/Zigecek/ccred/releases/download/v0.2.25/ccred_0.2.25_amd64.deb.sha256
+sha256sum -c ccred_0.2.25_amd64.deb.sha256
+gh attestation verify ccred_0.2.25_amd64.deb --repo Zigecek/ccred
+```
+
 It carries no maintainer scripts on purpose: a `postinst` must not install the
 refresh schedule, because the package installs as root while the schedule
 belongs to one user's session. Run `ccred schedule install` yourself.

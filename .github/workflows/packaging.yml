@@ -83,6 +83,13 @@ jobs:
   deb:
     needs: resolve
     runs-on: ubuntu-24.04
+    # The job-level grant replaces the workflow's, so `contents` is repeated.
+    # The other two are what signing the package needs: an OIDC token to prove
+    # which workflow built it, and the right to record the attestation.
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     strategy:
       matrix:
         include:
@@ -134,10 +141,30 @@ jobs:
           export CCRED_VERSION="${TAG#v}"
           ./nfpm pkg --packager deb --config packaging/nfpm.yaml --target dist/
 
+      # Everything dist builds carries a provenance attestation and a
+      # checksum; the package built here is the one thing people install with
+      # root, so it gets both too. `--clobber` would otherwise leave a stale
+      # digest next to a rebuilt package, which is why the sum is written from
+      # the file that is about to be uploaded rather than kept anywhere.
+      - name: Attest the package
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: dist/*.deb
+
+      - name: Write its checksum
+        run: |
+          set -euo pipefail
+          cd dist
+          for f in *.deb; do
+            # `-b` and a bare name, so the file matches dist's own .sha256
+            # files byte for byte in shape and `sha256sum -c` finds it.
+            sha256sum -b "$f" > "$f.sha256"
+          done
+
       - name: Attach it to the release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "$TAG" dist/*.deb --clobber
+        run: gh release upload "$TAG" dist/*.deb dist/*.deb.sha256 --clobber
 
   # cargo-dist prints the shell's name on the same line as the command that
   # puts ccred on PATH, and the first person to install this copied the line
