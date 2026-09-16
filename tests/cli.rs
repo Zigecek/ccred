@@ -859,8 +859,9 @@ fn doctor_checks_the_copies_of_credentials_too() {
     let sb = Sandbox::new();
     sb.run(&["save", "work"]);
     sb.login_b();
-    sb.run(&["save", "personal"]);
-    sb.run(&["rm", "personal"]); // leaves a backup
+    sb.run(&["save", "personal"]); // active, so 'work' can go
+    let (out, err, code) = sb.run(&["rm", "work"]); // leaves a backup
+    assert_eq!(code, 0, "{out}{err}");
     let (out, _, code) = sb.run(&["doctor"]);
     assert!(out.contains("none readable by anyone else"), "{code} {out}");
 
@@ -877,7 +878,10 @@ fn doctor_checks_the_copies_of_credentials_too() {
     );
     std::fs::set_permissions(&backup, std::fs::Permissions::from_mode(0o600)).unwrap();
 
-    let lkg = sb.path().join(".ccred/profiles/work/.credentials.json.lkg");
+    let lkg = sb
+        .path()
+        .join(".ccred/profiles/personal/.credentials.json.lkg");
+    assert!(lkg.is_file(), "a save leaves a last-known-good copy");
     std::fs::set_permissions(&lkg, std::fs::Permissions::from_mode(0o640)).unwrap();
     let (out, _, code) = sb.run(&["doctor"]);
     assert_eq!(code, 7, "{out}");
