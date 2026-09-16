@@ -1,9 +1,18 @@
 # Changelog
 
-## Unreleased
+## 0.2.22
 
-- README now documents what each exit code asks a script or scheduler to do,
-  and what to do about the four things `doctor` reports most often.
+- **An expired deadline no longer reads as `0d`.** The day count divided,
+  which rounds toward zero, so a refresh window an hour past its end looked
+  like one expiring today. It now floors: `-1d`.
+- README says what each exit code asks a script or scheduler to do, and what
+  to do about the four things `doctor` reports most often -- an expired
+  deadline, a login that comes from an environment variable, a pointer that
+  disagrees with the live account, and a blocked profile.
+- The `.deb` ships `/usr/share/doc/ccred/copyright`, which Debian policy asks
+  for by that name.
+- The npm layout step refuses a release missing a platform instead of
+  publishing a wrapper that has no binary for it.
 
 ## 0.2.21
 
