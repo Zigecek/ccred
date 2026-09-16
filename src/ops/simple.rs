@@ -243,6 +243,10 @@ pub struct SaveReport {
     /// guaranteed to be watching.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub schedule: Option<ScheduleSetup>,
+    /// Anything worth saying that did not stop the save, such as an
+    /// interrupted switch settled on the way.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
     /// The credentials just stored are already past their refresh deadline.
     ///
     /// Saving them is still right -- they are what is logged in -- but a
@@ -317,33 +321,40 @@ fn auto_schedule(ctx: &Ctx, outcome: SaveOutcome) -> Option<ScheduleSetup> {
 }
 
 pub fn save(ctx: &Ctx, name: &ProfileName) -> crate::Result<SaveReport> {
-    // `save` writes the active pointer, so an interrupted switch must be
-    // settled first -- otherwise its journal would outlive the inconsistency
-    // it describes and `doctor` would keep reporting a problem that is gone.
-    let mut warnings = Vec::new();
-    let _ = super::switch::recover_pending(ctx, &mut warnings)?;
-
     // Read the live store under the lock Claude Code also takes. Without it a
     // refresh landing mid-read stores half of one token pair and half of the
     // next. The lock is taken here rather than inside `save_from`, because
     // `switch` calls that while already holding it and the lock is not
     // reentrant.
-    let live = ctx.live_store();
-    let account = ctx.live_account();
-    if !account.is_known() {
-        return Err(CcredError::UnsafeWrite(
-            "cannot tell which account is logged in; is Claude Code set up in this home?".into(),
-        ));
-    }
-
+    //
     // Scoped to the read, and no wider. Held to the end of the function it
     // also spanned `auto_schedule`, which shells out to schtasks, systemctl
     // or launchctl with no timeout of its own -- so a hung scheduler would
     // have blocked Claude Code's own credential refresh for as long as it
     // hung, with our heartbeat keeping the lock from ever looking stale.
-    let outcome = {
+    let live = ctx.live_store();
+    let mut warnings = Vec::new();
+    let (outcome, account) = {
         let _guard = live.lock(SAVE_LOCK_TIMEOUT)?;
-        ctx.repo().save_from(name, &live, &account)?
+
+        // An interrupted switch is settled first, under this same lock.
+        // Settling it separately gave up when the lock was busy -- and a
+        // switch killed mid-way leaves exactly that lock behind -- after
+        // which this save took the lock once it went stale and stored the
+        // live credentials, which by then belonged to the switch's target,
+        // under the identity `.claude.json` still named: one account's
+        // tokens in another account's profile.
+        super::switch::recover_locked(ctx, &mut warnings)?;
+
+        // Read after recovery, which may have rewritten it.
+        let account = ctx.live_account();
+        if !account.is_known() {
+            return Err(CcredError::UnsafeWrite(
+                "cannot tell which account is logged in; is Claude Code set up in this home?"
+                    .into(),
+            ));
+        }
+        (ctx.repo().save_from(name, &live, &account)?, account)
     };
 
     // Saving the account that is logged in makes that profile the active one.
@@ -371,6 +382,7 @@ pub fn save(ctx: &Ctx, name: &ProfileName) -> crate::Result<SaveReport> {
         }
         .to_string(),
         schedule,
+        warnings,
         already_expired,
     })
 }

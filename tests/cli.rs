@@ -1450,3 +1450,52 @@ fn an_unreadable_journal_does_not_wedge_saving_or_switching() {
         "the unreadable journal must be kept, not deleted"
     );
 }
+
+/// A switch killed after writing the live credentials leaves three things:
+/// the target's tokens live, the old account still named in `.claude.json`,
+/// and its lock behind. A `save` of the old profile used to give up on
+/// healing while that lock was fresh, wait for it to go stale, and then store
+/// the target's tokens under the old account's name -- which the identity
+/// check could not catch, because `.claude.json` still said the old account.
+#[test]
+fn a_save_after_a_killed_switch_never_stores_the_wrong_account() {
+    let sb = Sandbox::new();
+    sb.run(&["save", "work"]); // alice
+    sb.login_b();
+    sb.run(&["save", "personal"]); // bob, now active
+    let (_, err, code) = sb.run(&["switch", "work"]);
+    assert_eq!(code, 0, "{err}");
+    let work = sb.path().join(".ccred/profiles/work/.credentials.json");
+    let work_before = std::fs::read(&work).unwrap();
+
+    // The killed `switch personal`: bob's tokens are live, alice is still
+    // named, the journal says the live write happened.
+    std::fs::copy(
+        sb.path().join(".ccred/profiles/personal/.credentials.json"),
+        sb.path().join(".claude/.credentials.json"),
+    )
+    .unwrap();
+    std::fs::write(
+        sb.path().join(".ccred/state/switch.journal"),
+        r#"{"from":"work","to":"personal","phase":"live_creds_written",
+            "started_at_ms":1788000000000,"pid":999999}"#,
+    )
+    .unwrap();
+    // Its lock, a few seconds from counting as abandoned.
+    let lock = sb.path().join(".claude/.storage-write.lock");
+    std::fs::create_dir(&lock).unwrap();
+    let ten_seconds_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(10);
+    filetime::set_file_mtime(&lock, ten_seconds_ago.into()).unwrap();
+
+    let (out, err, code) = sb.run(&["save", "work"]);
+
+    assert_eq!(
+        std::fs::read(&work).unwrap(),
+        work_before,
+        "work now holds another account's tokens:\n{out}{err}"
+    );
+    assert_ne!(code, 0, "{out}{err}");
+    // The switch was finished instead: bob is live and named.
+    let (out, _, _) = sb.run(&["current"]);
+    assert!(out.contains("bob@example.com"), "{out}");
+}

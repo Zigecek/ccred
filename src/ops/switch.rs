@@ -21,10 +21,6 @@ use crate::validate::{ProfileName, validate_credentials, validate_profile_name};
 /// How long to wait for the credential store lock.
 const LOCK_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// How long a command that merely noticed a journal waits for the lock
-/// before concluding that the switch it describes is still running.
-const RECOVERY_LOCK_TIMEOUT: Duration = Duration::from_secs(2);
-
 #[derive(Debug, Clone, Serialize)]
 pub enum OutgoingSync {
     /// No profile was active, so there was nothing to preserve.
@@ -211,29 +207,17 @@ fn restore_identity(
     Ok(true)
 }
 
-/// Heal an interrupted switch before doing anything else.
+/// Heal an interrupted switch, for a caller that holds the live lock.
 ///
-/// Only under the lock `switch` holds for its whole run. A journal is also
-/// what a switch *in progress* looks like, and "healing" one of those rolled
-/// the pointer back underneath a switch that was about to write it -- leaving
-/// the pointer naming one account and the live credentials another. When the
-/// lock is busy, some writer is active; the journal is left for later.
-pub fn recover_pending(ctx: &Ctx, warnings: &mut Vec<String>) -> crate::Result<Option<String>> {
-    // An unreadable journal still needs the lock: setting it aside is a write.
-    if matches!(SwitchJournal::load(&ctx.paths().switch_journal()), Ok(None)) {
-        return Ok(None);
-    }
-    let live = ctx.live_store();
-    let _guard = match live.lock(RECOVERY_LOCK_TIMEOUT) {
-        Ok(guard) => guard,
-        Err(CcredError::Busy(_)) => return Ok(None),
-        Err(e) => return Err(e),
-    };
-    recover_locked(ctx, warnings)
-}
-
-/// Recovery itself, for a caller that already holds the live lock.
-fn recover_locked(ctx: &Ctx, warnings: &mut Vec<String>) -> crate::Result<Option<String>> {
+/// Only ever under that lock, which `switch` holds for its whole run. A
+/// journal is also what a switch *in progress* looks like, and "healing" one
+/// of those from outside rolled the pointer back underneath a switch that was
+/// about to write it -- leaving the pointer naming one account and the live
+/// credentials another.
+pub(crate) fn recover_locked(
+    ctx: &Ctx,
+    warnings: &mut Vec<String>,
+) -> crate::Result<Option<String>> {
     let path = ctx.paths().switch_journal();
     // Read under the lock: the switch that held it may have finished and
     // cleared its journal while we waited.

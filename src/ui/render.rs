@@ -313,6 +313,9 @@ pub fn save(theme: &Theme, r: &SaveReport) {
         paint(MUTED, &format!("({})", r.account))
     );
     println!("{PAD}  {}", paint(MUTED, &r.outcome));
+    for w in &r.warnings {
+        println!("{PAD}{} {}", paint(WARN, g.warn), paint(VALUE, w));
+    }
     if r.already_expired {
         println!();
         callout(
