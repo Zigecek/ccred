@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- **A schedule registered from a Homebrew or Scoop install survives upgrades.**
+  On Linux the binary's path came back with links resolved, so the job named
+  a versioned directory that a later `brew upgrade` deletes. The stable
+  `opt/ccred` (Homebrew) or `apps/ccred/current` (Scoop) path is registered
+  instead.
+- The npm launcher no longer lets Node 22+ spend seconds collecting network
+  details on every run, and no longer suggests `cargo install` before the
+  crate exists.
+
 ## 0.2.17
 
 - **`doctor` warns when the schedule runs a different copy of ccred.** Found on
