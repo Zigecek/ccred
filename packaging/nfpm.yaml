@@ -32,6 +32,12 @@ contents:
     file_info:
       mode: 0755
 
+  # Debian policy asks for this file by name, and by it alone: a tool that
+  # ships licences under other names is one `lintian` complains about and a
+  # person cannot find.
+  - src: ./packaging/deb/copyright
+    dst: /usr/share/doc/ccred/copyright
+
   - src: ./LICENSE-MIT
     dst: /usr/share/doc/ccred/LICENSE-MIT
   - src: ./LICENSE-APACHE
