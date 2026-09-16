@@ -849,6 +849,41 @@ fn doctor_reports_credentials_other_users_can_read() {
     assert!(out.contains("644"), "the mode found must be named: {out}");
 }
 
+/// A last-known-good copy and a backup hold the same tokens as the store, and
+/// a backup is the file most likely to have been copied away and back.
+#[cfg(unix)]
+#[test]
+fn doctor_checks_the_copies_of_credentials_too() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let sb = Sandbox::new();
+    sb.run(&["save", "work"]);
+    sb.login_b();
+    sb.run(&["save", "personal"]);
+    sb.run(&["rm", "personal"]); // leaves a backup
+    let (out, _, code) = sb.run(&["doctor"]);
+    assert!(out.contains("none readable by anyone else"), "{code} {out}");
+
+    let backup = walk(&sb.path().join(".ccred/backups"))
+        .into_iter()
+        .find(|p| p.is_file())
+        .expect("rm left no backup");
+    std::fs::set_permissions(&backup, std::fs::Permissions::from_mode(0o644)).unwrap();
+    let (out, _, code) = sb.run(&["doctor"]);
+    assert_eq!(code, 7, "{out}");
+    assert!(
+        out.contains("backups"),
+        "the exposed backup must be named: {out}"
+    );
+    std::fs::set_permissions(&backup, std::fs::Permissions::from_mode(0o600)).unwrap();
+
+    let lkg = sb.path().join(".ccred/profiles/work/.credentials.json.lkg");
+    std::fs::set_permissions(&lkg, std::fs::Permissions::from_mode(0o640)).unwrap();
+    let (out, _, code) = sb.run(&["doctor"]);
+    assert_eq!(code, 7, "{out}");
+    assert!(out.contains(".lkg"), "{out}");
+}
+
 /// One broken profile must not end the run for the rest.
 ///
 /// An unattended job that gives up on every account because one is unreadable

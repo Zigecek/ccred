@@ -343,11 +343,21 @@ fn permissions_finding(ctx: &Ctx) -> Finding {
         let mut paths = vec![ctx.paths().claude_config_dir().join(".credentials.json")];
         if let Ok(names) = ctx.repo().list() {
             for n in names {
-                if let Ok(p) = ctx.paths().profile_credentials(&n) {
+                // The last-known-good copy holds the same tokens as the store.
+                for p in [
+                    ctx.paths().profile_credentials(&n),
+                    ctx.paths().profile_lkg(&n),
+                ]
+                .into_iter()
+                .flatten()
+                {
                     paths.push(p);
                 }
             }
         }
+        // So does every backup, which is also the file most likely to have
+        // been copied somewhere and back.
+        paths.extend(backup_files(&ctx.paths().backups_dir()));
 
         for path in paths {
             let Ok(meta) = std::fs::metadata(&path) else {
@@ -371,6 +381,35 @@ fn permissions_finding(ctx: &Ctx) -> Finding {
             )
         }
     }
+}
+
+/// Every credential backup under `dir`, at any depth.
+#[cfg(unix)]
+fn backup_files(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut found = Vec::new();
+    let mut pending = vec![dir.to_path_buf()];
+    while let Some(dir) = pending.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            match entry.file_type() {
+                Ok(t) if t.is_dir() => pending.push(path),
+                Ok(t)
+                    if t.is_file()
+                        && entry
+                            .file_name()
+                            .to_string_lossy()
+                            .starts_with("credentials.") =>
+                {
+                    found.push(path)
+                }
+                _ => {}
+            }
+        }
+    }
+    found
 }
 
 /// A profile that cannot be used, and whether there is a way back.
