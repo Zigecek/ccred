@@ -49,6 +49,9 @@ const SETTLE: Duration = Duration::from_millis(250);
 /// For the read-only commands. Anything that writes takes the lock instead.
 pub fn load_unlocked(store: &dyn CredentialStore) -> crate::Result<Option<Loaded>> {
     match store.load() {
+        // Not `Encoding`: a file that is UTF-16 will still be UTF-16 in a
+        // quarter of a second, and the pause is there for a write landing
+        // mid-read, which cannot produce one.
         Err(crate::CcredError::Json { .. } | crate::CcredError::LossyRewrite { .. }) => {
             std::thread::sleep(SETTLE);
             store.load()
@@ -111,6 +114,9 @@ pub fn parse_loaded(raw: Vec<u8>, path: &Path) -> crate::Result<Loaded> {
     // Dropped before anything looks at the bytes, including the lossless
     // check, which re-parses them.
     let raw = without_bom(raw);
+    if let Some(e) = encoding_error(&raw, path) {
+        return Err(e);
+    }
     let creds: CredentialsFile =
         serde_json::from_slice(&raw).map_err(|source| crate::CcredError::Json {
             path: path.to_path_buf(),
@@ -140,6 +146,32 @@ pub fn without_bom(mut raw: Vec<u8>) -> Vec<u8> {
         raw.drain(..3);
     }
     raw
+}
+
+/// The complaint to make about a file that is not UTF-8 at all.
+///
+/// PowerShell 5.1 writes UTF-16 whenever it redirects output, and older
+/// Notepad offers it as "Unicode", so a credential file copied between
+/// machines with `Get-Content | Out-File` arrives in it. serde_json then says
+/// "expected value at line 1 column 1", which sends people looking for a
+/// syntax error in a file whose syntax is fine.
+fn not_utf8(raw: &[u8]) -> Option<&'static str> {
+    if raw.starts_with(&[0xFF, 0xFE]) {
+        Some("UTF-16, little endian")
+    } else if raw.starts_with(&[0xFE, 0xFF]) {
+        Some("UTF-16, big endian")
+    } else {
+        None
+    }
+}
+
+/// The error for a file whose encoding, rather than its syntax, is the
+/// problem. `None` when the bytes could be UTF-8.
+pub fn encoding_error(raw: &[u8], path: &Path) -> Option<crate::CcredError> {
+    Some(crate::CcredError::Encoding {
+        path: path.to_path_buf(),
+        encoding: not_utf8(raw)?,
+    })
 }
 
 /// The gate every write passes, regardless of backend.
@@ -207,6 +239,33 @@ mod tests {
         inside.extend_from_slice(BOM);
         inside.push(b'}');
         assert_eq!(without_bom(inside.clone()), inside);
+    }
+
+    /// PowerShell writes UTF-16 whenever it redirects output, so a credential
+    /// file copied between machines with `Get-Content | Out-File` arrives in
+    /// it. "expected value at line 1 column 1" sends someone looking for a
+    /// syntax error in a file whose syntax is fine.
+    #[test]
+    fn a_file_that_is_not_utf8_says_which_encoding_it_is() {
+        let mut utf16 = vec![0xFF, 0xFE];
+        utf16.extend_from_slice(b"{ } ");
+        let err = parse_loaded(utf16, Path::new("/tmp/x")).unwrap_err();
+        let said = err.to_string();
+        assert!(said.contains("UTF-16"), "{said}");
+        assert!(said.contains("UTF-8"), "{said}");
+        assert!(said.contains("/tmp/x"), "the file is named: {said}");
+
+        let mut big_endian = vec![0xFE, 0xFF];
+        big_endian.extend_from_slice(b" { }");
+        assert!(
+            parse_loaded(big_endian, Path::new("/tmp/x"))
+                .unwrap_err()
+                .to_string()
+                .contains("big endian")
+        );
+
+        // A UTF-8 file with a mark is not this error; it loads.
+        assert!(encoding_error(b"{}", Path::new("/tmp/x")).is_none());
     }
 
     /// A credential file someone opened in an editor and saved again still

@@ -32,6 +32,9 @@ impl ClaudeJsonDoc {
         })?;
         // See `store::without_bom`: a Windows editor may have left one here.
         let raw = crate::store::without_bom(raw);
+        if let Some(e) = crate::store::encoding_error(&raw, path) {
+            return Err(e);
+        }
         let root: Value = serde_json::from_slice(&raw).map_err(|source| CcredError::Json {
             path: path.to_path_buf(),
             source,

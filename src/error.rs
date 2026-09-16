@@ -96,6 +96,15 @@ pub enum CcredError {
         #[source]
         source: serde_json::Error,
     },
+    /// A file that is not UTF-8 at all, which is a different problem from a
+    /// file whose JSON is wrong -- and one whose explanation has to survive
+    /// being turned into a string, since that is all a `doctor` finding or a
+    /// `current` report keeps of an error.
+    #[error("{path} is {encoding}, and JSON must be UTF-8")]
+    Encoding {
+        path: PathBuf,
+        encoding: &'static str,
+    },
 }
 
 /// Exit codes. A scheduler consumes these, so they are stable.
@@ -139,7 +148,7 @@ impl CcredError {
             CcredError::Busy(_) => ExitCode::Busy,
             CcredError::ClaudeMissing(_) => ExitCode::Misconfigured,
             CcredError::Io { .. } => ExitCode::Internal,
-            CcredError::Json { .. } => ExitCode::Unsafe,
+            CcredError::Json { .. } | CcredError::Encoding { .. } => ExitCode::Unsafe,
         }
     }
 }
@@ -235,6 +244,10 @@ mod tests {
                 dropped: vec!["k".into()],
             },
             CcredError::PathEscape { name: "..".into() },
+            CcredError::Encoding {
+                path: PathBuf::from("/tmp/x"),
+                encoding: "UTF-16, little endian",
+            },
         ];
         for e in all {
             assert!(!e.to_string().trim().is_empty(), "{e:?} renders as nothing");

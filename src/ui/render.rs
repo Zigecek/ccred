@@ -1095,6 +1095,10 @@ fn hint_for(e: &crate::CcredError) -> Option<&'static str> {
         E::Json { .. } => Some(
             "`ccred doctor` names the file; `ccred restore <name>` puts back the last good copy",
         ),
+        E::Encoding { .. } => Some(concat!(
+            "PowerShell writes UTF-16 whenever it redirects output, so a file copied ",
+            "with `Get-Content | Out-File` arrives like this; re-save it as UTF-8"
+        )),
         E::RefusedSymlink(_) => Some(concat!(
             "a write through a symlink lands on whatever it points at, which for a ",
             "0600 credential file is a hole; replace the link with a real file"

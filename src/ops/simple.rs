@@ -421,6 +421,11 @@ pub fn save(ctx: &Ctx, name: &ProfileName) -> crate::Result<SaveReport> {
         // Read after recovery, which may have rewritten it.
         let account = ctx.live_account();
         if !account.is_known() {
+            if let Some(why) = ctx.live_account_problem() {
+                return Err(CcredError::UnsafeWrite(format!(
+                    "cannot tell which account is logged in: {why}"
+                )));
+            }
             return Err(CcredError::UnsafeWrite(
                 "cannot tell which account is logged in; is Claude Code set up in this home?"
                     .into(),

@@ -91,6 +91,28 @@ impl Ctx {
             Err(_) => AccountSnapshot::default(),
         }
     }
+
+    /// Why the account could not be read, when it could not.
+    ///
+    /// The snapshot above collapses every failure into "unknown", which is
+    /// the right answer for a report and the wrong one for a refusal: "is
+    /// Claude Code set up in this home?" is unhelpful when the truth is that
+    /// the file is UTF-16, or has been edited into something that will not
+    /// parse. Only the error's own sentence, which names a path and a kind
+    /// and never file contents.
+    pub fn live_account_problem(&self) -> Option<String> {
+        match ClaudeJsonDoc::load(self.paths().claude_config_file()) {
+            Ok(_) => None,
+            // Absent is not a problem to explain: it means Claude Code has
+            // not run here yet, which the message already says.
+            Err(crate::CcredError::Io { source, .. })
+                if source.kind() == std::io::ErrorKind::NotFound =>
+            {
+                None
+            }
+            Err(e) => Some(e.to_string()),
+        }
+    }
 }
 
 /// Days remaining until an epoch-ms deadline, floored. Negative when past.
