@@ -67,7 +67,7 @@ impl Paths {
     /// Explicit locations win over the environment, which wins over the
     /// defaults.
     pub fn resolve(explicit: Locations) -> crate::Result<Self> {
-        let home = home_dir().ok_or_else(|| CcredError::Io {
+        let home = home_dir().map(absolute).ok_or_else(|| CcredError::Io {
             path: PathBuf::from("$HOME"),
             source: std::io::Error::other("cannot determine the home directory"),
         })?;

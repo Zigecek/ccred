@@ -536,10 +536,15 @@ pub fn refresh(theme: &Theme, r: &RefreshReport) {
     // account is logged in.
     let logins = count(Decision::NeedsLogin);
     let broken = count(Decision::Broken);
+    // A mirror that found nothing new wrote nothing, so it is not an update.
     let moved = r
         .profiles
         .iter()
-        .filter(|p| matches!(p.decision, Decision::Refresh | Decision::MirrorActive))
+        .filter(|p| match p.decision {
+            Decision::Refresh => true,
+            Decision::MirrorActive => p.detail.as_deref() != Some("unchanged"),
+            _ => false,
+        })
         .count();
     let mut summary = paint(
         MUTED,
