@@ -192,28 +192,69 @@ mod tests {
         assert!(matches!(err, crate::CcredError::Json { .. }), "got {err:?}");
     }
 
+    /// A store whose file is half-written when first read, and whole by the
+    /// time anyone looks again -- the writer finishing in between. No
+    /// threads and no sleeps, so the test cannot pass or fail by timing.
+    struct HalfWritten {
+        inner: file::FileStore,
+        path: std::path::PathBuf,
+        whole: Vec<u8>,
+        loads: std::sync::atomic::AtomicU32,
+    }
+
+    impl CredentialStore for HalfWritten {
+        fn describe(&self) -> String {
+            self.inner.describe()
+        }
+        fn config_dir(&self) -> &Path {
+            self.inner.config_dir()
+        }
+        fn load(&self) -> crate::Result<Option<Loaded>> {
+            let result = self.inner.load();
+            if self.loads.load(std::sync::atomic::Ordering::Relaxed) == 0 {
+                std::fs::write(&self.path, &self.whole).unwrap();
+            }
+            self.loads
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            result
+        }
+        fn store(&self, creds: &CredentialsFile) -> crate::Result<()> {
+            self.inner.store(creds)
+        }
+        fn replace(&self, creds: &CredentialsFile) -> crate::Result<()> {
+            self.inner.replace(creds)
+        }
+        fn delete(&self) -> crate::Result<()> {
+            self.inner.delete()
+        }
+        fn lock(&self, timeout: Duration) -> crate::Result<DirLock> {
+            self.inner.lock(timeout)
+        }
+        fn revision(&self) -> crate::Result<Option<Revision>> {
+            self.inner.revision()
+        }
+    }
+
     /// A file caught mid-write is read again rather than reported as damaged.
     #[test]
     fn a_file_caught_mid_write_is_read_again() {
         let dir = tempfile::TempDir::new().unwrap();
-        let store = file::FileStore::new(dir.path().to_path_buf());
         let path = dir.path().join(".credentials.json");
         std::fs::write(&path, br#"{"claudeAiOauth":{"accessTo"#).unwrap();
-
-        let writer = {
-            let path = path.clone();
-            std::thread::spawn(move || {
-                std::thread::sleep(Duration::from_millis(50));
-                std::fs::write(
-                    &path,
-                    br#"{"claudeAiOauth":{"accessToken":"sk-ant-oat01-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","refreshToken":"sk-ant-ort01-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB","expiresAt":1}}"#,
-                )
-                .unwrap();
-            })
+        let store = HalfWritten {
+            inner: file::FileStore::new(dir.path().to_path_buf()),
+            path,
+            whole: br#"{"claudeAiOauth":{"accessToken":"sk-ant-oat01-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","refreshToken":"sk-ant-ort01-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB","expiresAt":1}}"#.to_vec(),
+            loads: std::sync::atomic::AtomicU32::new(0),
         };
+
         let loaded = load_unlocked(&store);
-        writer.join().unwrap();
         assert!(matches!(loaded, Ok(Some(_))), "{loaded:?}");
+        assert_eq!(
+            store.loads.into_inner(),
+            2,
+            "the first read must have failed"
+        );
     }
 
     #[test]

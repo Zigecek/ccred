@@ -103,6 +103,11 @@ impl Sandbox {
             .envs(env.iter().copied())
             .env("HOME", self.path())
             .env("USERPROFILE", self.path())
+            // Where the release installer keeps its receipt, and systemd its
+            // user units. Left alone, `uninstall --dry-run` read the real
+            // machine's receipt.
+            .env("LOCALAPPDATA", self.path().join("AppData").join("Local"))
+            .env("XDG_CONFIG_HOME", self.path().join(".config"))
             .env_remove("CCRED_HOME")
             .env_remove("CLAUDE_CONFIG_DIR")
             // Pin the presentation: assertions below are about wording, and
