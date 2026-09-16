@@ -336,11 +336,17 @@ pub fn doctor(ctx: &Ctx) -> crate::Result<Vec<Finding>> {
     findings.push(claude_binary_finding());
     findings.push(permissions_finding(ctx));
     let this_exe = std::env::current_exe().ok();
-    findings.push(schedule_finding(
-        detect().status(),
+    let schedule = schedule_finding(detect().status(), profile_count, this_exe.as_deref());
+    let registered = schedule.severity != Severity::Error;
+    findings.push(schedule);
+    if let Some(f) = last_run_finding(
+        super::refresh::read_last_run(ctx).ok().flatten(),
+        registered,
         profile_count,
-        this_exe.as_deref(),
-    ));
+        now,
+    ) {
+        findings.push(f);
+    }
 
     Ok(findings)
 }
@@ -543,6 +549,58 @@ fn broken_profile(ctx: &Ctx, name: &ProfileName, why: &str) -> Finding {
 /// The probe is a parameter rather than a call, so the policy can be tested
 /// without a scheduler. Reading the host's real one from a test would make
 /// the assertion depend on the machine running it.
+/// Is the schedule that exists actually doing anything?
+///
+/// A registered timer that fires into a failure looks identical, from the
+/// terminal, to one that works: the job prints into a log nobody opens, and
+/// on Windows into nothing at all. Every silent failure this program has --
+/// no `claude` to spawn, a profile that needs a login, a machine asleep at
+/// the appointed hour -- ends here, as a run that did not happen or did not
+/// go well.
+fn last_run_finding(
+    last: Option<crate::ops::refresh::LastRun>,
+    registered: bool,
+    profile_count: usize,
+    now: i64,
+) -> Option<Finding> {
+    // Nothing to keep alive, or nothing to keep it alive with: the schedule
+    // check above already says what there is to say.
+    if !registered || profile_count < 2 {
+        return None;
+    }
+    let Some(last) = last else {
+        return Some(Finding::warn(
+            "no refresh has run yet",
+            "the schedule is registered; if this is not a fresh install, run `ccred refresh` once to see what it does",
+        ));
+    };
+
+    // The gap between scheduled runs is at most four days, so a week without
+    // one means they are not happening.
+    const STALE_DAYS: i64 = 7;
+    let days = (now - last.finished_at_ms).div_euclid(86_400_000);
+    if days >= STALE_DAYS {
+        return Some(Finding::warn(
+            format!("the last refresh was {days} days ago"),
+            "the schedule fires twice a week, so something is stopping it: `ccred log` shows what the last runs decided",
+        ));
+    }
+    if last.needed_attention {
+        return Some(Finding::warn(
+            "the last refresh needed attention",
+            "`ccred log` names the profile; `ccred refresh` runs it again now",
+        ));
+    }
+    Some(Finding::ok(format!(
+        "last refresh {}, nothing needed attention",
+        if days >= 1 {
+            format!("{days} days ago")
+        } else {
+            "today".to_string()
+        }
+    )))
+}
+
 fn schedule_finding(
     status: crate::Result<State>,
     profile_count: usize,
@@ -767,6 +825,45 @@ mod tests {
     /// A login held in the environment makes Claude Code ignore the file, so
     /// the file ages out while the account works -- and this tool, which reads
     /// only the file, reports it expired. That has to be said, by name only.
+    fn ran(days_ago: i64, needed_attention: bool) -> crate::ops::refresh::LastRun {
+        crate::ops::refresh::LastRun {
+            finished_at_ms: 1_800_000_000_000 - days_ago * 86_400_000,
+            status: "ran".into(),
+            needed_attention,
+        }
+    }
+
+    /// A timer firing into a failure looks exactly like one that works, from
+    /// the terminal. This is the check that tells them apart.
+    #[test]
+    fn a_schedule_that_never_runs_is_not_reported_as_healthy() {
+        let now = 1_800_000_000_000;
+
+        // Nothing registered, or nothing to keep alive: the schedule check
+        // above has already said what there is to say.
+        assert!(last_run_finding(None, false, 2, now).is_none());
+        assert!(last_run_finding(None, true, 1, now).is_none());
+
+        let f = last_run_finding(None, true, 2, now).unwrap();
+        assert_eq!(f.severity, Severity::Warn, "{f:?}");
+        assert!(f.title.contains("no refresh has run"), "{f:?}");
+
+        // Runs are at most four days apart, so a week is a schedule that is
+        // not firing -- a laptop asleep at the appointed hour, or a job that
+        // dies before it can record anything.
+        let f = last_run_finding(Some(ran(9, false)), true, 2, now).unwrap();
+        assert_eq!(f.severity, Severity::Warn, "{f:?}");
+        assert!(f.title.contains("9 days ago"), "{f:?}");
+
+        let f = last_run_finding(Some(ran(1, true)), true, 2, now).unwrap();
+        assert_eq!(f.severity, Severity::Warn, "{f:?}");
+        assert!(f.title.contains("needed attention"), "{f:?}");
+
+        let f = last_run_finding(Some(ran(0, false)), true, 2, now).unwrap();
+        assert_eq!(f.severity, Severity::Ok, "{f:?}");
+        assert!(f.title.contains("today"), "{f:?}");
+    }
+
     /// Every scheduled run spawns `claude`, and the reason it cannot be found
     /// is usually a PATH a timer never sees. A warning, not an error: nothing
     /// about switching profiles needs it.

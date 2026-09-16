@@ -982,7 +982,9 @@ fn log_entry(now: i64, report: &RefreshReport) -> crate::logbook::Entry {
     }
 }
 
-fn read_last_run(ctx: &Ctx) -> crate::Result<Option<LastRun>> {
+/// The record of the last run, for anyone who wants to know whether the
+/// schedule is actually working. `doctor` asks.
+pub fn read_last_run(ctx: &Ctx) -> crate::Result<Option<LastRun>> {
     let path = ctx.paths().last_run();
     match std::fs::read(&path) {
         Ok(raw) => Ok(serde_json::from_slice(&raw).ok()),

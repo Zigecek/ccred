@@ -194,6 +194,13 @@ profiles have a copy worth restoring.
 `ccred schedule install --dry-run` prints the exact unit file, plist or task
 XML it would register, without writing anything.
 
+A registered schedule that fires into a failure looks, from the terminal,
+exactly like one that works: the job writes into a log, and on Windows Task
+Scheduler discards even that. So `ccred doctor` reads the record of the last
+run and says how long ago it was and whether anything needed attention. A
+week without one means they are not happening -- the gap between scheduled
+runs is four days at most.
+
 Installing verifies its own work: right after registering, it asks the
 scheduler when the job will next run, and if the answer is "never" it undoes
 the installation and says so. Each platform has a way to accept a schedule
