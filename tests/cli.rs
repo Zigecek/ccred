@@ -1021,3 +1021,55 @@ fn uninstall_dry_run_names_what_it_would_delete_and_removes_nothing() {
     );
     assert!(exe.exists(), "a dry run must not remove the binary");
 }
+
+/// A journal is also what a switch *in progress* looks like. Healing it from
+/// another process rolled the pointer back underneath the running switch, so
+/// recovery happens only under the lock that switch holds -- and a busy lock
+/// means the journal is not ours to touch.
+#[test]
+fn a_switch_in_progress_is_not_healed_from_outside() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let sb = Sandbox::new();
+    sb.run(&["save", "work"]);
+    sb.login_b();
+    sb.run(&["save", "personal"]);
+
+    let journal = sb.path().join(".ccred/state/switch.journal");
+    std::fs::write(
+        &journal,
+        r#"{"from":"personal","to":"work","phase":"outgoing_synced",
+            "started_at_ms":1788000000000,"pid":999999}"#,
+    )
+    .unwrap();
+
+    // Another writer holds the lock and keeps it alive, the way the running
+    // switch would. Without the heartbeat a slow runner could see it go stale
+    // mid-test and reclaim it.
+    let lock = sb.path().join(".claude/.storage-write.lock");
+    std::fs::create_dir(&lock).unwrap();
+    let stop = Arc::new(AtomicBool::new(false));
+    let beat = {
+        let stop = Arc::clone(&stop);
+        let lock = lock.clone();
+        std::thread::spawn(move || {
+            while !stop.load(Ordering::Relaxed) {
+                let f = lock.join("beat");
+                let _ = std::fs::write(&f, b"1");
+                let _ = std::fs::remove_file(&f);
+                std::thread::sleep(std::time::Duration::from_millis(500));
+            }
+        })
+    };
+
+    let (out, err, code) = sb.run(&["switch", "work"]);
+    stop.store(true, Ordering::Relaxed);
+    beat.join().unwrap();
+
+    assert_eq!(code, 6, "a held lock is Busy: {out}{err}");
+    assert!(
+        journal.exists(),
+        "a journal was healed while its switch still held the lock"
+    );
+}
