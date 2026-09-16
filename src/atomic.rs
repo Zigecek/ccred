@@ -41,9 +41,13 @@ impl Drop for TempGuard {
     }
 }
 
-/// Temp file name. No RNG dependency -- it only needs to keep two concurrent
-/// processes from picking the same name.
+/// Temp file name. No RNG dependency -- it only needs to keep writers from
+/// picking the same name: the pid separates processes, and a counter
+/// separates writes within one, where a clock can read the same twice.
 fn temp_name(target: &Path) -> String {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static NEXT: AtomicU32 = AtomicU32::new(0);
+
     let stem = target
         .file_name()
         .map(|s| s.to_string_lossy().to_string())
@@ -52,7 +56,29 @@ fn temp_name(target: &Path) -> String {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.subsec_nanos())
         .unwrap_or(0);
-    format!(".{stem}.tmp.{}.{nanos:08x}", std::process::id())
+    let n = NEXT.fetch_add(1, Ordering::Relaxed);
+    format!(".{stem}.tmp.{}.{nanos:08x}.{n}", std::process::id())
+}
+
+/// Replace `to` with `from`.
+///
+/// On Windows a rename fails with "access denied" while another process has
+/// the target open without sharing deletion -- an antivirus scan of a file
+/// that was just written is the usual one, and it lets go within moments.
+/// Failing the write for that would fail a save or a switch for nothing, so a
+/// denied rename is retried briefly. Anything else fails at once.
+fn replace(from: &Path, to: &Path) -> std::io::Result<()> {
+    const ATTEMPTS: u32 = if cfg!(windows) { 8 } else { 1 };
+    let mut attempt = 1;
+    loop {
+        match fs::rename(from, to) {
+            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied && attempt < ATTEMPTS => {
+                std::thread::sleep(std::time::Duration::from_millis(25 << attempt.min(4)));
+                attempt += 1;
+            }
+            other => return other,
+        }
+    }
 }
 
 /// Write `bytes` to `path` atomically. `private` means mode 0600 on Unix.
@@ -89,8 +115,9 @@ pub fn write_atomic(path: &Path, bytes: &[u8], private: bool) -> crate::Result<(
     // already in would add risk rather than remove it.
     //
     // What the inheritance cannot survive is a profile directory whose ACL
-    // someone has loosened, which debloat scripts do. That is why `doctor`
-    // checks the result instead of this trusting it.
+    // someone has loosened, which debloat scripts do. Nothing here can see
+    // that without an ACL API, and `doctor` says so rather than implying it
+    // checked.
     #[cfg(not(unix))]
     let _ = private;
 
@@ -101,7 +128,7 @@ pub fn write_atomic(path: &Path, bytes: &[u8], private: bool) -> crate::Result<(
     file.sync_all().map_err(|e| io_err(&tmp, e))?;
     drop(file);
 
-    fs::rename(&tmp, path).map_err(|e| io_err(path, e))?;
+    replace(&tmp, path).map_err(|e| io_err(path, e))?;
     guard.disarm();
 
     // Make the rename itself durable.
@@ -131,6 +158,50 @@ pub fn mode_of(_path: &Path) -> Option<u32> {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    /// Two writes to one file in the same process must not pick the same
+    /// temp name: `create_new` would refuse the second, and the write fail.
+    #[test]
+    fn back_to_back_writes_never_share_a_temp_name() {
+        let target = Path::new("/x/.credentials.json");
+        let names: std::collections::HashSet<String> =
+            (0..1000).map(|_| temp_name(target)).collect();
+        assert_eq!(names.len(), 1000);
+    }
+
+    /// An antivirus scan holds a fresh file open without sharing deletion,
+    /// and lets go shortly. The write must wait for it, not fail.
+    #[cfg(windows)]
+    #[test]
+    fn a_target_held_open_for_a_moment_is_still_replaced() {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        let dir = tempdir().unwrap();
+        let target = dir.path().join("creds.json");
+        fs::write(&target, b"old").unwrap();
+        let held = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0x1) // FILE_SHARE_READ only: no delete, no rename
+            .open(&target)
+            .unwrap();
+        let release = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(150));
+            drop(held);
+        });
+
+        write_atomic(&target, b"new", true).unwrap();
+        release.join().unwrap();
+        assert_eq!(fs::read(&target).unwrap(), b"new");
+    }
+
+    #[test]
+    fn a_missing_source_is_not_retried_into_a_stall() {
+        let dir = tempdir().unwrap();
+        let started = std::time::Instant::now();
+        let err = replace(&dir.path().join("absent"), &dir.path().join("to")).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+        assert!(started.elapsed() < std::time::Duration::from_millis(20));
+    }
 
     #[test]
     fn writes_and_replaces_content() {

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **A write no longer fails because a file was briefly held open on
+  Windows.** An antivirus scan of a freshly written credential file blocks the
+  rename that replaces it; the save or switch failed outright. The rename is
+  now retried for up to about two seconds when access is denied.
 - **A stale session file no longer blocks switching once its PID is reused.**
   A running Claude Code is now recognised by what the process is -- `claude`,
   a versioned native binary, or `node`/`bun` -- rather than by the PID alone,
