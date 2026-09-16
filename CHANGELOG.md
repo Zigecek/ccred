@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.2.33
+
+**A damaged profile is no longer a wall around the profile you are leaving.**
+A fuzz run over ccred's own files kept finding the same shape: one file
+inside a profile turned unreadable, and `switch` to a *different* profile
+then ended with "I/O error".
+
+- Mirroring the outgoing credentials skips on any failure except a lock,
+  with the reason shown and the live credentials copied aside first -- the
+  machinery that already existed for a mirror refused on identity grounds.
+  A lock still means exit 6, because that is the one failure worth waiting
+  out.
+- Account details that cannot be read are treated as ones that are not
+  there. That blob is a cached copy of something Claude Code refetches; the
+  credentials, which it cannot, have already moved by the time it is written.
+
+What remains, and is correct, is a refusal to switch *to* a profile whose
+own credentials cannot be read.
+
 ## 0.2.32
 
 - **`refresh --dry-run` meets the rate limit the real run meets.** A preview
