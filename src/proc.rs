@@ -19,6 +19,24 @@ use std::path::Path;
 /// Session files live here, relative to the config directory.
 const SESSIONS_DIR: &str = "sessions";
 
+// The supervisor in `daemon.status.json` is deliberately NOT counted.
+//
+// Claude Code 2.1.x keeps a daemon: `daemon.status.json` names its
+// supervisor PID, and `daemon-auth-status.json` shows it doing something with
+// authentication -- on the machine this was written on it sat at
+// `"status": "auth_required"` with no workers, for hours. It writes no
+// session file, so nothing here sees it.
+//
+// Counting it was considered and rejected: the daemon appears to be
+// permanently resident, so a switch would need `--force` every time, on every
+// machine, which teaches people to pass `--force` and costs the guard its
+// meaning. The guard is about a session holding an account *in memory* and
+// writing its next rotated token into what is by then another profile's file;
+// whether the daemon does that is not known, and blocking on a guess is worse
+// than the documented gap. If a daemon ever turns out to refresh credentials
+// on its own, this is the place to add it -- and the switch report already
+// tells people to restart Claude Code afterwards.
+
 /// PIDs of Claude Code processes that look alive for this config directory.
 pub fn running_claude_pids(claude_config_dir: &Path) -> Vec<u32> {
     let dir = claude_config_dir.join(SESSIONS_DIR);
@@ -26,15 +44,16 @@ pub fn running_claude_pids(claude_config_dir: &Path) -> Vec<u32> {
         return Vec::new();
     };
 
-    let candidates: Vec<u32> = entries
+    let mut candidates: Vec<u32> = entries
         .flatten()
         .filter_map(|e| {
             let name = e.file_name();
             let name = name.to_string_lossy();
-            let stem = name.strip_suffix(".json")?;
-            stem.parse::<u32>().ok()
+            pid_in_session_name(&name)
         })
         .collect();
+    candidates.sort_unstable();
+    candidates.dedup();
 
     if candidates.is_empty() {
         return Vec::new();
@@ -52,6 +71,21 @@ pub fn running_claude_pids(claude_config_dir: &Path) -> Vec<u32> {
         .collect();
     out.sort_unstable();
     out
+}
+
+/// The PID a session file is named for, if it is one.
+///
+/// Measured against 2.1.x, a live session leaves two files: `<pid>.json` and
+/// `<pid>.<64 hex>.key`. Only the first was read, so a session that had
+/// written its key and not yet its json was invisible to the guard that
+/// refuses to switch under a live session -- the one situation where
+/// switching corrupts a profile. Both are counted now; a number belonging to
+/// nothing is thrown out by the liveness check either way.
+fn pid_in_session_name(name: &str) -> Option<u32> {
+    if !(name.ends_with(".json") || name.ends_with(".key")) {
+        return None;
+    }
+    name.split('.').next()?.parse::<u32>().ok()
 }
 
 /// What is known about one PID.
@@ -216,6 +250,22 @@ fn unix_ps_pids(candidates: &[u32]) -> std::collections::HashMap<u32, String> {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    /// Both names a live session writes, and nothing else.
+    #[test]
+    fn a_session_is_recognised_by_either_file_it_writes() {
+        assert_eq!(pid_in_session_name("13512.json"), Some(13512));
+        assert_eq!(
+            pid_in_session_name(
+                "13512.3c4ebf68dab1c2747b77a6616bb46165723ee8a9fcc422336fc2bf8ca4c459ea.key"
+            ),
+            Some(13512)
+        );
+        assert_eq!(pid_in_session_name("abc.json"), None);
+        assert_eq!(pid_in_session_name("13512.txt"), None);
+        assert_eq!(pid_in_session_name("13512"), None);
+        assert_eq!(pid_in_session_name(".json"), None);
+    }
 
     fn session(dir: &Path, pid: u32) {
         let s = dir.join(SESSIONS_DIR);
