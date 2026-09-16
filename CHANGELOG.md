@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.2.15
+
+### `ccred uninstall`
+
+Removes the refresh schedule, the installer's receipt and the binary, and with
+`--purge` every stored profile, backup and log. The Claude Code login in
+`~/.claude` is never touched.
+
+- **`--purge` asks first**, and refuses without a terminal unless `--yes` was
+  given. What counts as credentials is judged from the disk, not from the
+  profile listing: running it found that a profile too damaged to list, or a
+  backup on its own, would have been deleted without the question.
+- **`--purge` refuses outright**, before removing anything, when the data
+  directory holds files `ccred` did not create, or is or contains the home
+  directory or Claude Code's. `CCRED_HOME` can point anywhere.
+- **A package manager's binary is left to the package manager**, with the
+  command that removes it: Scoop, apt, pacman, npm, Homebrew and `cargo
+  install`. Deleting a tracked file corrupts the manager's record.
+- **Another copy is not uninstalled by accident.** The installer receipt only
+  counts when it describes the running binary, and a schedule that starts a
+  different, existing copy is left alone -- so trying out a build cannot switch
+  off the installed one's refreshes.
+- On Windows, where a running executable cannot be deleted, a detached process
+  removes it a moment after `ccred` exits.
+- `--dry-run` shows the whole plan and removes nothing.
+
+### The schedule knows which binary it starts
+
+- **`doctor` reports a schedule whose binary has gone** as an error. A package
+  upgrade that moves the binary leaves a job the scheduler still calls healthy,
+  with a next run, that fails the instant it starts. Nothing reported it.
+- `schedule status` shows the registered binary, and marks it when it is
+  missing. The command is read back from the task XML, the systemd unit or the
+  launchd plist, and each reader is tested against its own renderer.
+
 ## 0.2.14
 
 **An independent review of everything since 0.2.0 found credential-loss paths,
