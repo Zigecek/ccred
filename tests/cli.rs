@@ -1390,6 +1390,46 @@ impl Probe {
     }
 }
 
+/// A storm of the four commands that write, in every order the modes allow,
+/// against a `claude` that behaves differently each round -- including the
+/// mode that wipes a profile, which a real run once did.
+///
+/// One property, the one the tool exists for: **no profile ends the storm
+/// without usable credentials.** Written after a fuzz run outside the suite
+/// found no way to break it; kept so that the next change has to face it too.
+#[test]
+fn no_sequence_of_writes_leaves_a_profile_empty() {
+    for mode in ["", "clear", "signed_out", "inert"] {
+        let (sb, _work) = sandbox_with_a_due_profile();
+        let probe = Probe::new();
+
+        for round in 0..3 {
+            probe.refresh(&sb, mode, if round == 1 { &["--force"] } else { &[] });
+            sb.run(&["switch", if round % 2 == 0 { "work" } else { "personal" }]);
+            sb.run(&["save", if round % 2 == 0 { "work" } else { "personal" }]);
+        }
+
+        for name in ["work", "personal"] {
+            let raw = std::fs::read_to_string(
+                sb.path()
+                    .join(".ccred/profiles")
+                    .join(name)
+                    .join(".credentials.json"),
+            )
+            .unwrap_or_else(|e| panic!("[{mode}] {name} has no credential file: {e}"));
+            let parsed: serde_json::Value = serde_json::from_str(&raw)
+                .unwrap_or_else(|e| panic!("[{mode}] {name} will not parse: {e}"));
+            let token = parsed["claudeAiOauth"]["refreshToken"]
+                .as_str()
+                .unwrap_or_default();
+            assert!(
+                token.len() >= 40,
+                "[{mode}] {name} kept no usable refresh token"
+            );
+        }
+    }
+}
+
 /// Two profiles, `personal` active and `work` idle, with `work` inside the
 /// ten-day window and its access token expired: the state a refresh is for.
 fn sandbox_with_a_due_profile() -> (Sandbox, std::path::PathBuf) {
