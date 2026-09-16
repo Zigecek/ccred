@@ -226,10 +226,14 @@ pub struct TokenState {
 fn rate_limited(ctx: &Ctx, opts: &RefreshOptions, now: i64) -> bool {
     !opts.force
         && opts.if_older_than_ms.is_some_and(|window| {
-            read_last_run(ctx)
-                .ok()
-                .flatten()
-                .is_some_and(|last| now - last.finished_at_ms < window && !last.needed_attention)
+            read_last_run(ctx).ok().flatten().is_some_and(|last| {
+                // A run recorded in the future is a clock that was wrong, and
+                // obeying it would silence the schedule until that moment
+                // arrives. See `decide` for the same reasoning.
+                last.finished_at_ms <= now + CLOCK_SKEW_MS
+                    && now - last.finished_at_ms < window
+                    && !last.needed_attention
+            })
         })
 }
 
@@ -340,10 +344,23 @@ pub fn decide(
         // Nothing to exchange, so there is no work to displace.
         return Decision::ExpiringSoon;
     }
-    let backed_off = state.next_attempt_after_ms.is_some_and(|after| now < after)
-        || state
-            .last_attempt_ms
-            .is_some_and(|last| now - last < policy.min_interval_ms);
+    // Timestamps from the future are discarded rather than obeyed.
+    //
+    // Both of these were written by an earlier run, and a machine whose clock
+    // was wrong then -- a dead CMOS battery, a restored VM, a dual boot --
+    // writes a moment that has not arrived yet. Obeyed literally, that parks
+    // the profile in "backing off" until the date passes, which is silent and
+    // can be years. The furthest either can legitimately be ahead of now is
+    // one backoff, so anything beyond that is a clock, not a decision.
+    let plausible = now + MAX_BACKOFF_MS + CLOCK_SKEW_MS;
+    let next_after = state
+        .next_attempt_after_ms
+        .filter(|&after| after <= plausible);
+    let last_attempt = state
+        .last_attempt_ms
+        .filter(|&last| last <= now + CLOCK_SKEW_MS);
+    let backed_off = next_after.is_some_and(|after| now < after)
+        || last_attempt.is_some_and(|last| now - last < policy.min_interval_ms);
 
     let decision = if backed_off {
         Decision::SkipBackoff
@@ -422,6 +439,15 @@ fn renewed(before: Option<i64>, after: Option<i64>) -> bool {
 /// that failed every time was retried as often as a healthy one. The cap
 /// keeps a persistent failure from going quiet for good: with a twice-weekly
 /// schedule it is still tried about once a week.
+/// The longest `backoff_ms` can return, so the longest a `next_attempt_after`
+/// written by this program can sit ahead of the run that wrote it.
+const MAX_BACKOFF_MS: i64 = 4 * DAY_MS;
+
+/// Slack for clocks that disagree slightly -- NTP stepping mid-run, a file
+/// system timestamp rounded up. Small enough that a wrong year is still
+/// caught, large enough that ordinary skew is not called a wrong year.
+const CLOCK_SKEW_MS: i64 = 5 * 60 * 1000;
+
 fn backoff_ms(consecutive_failures: u32) -> i64 {
     DAY_MS << consecutive_failures.saturating_sub(1).min(2)
 }
@@ -1361,6 +1387,54 @@ mod tests {
         let dir = tempfile::TempDir::new().unwrap();
         let store = FileStore::new(dir.path().to_path_buf());
         assert_eq!(restore_if_cleared(&store, None, false, NOW), None);
+    }
+
+    /// A clock that was wrong when a run recorded its timestamps must not
+    /// park the profile for as long as the mistake lasts. Both of these come
+    /// off disk, and a dead CMOS battery or a restored VM writes moments that
+    /// have not arrived; obeyed literally, that is silent and can be years.
+    #[test]
+    fn a_timestamp_from_the_future_is_a_wrong_clock_not_a_backoff() {
+        let due = TokenState {
+            window_left_ms: Some(6 * DAY_MS),
+            refresh_expired: false,
+            access_expired: true,
+            usable: true,
+        };
+        let year = 365 * DAY_MS;
+
+        let stamped_next_year = RefreshState {
+            next_attempt_after_ms: Some(NOW + year),
+            last_attempt_ms: Some(NOW + year),
+            consecutive_failures: 1,
+            ..Default::default()
+        };
+        assert_eq!(
+            decide(false, due, &stamped_next_year, NOW, &policy()),
+            Decision::Refresh,
+            "a wrong clock must not outrank the work"
+        );
+
+        // A real backoff, which is at most one of those, is still obeyed.
+        let genuinely_backed_off = RefreshState {
+            next_attempt_after_ms: Some(NOW + DAY_MS),
+            ..Default::default()
+        };
+        assert_eq!(
+            decide(false, due, &genuinely_backed_off, NOW, &policy()),
+            Decision::SkipBackoff
+        );
+
+        // And so is one a minute of clock skew away from now.
+        let skewed = RefreshState {
+            last_attempt_ms: Some(NOW + 60_000),
+            ..Default::default()
+        };
+        assert_eq!(
+            decide(false, due, &skewed, NOW, &policy()),
+            Decision::SkipBackoff,
+            "ordinary skew is not a wrong year"
+        );
     }
 
     /// `--force` exists for the person who has just fixed whatever was broken

@@ -575,6 +575,17 @@ fn last_run_finding(
         ));
     };
 
+    // A run cannot have finished after now. When the record says otherwise,
+    // this machine's clock was wrong at some point, and every interval
+    // computed from it -- the schedule's own rate limit included -- is
+    // guesswork until it is fixed.
+    if last.finished_at_ms > now + 5 * 60 * 1000 {
+        return Some(Finding::warn(
+            "the last refresh is recorded in the future",
+            "this machine's clock was wrong when it ran; `ccred refresh --force` ignores the timing gates until the record catches up",
+        ));
+    }
+
     // The gap between scheduled runs is at most four days, so a week without
     // one means they are not happening.
     const STALE_DAYS: i64 = 7;
@@ -862,6 +873,13 @@ mod tests {
         let f = last_run_finding(Some(ran(0, false)), true, 2, now).unwrap();
         assert_eq!(f.severity, Severity::Ok, "{f:?}");
         assert!(f.title.contains("today"), "{f:?}");
+
+        // A run that finished after now is a clock, not a schedule. Left
+        // unsaid, every interval computed from it is quietly wrong -- the
+        // rate limit that decides whether the next run happens included.
+        let f = last_run_finding(Some(ran(-400, false)), true, 2, now).unwrap();
+        assert_eq!(f.severity, Severity::Warn, "{f:?}");
+        assert!(f.title.contains("in the future"), "{f:?}");
     }
 
     /// Every scheduled run spawns `claude`, and the reason it cannot be found
