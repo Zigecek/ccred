@@ -223,6 +223,7 @@ fn no_command_ever_prints_a_token() {
         &["restore", "work"],
         &["restore", "nope"], // fails: not found
         &["refresh"],         // leaves a run log and a last-run record
+        &["refresh", "--dry-run"],
         &["log"],
         &["log", "--json"],
         &["uninstall", "--dry-run"],
@@ -2337,6 +2338,7 @@ fn every_documented_command_speaks_json() {
         &["refresh"],
         &["log"],
         &["rm", "personal"],
+        &["refresh", "--dry-run"],
         &["schedule", "status"],
         &["schedule", "install", "--dry-run"],
         &["uninstall", "--dry-run"],

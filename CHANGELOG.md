@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.2.31
+
+- **`ccred refresh --dry-run`.** `schedule install` and `uninstall` both had
+  one; the command that spawns Claude Code against every stored profile did
+  not, so "why did the schedule leave that profile alone" could only be
+  answered by running it and spending an exchange to find out. The preview
+  runs the decision phase and stops: no lock, no spawn, nothing written, not
+  even a log entry. It says "would refresh" rather than "refreshed", because
+  a preview reporting things in the past tense is worse than none.
+- The npm packages carry `LICENSE-MIT` and `LICENSE-APACHE`, and the wrapper
+  the README too. A `license` field names the terms; it does not hand anyone
+  the text, and for someone installing from npm those packages are the only
+  copy of ccred they see. The channel is now verified end to end as well --
+  generated from the real artifacts, packed, installed from the tarballs and
+  run -- which it had never been.
+- A profile written by an older ccred is pinned as a test rather than a
+  belief: checked against a real 0.2.24 binary in both directions, then
+  written down as a fixture with only the keys that have always existed,
+  plus one from no version at all, which must survive a switch untouched.
+
 ## 0.2.30
 
 Both found by pointing ccred at the real files on a live machine rather than
