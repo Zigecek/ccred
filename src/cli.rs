@@ -109,6 +109,20 @@ pub enum Command {
         force: bool,
     },
 
+    /// Give a saved profile another name.
+    ///
+    /// Moves the profile and the copies that belong to it, and takes the
+    /// active pointer with it when it was the active one. No credential is
+    /// written: `rm` and `save` again only works for the account that
+    /// happens to be logged in.
+    #[command(display_order = 6)]
+    Rename {
+        /// The profile to move.
+        from: String,
+        /// The name to move it to.
+        to: String,
+    },
+
     /// Delete a saved profile.
     ///
     /// A copy of its credentials is kept in the backups directory first: a

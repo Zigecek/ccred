@@ -134,6 +134,7 @@ ccred current             who is logged in, and which profile is active
 ccred list                saved profiles and how much refresh window each has
 ccred save <name>         store the account that is logged in, under a name
 ccred switch <name>       make a saved profile the active account
+ccred rename <old> <new>  give a profile another name
 ccred rm <name>           delete a profile (--purge deletes its copies too)
 ccred restore <name>      put a profile's last-known-good credentials back
 ccred refresh             keep stored profiles from expiring (--dry-run to just look)

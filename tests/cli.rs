@@ -231,7 +231,8 @@ fn no_command_ever_prints_a_token() {
         // Never a real `uninstall` here: the platform scheduler is not
         // sandboxed, so a regression in the consent check would remove the
         // job of whoever runs the suite. The refusal is unit-tested instead.
-        &["rm", "personal"],
+        &["rename", "personal", "personal2"],
+        &["rm", "personal2"],
         &["stray-argument"], // fails: unknown command
     ];
 
@@ -1004,6 +1005,56 @@ fn list_shows_a_profile_whose_metadata_will_not_parse() {
     assert!(
         out.contains("2 profiles, 1 needs attention"),
         "the summary spacing: {out}"
+    );
+}
+
+/// Renaming was impossible: `rm` and `save` again only works for the account
+/// that happens to be logged in, so a profile named in haste was named that
+/// for good -- short of moving directories by hand.
+#[test]
+fn a_profile_can_be_given_another_name() {
+    let sb = Sandbox::new();
+    sb.run(&["save", "work"]); // alice
+    sb.login_b();
+    sb.run(&["save", "personal"]); // bob, active
+
+    // An inactive one, whose account is not the live one: the case that
+    // `rm` and `save` cannot do at all.
+    let before = std::fs::read(sb.path().join(".ccred/profiles/work/.credentials.json")).unwrap();
+    let (out, err, code) = sb.run(&["rename", "work", "job"]);
+    assert_eq!(code, 0, "{err}{out}");
+    assert!(!sb.path().join(".ccred/profiles/work").exists(), "{out}");
+    assert_eq!(
+        std::fs::read(sb.path().join(".ccred/profiles/job/.credentials.json")).unwrap(),
+        before,
+        "the credentials moved untouched"
+    );
+
+    // The active one: the pointer has to follow.
+    let (out, err, code) = sb.run(&["rename", "personal", "main"]);
+    assert_eq!(code, 0, "{err}{out}");
+    assert!(out.contains("still is"), "{out}");
+    assert_eq!(
+        std::fs::read_to_string(sb.path().join(".ccred/state/current"))
+            .unwrap()
+            .trim(),
+        "main"
+    );
+    let (out, _, _) = sb.run(&["current"]);
+    assert!(out.contains("main"), "{out}");
+
+    // Onto a name already in use, and from a name that is not there.
+    let (_, err, code) = sb.run(&["rename", "job", "main"]);
+    assert_eq!(code, 7, "{err}");
+    assert!(err.contains("already exists"), "{err}");
+    let (_, err, code) = sb.run(&["rename", "ghost", "whatever"]);
+    assert_eq!(code, 3, "{err}");
+
+    // The copies a later `rm` would look for move with the profile.
+    sb.run(&["rm", "job"]);
+    assert!(
+        sb.path().join(".ccred/backups/job").is_dir(),
+        "the copy is under the new name"
     );
 }
 

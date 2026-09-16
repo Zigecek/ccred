@@ -78,6 +78,18 @@ fn run(cli: &Cli, theme: &Theme) -> ccred::Result<ExitCode> {
             Ok(ExitCode::Ok)
         }
 
+        Some(Command::Rename { from, to }) => {
+            let from = validate_profile_name(from)?;
+            let to = validate_profile_name(to)?;
+            let report = simple::rename(&ctx, &from, &to)?;
+            if cli.json {
+                print_json(&report);
+            } else {
+                render::renamed(theme, &report);
+            }
+            Ok(ExitCode::Ok)
+        }
+
         Some(Command::Rm { name, purge }) => {
             let name = validate_profile_name(name)?;
             let report = simple::remove(&ctx, &name, *purge)?;

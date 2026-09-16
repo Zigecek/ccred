@@ -479,6 +479,106 @@ pub struct RestoreReport {
     pub from: String,
 }
 
+/// What a rename moved.
+#[derive(Debug, Clone, Serialize)]
+pub struct RenameReport {
+    pub from: String,
+    pub to: String,
+    /// Whether the pointer had to follow it.
+    pub was_active: bool,
+    /// Anything that did not stop the rename, such as copies that could not
+    /// be moved with it.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
+}
+
+/// Move a profile to another name.
+///
+/// There was no way to do this: `rm` and `save` again only works for the
+/// account that happens to be logged in, so a profile named in haste could
+/// not be renamed at all without moving directories by hand.
+///
+/// Nothing here writes a credential. The directory move is one rename, and
+/// the pointer follows it -- in that order, because a crash between them
+/// leaves a pointer naming something that is not there, which `list`,
+/// `current` and `doctor` all report and the next `switch` repairs. The
+/// other order would leave the profile unreachable instead.
+pub fn rename(ctx: &Ctx, from: &ProfileName, to: &ProfileName) -> crate::Result<RenameReport> {
+    let _profiles = ctx.lock_profiles(SAVE_LOCK_TIMEOUT)?;
+    let from = &ctx.repo().canonical_name(from);
+    if !ctx.repo().exists(from)? {
+        return Err(CcredError::ProfileNotFound(from.as_str().to_string()));
+    }
+    // A case-only change is a rename of the same profile, which is the one
+    // way to fix a spelling on a file system that does not distinguish them.
+    let target_exists = ctx.repo().exists(to)? && &ctx.repo().canonical_name(to) != from;
+    if target_exists {
+        return Err(CcredError::UnsafeWrite(format!(
+            "a profile called '{to}' already exists; remove it first, or pick another name"
+        )));
+    }
+    // An interrupted switch names the old profile in its journal. Renaming
+    // under it would leave the recovery looking for something that is gone.
+    if !matches!(
+        crate::journal::SwitchJournal::load(&ctx.paths().switch_journal()),
+        Ok(None)
+    ) {
+        return Err(CcredError::UnsafeWrite(
+            "an interrupted switch is still pending; run `ccred switch <name>` first".into(),
+        ));
+    }
+
+    let mut warnings = Vec::new();
+    let old_dir = ctx.paths().profile_dir(from)?;
+    let new_dir = ctx.paths().profile_dir(to)?;
+    std::fs::rename(&old_dir, &new_dir).map_err(|source| CcredError::Io {
+        path: new_dir,
+        source,
+    })?;
+
+    let was_active = ctx.repo().active().unwrap_or(None).as_ref() == Some(from);
+    if was_active {
+        ctx.repo().set_active(to)?;
+    }
+
+    // Cosmetic, so a failure is a warning: the directory name is what every
+    // command reads, and this field is what a person reads.
+    if let Err(e) = ctx
+        .repo()
+        .update_meta(to, |m| m.name = to.as_str().to_string())
+    {
+        warnings.push(format!("the profile's own record still says '{from}': {e}"));
+    }
+
+    // The copies belong to the profile, so they move with it. Merging into
+    // an existing directory is not attempted: that would only arise from a
+    // half-finished rename, and silently mixing two accounts' copies is
+    // worse than saying so.
+    let old_copies = ctx.paths().backups_dir().join(from.as_str());
+    let new_copies = ctx.paths().backups_dir().join(to.as_str());
+    if old_copies.is_dir() && !new_copies.exists() {
+        if let Err(e) = std::fs::rename(&old_copies, &new_copies) {
+            warnings.push(format!(
+                "earlier copies stayed at {}: {e}",
+                old_copies.display()
+            ));
+        }
+    } else if old_copies.is_dir() {
+        warnings.push(format!(
+            "earlier copies stayed at {}, because {} already exists",
+            old_copies.display(),
+            new_copies.display()
+        ));
+    }
+
+    Ok(RenameReport {
+        from: from.as_str().to_string(),
+        to: to.as_str().to_string(),
+        was_active,
+        warnings,
+    })
+}
+
 pub fn restore(ctx: &Ctx, name: &ProfileName) -> crate::Result<RestoreReport> {
     let _profiles = ctx.lock_profiles(SAVE_LOCK_TIMEOUT)?;
     let name = &ctx.repo().canonical_name(name);

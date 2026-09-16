@@ -422,6 +422,28 @@ pub fn removed(theme: &Theme, r: &crate::ops::simple::RemoveReport) {
     println!();
 }
 
+pub fn renamed(theme: &Theme, r: &crate::ops::simple::RenameReport) {
+    let g = theme.glyphs;
+    println!();
+    println!(
+        "{PAD}{} {} {} {}",
+        paint(OK, g.ok),
+        paint(MUTED, &r.from),
+        paint(MUTED, g.arrow),
+        paint(NAME, &r.to)
+    );
+    if r.was_active {
+        println!(
+            "{PAD}  {}",
+            paint(MUTED, "it was the active profile, and still is")
+        );
+    }
+    for w in &r.warnings {
+        println!("{PAD}  {} {}", paint(WARN, g.warn), paint(WARN, w));
+    }
+    println!();
+}
+
 pub fn restored(theme: &Theme, name: &str) {
     let g = theme.glyphs;
     println!();
