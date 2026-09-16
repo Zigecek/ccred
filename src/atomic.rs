@@ -68,12 +68,21 @@ fn temp_name(target: &Path) -> String {
 /// Failing the write for that would fail a save or a switch for nothing, so a
 /// denied rename is retried briefly. Anything else fails at once.
 fn replace(from: &Path, to: &Path) -> std::io::Result<()> {
+    retry_denied(|| fs::rename(from, to), std::thread::sleep)
+}
+
+/// The retry itself, with the rename and the wait passed in so a test can
+/// count what happened instead of timing it.
+fn retry_denied(
+    mut attempt_once: impl FnMut() -> std::io::Result<()>,
+    mut wait: impl FnMut(std::time::Duration),
+) -> std::io::Result<()> {
     const ATTEMPTS: u32 = if cfg!(windows) { 8 } else { 1 };
     let mut attempt = 1;
     loop {
-        match fs::rename(from, to) {
+        match attempt_once() {
             Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied && attempt < ATTEMPTS => {
-                std::thread::sleep(std::time::Duration::from_millis(25 << attempt.min(4)));
+                wait(std::time::Duration::from_millis(25 << attempt.min(4)));
                 attempt += 1;
             }
             other => return other,
@@ -195,12 +204,44 @@ mod tests {
     }
 
     #[test]
-    fn a_missing_source_is_not_retried_into_a_stall() {
-        let dir = tempdir().unwrap();
-        let started = std::time::Instant::now();
-        let err = replace(&dir.path().join("absent"), &dir.path().join("to")).unwrap_err();
-        assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
-        assert!(started.elapsed() < std::time::Duration::from_millis(20));
+    fn only_a_denied_rename_is_retried() {
+        use std::io::{Error, ErrorKind};
+
+        let mut waits = 0;
+        let err =
+            retry_denied(|| Err(Error::from(ErrorKind::NotFound)), |_| waits += 1).unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::NotFound);
+        assert_eq!(waits, 0, "a missing file is not worth waiting for");
+
+        let mut calls = 0;
+        let mut waits = 0;
+        let result = retry_denied(
+            || {
+                calls += 1;
+                if calls <= 2 {
+                    Err(Error::from(ErrorKind::PermissionDenied))
+                } else {
+                    Ok(())
+                }
+            },
+            |_| waits += 1,
+        );
+        if cfg!(windows) {
+            assert!(result.is_ok());
+            assert_eq!(waits, 2);
+        } else {
+            // A denied rename elsewhere is a real permission problem.
+            assert!(result.is_err());
+            assert_eq!(waits, 0);
+        }
+
+        let mut waits = 0;
+        let result = retry_denied(
+            || Err(Error::from(ErrorKind::PermissionDenied)),
+            |_| waits += 1,
+        );
+        assert!(result.is_err(), "a lock that never lets go still fails");
+        assert!(waits < 10, "{waits} waits");
     }
 
     #[test]

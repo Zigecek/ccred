@@ -227,7 +227,9 @@ fn no_command_ever_prints_a_token() {
         &["log", "--json"],
         &["uninstall", "--dry-run"],
         &["uninstall", "--purge", "--dry-run", "--json"],
-        &["uninstall", "--purge"], // fails: nobody to confirm it
+        // Never a real `uninstall` here: the platform scheduler is not
+        // sandboxed, so a regression in the consent check would remove the
+        // job of whoever runs the suite. The refusal is unit-tested instead.
         &["rm", "personal"],
         &["stray-argument"], // fails: unknown command
     ];
@@ -1769,4 +1771,15 @@ fn the_target_of_a_killed_switch_is_not_refreshed_as_if_idle() {
         probe.calls(),
         String::from_utf8_lossy(&out.stdout)
     );
+}
+
+/// `switch` meets an unreadable journal the same way `save` does: it stops,
+/// and copies nothing into the profile it was leaving.
+#[test]
+fn a_switch_that_meets_an_unreadable_journal_stops() {
+    let (sb, work, before) = sandbox_after_a_killed_switch(b"{ unreadable");
+    let (out, err, code) = sb.run(&["switch", "personal"]);
+    assert_eq!(code, 7, "{out}{err}");
+    assert!(err.contains("ccred current"), "{err}");
+    assert_eq!(std::fs::read(&work).unwrap(), before);
 }
