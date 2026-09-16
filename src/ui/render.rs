@@ -12,7 +12,7 @@ use super::{
 };
 use crate::ops::doctor::{Finding, Severity};
 use crate::ops::refresh::{Decision, RefreshReport};
-use crate::ops::simple::{CurrentReport, ProfileRow, SaveReport, ScheduleSetup};
+use crate::ops::simple::{CurrentReport, PointerNote, ProfileRow, SaveReport, ScheduleSetup};
 use crate::ops::switch::{OutgoingSync, SwitchReport};
 use crate::schedule::{Backend, Health, RenderedFile, State, Warning};
 
@@ -198,7 +198,7 @@ fn token_meter(theme: &Theme, ms_left: i64, nominal_ms: i64) -> String {
 
 // --- list -----------------------------------------------------------------
 
-pub fn list(theme: &Theme, rows: &[ProfileRow], dangling: Option<&str>) {
+pub fn list(theme: &Theme, rows: &[ProfileRow], pointer: Option<&PointerNote>) {
     let g = theme.glyphs;
     if rows.is_empty() {
         println!();
@@ -208,7 +208,7 @@ pub fn list(theme: &Theme, rows: &[ProfileRow], dangling: Option<&str>) {
             "no profiles yet",
             &["run `ccred save <name>` while logged in to create the first one"],
         );
-        dangling_note(theme, dangling);
+        pointer_note(theme, pointer);
         println!();
         return;
     }
@@ -305,22 +305,30 @@ pub fn list(theme: &Theme, rows: &[ProfileRow], dangling: Option<&str>) {
         )
     };
     println!("{PAD}{summary}");
-    dangling_note(theme, dangling);
+    pointer_note(theme, pointer);
     println!();
 }
 
-/// A pointer naming a profile that is not there. The table alone shows it
-/// only as an absent marker, which reads as "none active" rather than "the
-/// one you were using is gone".
-fn dangling_note(theme: &Theme, dangling: Option<&str>) {
-    let Some(name) = dangling else { return };
+/// A pointer that names nothing, or that cannot be read. The table alone
+/// shows either as an absent marker, which reads as "none active" rather than
+/// "the one you were using is gone".
+fn pointer_note(theme: &Theme, note: Option<&PointerNote>) {
+    let Some(note) = note else { return };
     println!();
-    callout(
-        ERR,
-        theme.glyphs.err,
-        &format!("the active profile '{name}' does not exist"),
-        &["`ccred switch <name>` to point at one that does"],
-    );
+    match note {
+        PointerNote::Missing { name } => callout(
+            ERR,
+            theme.glyphs.err,
+            &format!("the active profile '{name}' does not exist"),
+            &["`ccred switch <name>` to point at one that does"],
+        ),
+        PointerNote::Damaged { why } => callout(
+            ERR,
+            theme.glyphs.err,
+            "the active-profile pointer cannot be read",
+            &[why, "`ccred switch <name>` writes a new one"],
+        ),
+    }
 }
 
 // --- save, switch, rm -----------------------------------------------------

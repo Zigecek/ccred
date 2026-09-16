@@ -51,7 +51,7 @@ fn run(cli: &Cli, theme: &Theme) -> ccred::Result<ExitCode> {
                 // --json` already reports a pointer that matches nothing.
                 print_json(&rows);
             } else {
-                render::list(theme, &rows, simple::dangling_pointer(&ctx).as_deref());
+                render::list(theme, &rows, simple::pointer_note(&ctx).as_ref());
             }
             Ok(ExitCode::Ok)
         }

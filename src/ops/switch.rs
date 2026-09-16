@@ -91,7 +91,16 @@ pub fn switch(ctx: &Ctx, target: &ProfileName, force: bool) -> crate::Result<Swi
         )));
     }
 
-    let from = ctx.repo().active()?;
+    // A pointer too damaged to read is not a reason to refuse: this command
+    // writes a new one at the end, so it is also the repair. What it costs is
+    // knowing which profile to mirror into, and the backup below covers that.
+    let from = match ctx.repo().active() {
+        Ok(a) => a,
+        Err(e) => {
+            warnings.push(format!("{e}; this switch writes a new one"));
+            None
+        }
+    };
     let journal_path = ctx.paths().switch_journal();
     let mut journal = SwitchJournal::new(
         from.as_ref().map(|n| n.as_str().to_string()),
@@ -112,6 +121,16 @@ pub fn switch(ctx: &Ctx, target: &ProfileName, force: bool) -> crate::Result<Swi
             .repo()
             .backup_orphaned_live(&live, &ctx.live_account().identity)?
             .map(|p| p.display().to_string());
+    } else if matches!(outgoing, OutgoingSync::NothingActive) {
+        // Nothing was mirrored, because nothing claimed to be active. If no
+        // profile holds these tokens either, this is the last moment they
+        // exist -- the same loss the branch above exists to prevent, reached
+        // by a pointer that was missing rather than wrong.
+        if let Some(path) = backup_unclaimed_live(ctx, &live)? {
+            warnings.push(format!(
+                "the credentials that were live are not in any profile; copied to {path}"
+            ));
+        }
     }
     journal.advance(&journal_path, SwitchPhase::OutgoingSynced)?;
 
@@ -195,6 +214,30 @@ fn sync_outgoing(ctx: &Ctx, from: Option<&ProfileName>) -> crate::Result<Outgoin
         }),
         Err(other) => Err(other),
     }
+}
+
+/// Copy the live credentials aside when no profile holds them.
+///
+/// Checked by refresh token rather than by name: that is what says whose
+/// credentials these are, and the pointer is exactly what is not trusted here.
+fn backup_unclaimed_live(
+    ctx: &Ctx,
+    live: &dyn crate::store::CredentialStore,
+) -> crate::Result<Option<String>> {
+    let Ok(Some(loaded)) = live.load() else {
+        return Ok(None); // logged out, or unreadable: nothing to keep
+    };
+    if !ctx
+        .repo()
+        .holders_of(&loaded.creds.oauth.refresh_token)
+        .is_empty()
+    {
+        return Ok(None); // already stored under some profile
+    }
+    Ok(ctx
+        .repo()
+        .backup_orphaned_live(live, &ctx.live_account().identity)?
+        .map(|p| p.display().to_string()))
 }
 
 /// Put the target profile's `oauthAccount` blob back into `.claude.json`.

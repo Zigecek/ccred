@@ -79,7 +79,9 @@ pub fn current(ctx: &Ctx) -> crate::Result<CurrentReport> {
     let now = now_ms();
     let live = ctx.live_store();
     let account = ctx.live_account();
-    let active = ctx.repo().active()?;
+    // As in `list`: reported, not fatal.
+    let pointer_damage = ctx.repo().active().err().map(|e| e.to_string());
+    let active = ctx.repo().active().unwrap_or(None);
 
     let (loaded, live_error) = match crate::store::load_unlocked(&live) {
         Ok(l) => (l, None),
@@ -105,11 +107,13 @@ pub fn current(ctx: &Ctx) -> crate::Result<CurrentReport> {
     let access_days_left = access_ms_left.map(|ms| ms.div_euclid(86_400_000));
     let refresh_days_left = refresh_ms_left.map(|ms| ms.div_euclid(86_400_000));
 
-    // Does the pointer agree with who is actually logged in?
-    let mut pointer_mismatch = None;
+    // Does the pointer agree with who is actually logged in? A pointer that
+    // cannot be read at all is the loudest form of disagreement.
+    let mut pointer_mismatch = pointer_damage;
     // Unreadable metadata must not end the command: `current` is what someone
     // runs to find out that something is wrong.
-    if let Some(name) = &active
+    if pointer_mismatch.is_none()
+        && let Some(name) = &active
         && let Ok(Some(meta)) = ctx.repo().meta(name)
         && account.is_known()
         && meta.account != Default::default()
@@ -176,20 +180,40 @@ pub fn tokens_belong_elsewhere(
     ))
 }
 
-/// The active profile's name, when the pointer names one that is not there.
+/// Something wrong with the pointer that names the active profile.
 ///
-/// `current` and `doctor` both report this; `list` used to show a table with
-/// no active row and call it "all healthy", which is the one place someone
-/// checks after a profile goes missing.
-pub fn dangling_pointer(ctx: &Ctx) -> Option<String> {
-    let active = ctx.repo().active().ok().flatten()?;
-    let known = ctx.repo().list().unwrap_or_default();
-    (!known.contains(&active)).then(|| active.as_str().to_string())
+/// `doctor` has always reported both of these. `list` showed a table with no
+/// active row and called it "all healthy", and a damaged pointer ended the
+/// command outright -- in the one place someone looks after a profile goes
+/// missing.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case", tag = "problem")]
+pub enum PointerNote {
+    /// It names a profile that is not there.
+    Missing { name: String },
+    /// It cannot be read at all.
+    Damaged { why: String },
+}
+
+pub fn pointer_note(ctx: &Ctx) -> Option<PointerNote> {
+    match ctx.repo().active() {
+        Err(e) => Some(PointerNote::Damaged { why: e.to_string() }),
+        Ok(None) => None,
+        Ok(Some(active)) => {
+            let known = ctx.repo().list().unwrap_or_default();
+            (!known.contains(&active)).then(|| PointerNote::Missing {
+                name: active.as_str().to_string(),
+            })
+        }
+    }
 }
 
 pub fn list(ctx: &Ctx) -> crate::Result<Vec<ProfileRow>> {
     let now = now_ms();
-    let active = ctx.repo().active()?;
+    // A pointer too damaged to read leaves every row unmarked, which is worth
+    // far more than the error it used to be: `list` is what someone runs to
+    // find out what is wrong. `pointer_note` reports it alongside.
+    let active = ctx.repo().active().unwrap_or(None);
     let mut rows = Vec::new();
 
     for name in ctx.repo().list()? {

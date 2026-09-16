@@ -19,7 +19,7 @@
 //! existed nowhere else, the login having already replaced the live file.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -235,10 +235,16 @@ impl ProfileRepo {
                 }
                 // In the stored spelling: a pointer written as `WORK` for a
                 // directory named `work` otherwise matches nothing.
-                Ok(Some(self.canonical_name(&validate_profile_name(trimmed)?)))
+                let name = validate_profile_name(trimmed)
+                    .map_err(|e| damaged_pointer(&path, &e.to_string()))?;
+                Ok(Some(self.canonical_name(&name)))
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(source) => Err(CcredError::Io { path, source }),
+            // Not a bare I/O error. One file of six bytes decides which
+            // profile is live, and when it turns to nonsense every command
+            // that reads it said "I/O error at <path>" and exited 1. What it
+            // is and what to do about it fit in the message.
+            Err(source) => Err(damaged_pointer(&path, &source.to_string())),
         }
     }
 
@@ -624,6 +630,16 @@ fn orphan_key(account: &AccountIdentity) -> String {
     } else {
         key
     }
+}
+
+/// The pointer is damaged rather than merely absent. Never carries the file's
+/// contents: they are arbitrary bytes, and a message is a place they could
+/// end up being echoed.
+fn damaged_pointer(path: &Path, why: &str) -> CcredError {
+    CcredError::UnsafeWrite(format!(
+        "the active-profile pointer at {} is damaged: {why}",
+        path.display()
+    ))
 }
 
 #[cfg(test)]

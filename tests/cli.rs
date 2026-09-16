@@ -1006,6 +1006,74 @@ fn list_shows_a_profile_whose_metadata_will_not_parse() {
     );
 }
 
+/// Six bytes decide which profile is live. When they turn to nonsense, the
+/// commands someone runs to find out what is wrong must still answer, and the
+/// one command that writes a new pointer must be willing to.
+#[test]
+fn a_pointer_that_cannot_be_read_is_reported_not_fatal() {
+    let sb = Sandbox::new();
+    sb.run(&["save", "work"]);
+    let pointer = sb.path().join(".ccred/state/current");
+    std::fs::write(&pointer, [0xff, 0xfe, 0x00, 0x01]).unwrap();
+
+    for args in [&["list"][..], &["current"][..]] {
+        let (out, err, code) = sb.run(args);
+        assert_eq!(code, 0, "{args:?} must still answer: {err}{out}");
+        assert!(
+            out.contains("pointer cannot be read") || out.contains("pointer at"),
+            "{args:?}: {out}"
+        );
+    }
+
+    // And a switch repairs it, rather than refusing because of it.
+    let (out, err, code) = sb.run(&["switch", "work"]);
+    assert_eq!(code, 0, "{err}{out}");
+    assert_eq!(
+        std::fs::read_to_string(&pointer).unwrap().trim(),
+        "work",
+        "the switch must leave a pointer that reads"
+    );
+}
+
+/// The live credentials belong to nobody: no profile is active and none holds
+/// these tokens. The switch below overwrites them, so they are copied aside
+/// first -- the same loss a wrong pointer is already guarded against.
+#[test]
+fn switching_with_no_active_profile_keeps_the_live_credentials() {
+    const TOKEN_C: &str = "sk-ant-oat01-NOBODYSACCESSCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC";
+    const REFRESH_C: &str = "sk-ant-ort01-NOBODYSREFRESHCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC";
+
+    let sb = Sandbox::new();
+    sb.run(&["save", "work"]); // alice
+    // Carol logs in and is saved nowhere, and the pointer is gone.
+    sb.write_login(
+        TOKEN_C,
+        REFRESH_C,
+        FAR_FUTURE,
+        "carol@example.com",
+        "uuid-c",
+    );
+    std::fs::remove_file(sb.path().join(".ccred/state/current")).unwrap();
+
+    let (out, err, code) = sb.run(&["switch", "work"]);
+    assert_eq!(code, 0, "{err}{out}");
+    assert!(out.contains("not in any profile"), "{out}");
+
+    let kept: Vec<_> = std::fs::read_dir(
+        sb.path()
+            .join(".ccred")
+            .join("backups")
+            .join(".orphaned")
+            .join("uuid-c"),
+    )
+    .expect("carol's credentials were overwritten with no copy kept")
+    .flatten()
+    .map(|e| std::fs::read_to_string(e.path()).unwrap())
+    .collect();
+    assert_eq!(kept.len(), 1, "{kept:?}");
+    assert!(kept[0].contains(REFRESH_C), "the copy must hold carol");
+}
+
 /// A pointer left naming a profile that was removed behind ccred's back. The
 /// table shows an absent marker, which reads as "nothing is active" rather
 /// than "the one you were using is gone", so the summary says it outright.
