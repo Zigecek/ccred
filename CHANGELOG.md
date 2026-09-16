@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.2.38
+
+- **`ccred rename <old> <new>`.** There was no way to rename a profile: `rm`
+  and `save` again only works for the account that happens to be logged in,
+  so a profile named in haste -- and the second one usually is, since that
+  save is what registers the schedule -- was named that for good, short of
+  moving directories by hand. The rename moves the profile and the copies
+  belonging to it, and takes the active pointer with it. No credential is
+  written: one directory rename, then the pointer, in that order, because a
+  crash between them leaves a pointer naming something absent, which `list`,
+  `current` and `doctor` all report and the next `switch` repairs. It refuses
+  a name already in use, and refuses to run while an interrupted switch is
+  pending.
+- `ccred rm --help` listed `<NAME>` with a blank line under it, and so did
+  `switch` and `restore`. A test now walks every subcommand's help and
+  refuses an argument with nothing beside it.
+
 ## 0.2.37
 
 **`ccred rm <name> --purge`.** Ordinary `rm` copies the credentials aside
