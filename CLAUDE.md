@@ -120,3 +120,18 @@ cargo fmt --all
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test
 ```
+
+Code behind `#[cfg(unix)]`, `target_os = "linux"` or `"macos"` is not even
+compiled on a Windows machine, and the reverse holds on the others. Lint the
+other platforms too before pushing -- `cargo clippy` needs only the target's
+standard library, not a linker:
+
+```sh
+rustup target add x86_64-unknown-linux-gnu x86_64-apple-darwin x86_64-pc-windows-msvc
+cargo clippy --target x86_64-unknown-linux-gnu --all-targets --all-features -- -D warnings
+cargo clippy --target x86_64-apple-darwin --all-targets --all-features -- -D warnings
+```
+
+Shell heredocs and inline scripts mangle backslashes -- escapes such as a
+newline, doubled backslashes, Windows paths -- more often than not. Edit Rust
+source with an editor, or with a script kept in a file.
