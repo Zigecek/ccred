@@ -218,6 +218,21 @@ pub struct TokenState {
     pub usable: bool,
 }
 
+/// The self-rate-limit that makes over-firing harmless.
+///
+/// `--force` is a person asking directly, so it outranks a limit meant for
+/// schedulers, and a run that needed attention is not allowed to buy two days
+/// of silence.
+fn rate_limited(ctx: &Ctx, opts: &RefreshOptions, now: i64) -> bool {
+    !opts.force
+        && opts.if_older_than_ms.is_some_and(|window| {
+            read_last_run(ctx)
+                .ok()
+                .flatten()
+                .is_some_and(|last| now - last.finished_at_ms < window && !last.needed_attention)
+        })
+}
+
 /// What the stored credentials say about themselves. Unusable or absent
 /// credentials come back as the default, which `decide` reads as `Broken`.
 fn token_state(loaded: Option<&crate::store::Loaded>, now: i64) -> TokenState {
@@ -243,6 +258,13 @@ fn token_state(loaded: Option<&crate::store::Loaded>, now: i64) -> TokenState {
 /// what a preview is.
 pub fn preview(ctx: &Ctx, opts: &RefreshOptions) -> crate::Result<RefreshReport> {
     let now = now_ms();
+    // Including the gate the scheduler's own invocation meets. Without it the
+    // preview of `refresh --if-older-than 48` showed a run that the real
+    // command would not have made -- which is the one thing a preview must
+    // not do.
+    if rate_limited(ctx, opts, now) {
+        return Ok(RefreshReport::skipped("last run was recent"));
+    }
     let active = ctx.repo().active().unwrap_or(None);
     let mut profiles = Vec::new();
 
@@ -421,14 +443,7 @@ pub struct RefreshOptions {
 pub fn refresh(ctx: &Ctx, opts: &RefreshOptions) -> crate::Result<RefreshReport> {
     let now = now_ms();
 
-    // The self-rate-limit that makes over-firing harmless. `--force` is a
-    // person asking directly, so it outranks the limit meant for schedulers.
-    if !opts.force
-        && let Some(window) = opts.if_older_than_ms
-        && let Some(last) = read_last_run(ctx)?
-        && now - last.finished_at_ms < window
-        && !last.needed_attention
-    {
+    if rate_limited(ctx, opts, now) {
         return Ok(RefreshReport::skipped("last run was recent"));
     }
 

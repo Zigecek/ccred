@@ -1633,6 +1633,18 @@ fn a_dry_run_refresh_decides_and_touches_nothing() {
         report["profiles"].as_array().unwrap().len() >= 2,
         "{report}"
     );
+
+    // The preview meets the gate the scheduler's own invocation meets. A
+    // preview of `--if-older-than 48` that showed work the real command would
+    // refuse to do is worse than no preview: that flag is the one the
+    // registered job actually passes.
+    let probe = Probe::new();
+    probe.refresh(&sb, "", &[]); // records a run
+    let (out, _, code) = sb.run(&["refresh", "--if-older-than", "48", "--dry-run"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("nothing to do"), "{out}");
+    assert!(out.contains("last run was recent"), "{out}");
+    assert!(out.contains("dry run"), "still a preview: {out}");
 }
 
 /// "The timer has not fired since Tuesday and you have been refreshing by
