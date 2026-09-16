@@ -202,17 +202,20 @@ fn sync_outgoing(ctx: &Ctx, from: Option<&ProfileName>) -> crate::Result<Outgoin
     let account = ctx.live_account();
     match ctx.repo().save_from(from, &ctx.live_store(), &account) {
         Ok(_) => Ok(OutgoingSync::Synced(from.as_str().to_string())),
-        Err(
-            e @ (CcredError::AccountMismatch { .. }
-            | CcredError::AccountUnverifiable { .. }
-            | CcredError::InvalidCredentials(_)
-            | CcredError::UnsafeWrite(_)),
-        ) => Ok(OutgoingSync::Skipped {
+        // A lock is the one failure worth waiting out: the profile is fine
+        // and someone else is mid-write, so exit 6 and let a retry do it.
+        Err(e @ CcredError::Busy(_)) => Err(e),
+        // Everything else means this profile cannot take the live
+        // credentials -- a refused mirror, a file that will not parse, one
+        // that has been replaced by a directory. None of those is a reason to
+        // strand someone on a profile they are trying to leave, and the
+        // caller copies the live credentials aside before overwriting them,
+        // which is the loss that mattered.
+        Err(e) => Ok(OutgoingSync::Skipped {
             profile: from.as_str().to_string(),
             reason: e.to_string(),
             backup: None,
         }),
-        Err(other) => Err(other),
     }
 }
 
@@ -246,12 +249,28 @@ fn restore_identity(
     target: &ProfileName,
     warnings: &mut Vec<String>,
 ) -> crate::Result<bool> {
-    let Some(blob) = ctx.repo().oauth_account(target)? else {
-        warnings.push(format!(
-            "profile '{target}' has no stored account details; Claude Code will \
-             refetch them on next start"
-        ));
-        return Ok(false);
+    // A blob that cannot be read is treated as one that is not there. It is a
+    // cached copy of what Claude Code refetches on next start, while the
+    // credentials -- the part that cannot be refetched -- are already the
+    // target's by the time this runs. Raising here would leave the switch
+    // half-applied and stop every later `save` and `switch`, since both
+    // replay the journal first.
+    let blob = match ctx.repo().oauth_account(target) {
+        Ok(Some(blob)) => blob,
+        Ok(None) => {
+            warnings.push(format!(
+                "profile '{target}' has no stored account details; Claude Code will \
+                 refetch them on next start"
+            ));
+            return Ok(false);
+        }
+        Err(e) => {
+            warnings.push(format!(
+                "profile '{target}' has account details that cannot be read ({e}); \
+                 Claude Code will refetch them on next start"
+            ));
+            return Ok(false);
+        }
     };
     let config_path = ctx.paths().claude_config_file();
     let mut doc = match ClaudeJsonDoc::load(config_path) {

@@ -1007,6 +1007,73 @@ fn list_shows_a_profile_whose_metadata_will_not_parse() {
     );
 }
 
+/// The account blob is a cached copy of something Claude Code refetches. The
+/// credentials are not. So a blob that cannot be read costs a warning, not
+/// the switch -- which by then has already replaced the live credentials.
+#[test]
+fn account_details_that_cannot_be_read_do_not_stop_a_switch() {
+    let sb = Sandbox::new();
+    sb.run(&["save", "work"]);
+    sb.login_b();
+    sb.run(&["save", "personal"]);
+
+    let blob = sb.path().join(".ccred/profiles/work/oauth-account.json");
+    std::fs::remove_file(&blob).unwrap();
+    std::fs::create_dir(&blob).unwrap();
+
+    let (out, err, code) = sb.run(&["switch", "work"]);
+    assert_eq!(code, 0, "{err}{out}");
+    assert!(
+        out.contains("refetch"),
+        "the warning explains itself: {out}"
+    );
+
+    // The part that cannot be refetched did move.
+    let live = std::fs::read_to_string(sb.path().join(".claude/.credentials.json")).unwrap();
+    assert!(live.contains(TOKEN_A), "the credentials are the target's");
+}
+
+/// A profile so damaged that its metadata cannot be read is no reason to
+/// strand someone on it. The mirror is refused -- nothing else could be
+/// safe -- and the credentials that were live are copied aside first.
+#[test]
+fn a_profile_that_cannot_be_written_is_not_a_prison() {
+    let sb = Sandbox::new();
+    sb.run(&["save", "work"]); // alice
+    sb.login_b();
+    sb.run(&["save", "personal"]); // bob, now active
+
+    // Something a crash cannot produce, which is the point: whatever the
+    // state of the outgoing profile, leaving it must still work.
+    let meta = sb.path().join(".ccred/profiles/personal/ccred.json");
+    std::fs::remove_file(&meta).unwrap();
+    std::fs::create_dir(&meta).unwrap();
+
+    let (out, err, code) = sb.run(&["switch", "work"]);
+    assert_eq!(code, 0, "{err}{out}");
+    assert!(out.contains("did not update 'personal'"), "{out}");
+    assert!(
+        out.contains("not in any profile"),
+        "the copy is named: {out}"
+    );
+
+    // Bob's credentials, which nothing else holds now, are in the backups.
+    let orphans = sb.path().join(".ccred").join("backups").join(".orphaned");
+    let kept: Vec<_> = std::fs::read_dir(&orphans)
+        .expect("no copy was kept")
+        .flatten()
+        .collect();
+    assert_eq!(kept.len(), 1, "{kept:?}");
+
+    // And the switch itself happened.
+    assert_eq!(
+        std::fs::read_to_string(sb.path().join(".ccred/state/current"))
+            .unwrap()
+            .trim(),
+        "work"
+    );
+}
+
 /// A profile from an older ccred, written by hand with only the keys that
 /// have always been required. Every field added since carries `#[serde(
 /// default)]` and unknown ones are kept in `extra`, and this is what says so
