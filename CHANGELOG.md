@@ -1,6 +1,38 @@
 # Changelog
 
-## Unreleased
+## 0.2.18
+
+**An independent review of 0.2.15 to 0.2.17 found a way to store one
+account's tokens in another account's profile. Upgrade.**
+
+### Credentials that could end up in the wrong place
+
+- **`save` right after a killed `switch` could store the wrong account.** A
+  switch killed after writing the live credentials leaves its lock behind.
+  `save` gave up on healing the switch while that lock was fresh, waited for
+  it to go stale, and then stored the switch target's tokens under the name
+  `.claude.json` still gave -- the other account. It now settles the switch
+  under its own lock first. A test reproduces the killed switch.
+- **`uninstall --purge` could be pointed at Claude Code's configuration** by
+  spelling a path differently: on Windows the safety check was
+  case-sensitive, and nowhere did it resolve `..`. Paths are now compared in
+  one canonical spelling.
+
+### Schedules that looked fine and never ran
+
+- **A path with `'`, `"`, `\` or `$` broke the systemd unit.** The service
+  ended up with no command while the timer still showed a next run. Every
+  word is now quoted and escaped the way systemd reads it.
+- **Windows read the task definition back in the console's code page**, which
+  mangles any character the page lacks. A binary under a profile folder with
+  diacritics was reported missing. The definition is now read as UTF-8, in a
+  hidden console of its own.
+- **A schedule that could not be removed was reported removed**, and
+  `uninstall` then deleted the binary the task still pointed at. Removal is
+  now checked, and `uninstall` stops if the task is still there.
+- A forced refresh that met a signed-out account left a false expiry behind.
+
+### Also
 
 - **An unreadable switch journal no longer wedges `save` and `switch`.** Both
   replay the journal first, so one that failed to parse failed them for good.
