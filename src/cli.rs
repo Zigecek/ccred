@@ -101,6 +101,7 @@ pub enum Command {
     /// Make a saved profile the active account.
     #[command(display_order = 4)]
     Switch {
+        /// The profile to make active.
         name: String,
         /// Switch even though Claude Code is running. It may then write the
         /// old account's refreshed token into the new profile's file.
@@ -115,6 +116,7 @@ pub enum Command {
     /// back.
     #[command(alias = "remove", display_order = 5)]
     Rm {
+        /// The profile to delete.
         name: String,
         /// Delete the earlier copies too, leaving nothing of this account.
         ///
@@ -132,7 +134,10 @@ pub enum Command {
     /// a spawned Claude Code signing itself out is the case this exists for.
     /// `ccred doctor` says when a profile has a copy worth restoring.
     #[command(display_order = 6)]
-    Restore { name: String },
+    Restore {
+        /// The profile whose last-known-good copy goes back.
+        name: String,
+    },
 
     /// Refresh stored profiles so idle accounts do not expire.
     ///

@@ -1007,6 +1007,31 @@ fn list_shows_a_profile_whose_metadata_will_not_parse() {
     );
 }
 
+/// `ccred rm --help` listed `<NAME>` with nothing beside it, and so did
+/// `switch` and `restore`: every flag was documented and the arguments were
+/// not. The long help is what someone reads when they are unsure, which is
+/// the moment a blank line is least welcome.
+#[test]
+fn every_argument_in_the_help_is_described() {
+    let sb = Sandbox::new();
+    for command in ["save", "switch", "rm", "restore", "log", "schedule"] {
+        let (out, err, code) = sb.run(&[command, "--help"]);
+        assert_eq!(code, 0, "{command}: {err}");
+        let lines: Vec<&str> = out.lines().collect();
+        let Some(start) = lines.iter().position(|l| l.trim() == "Arguments:") else {
+            continue; // no positional arguments at all
+        };
+        for (i, line) in lines.iter().enumerate().skip(start) {
+            let is_argument = line.trim_start().starts_with('<') && line.trim().ends_with('>');
+            if !is_argument {
+                continue;
+            }
+            let described = lines.get(i + 1).is_some_and(|next| !next.trim().is_empty());
+            assert!(described, "{command}: {} has no description", line.trim());
+        }
+    }
+}
+
 /// `rm` keeps a copy, which is right for a mistyped name and wrong for the
 /// person whose point was to remove the account. `--purge` is for the second
 /// one, and it has to mean it: the rotation under the profile's name and the
