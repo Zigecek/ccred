@@ -194,6 +194,56 @@ const OURS: &[&str] = &[
     "Thumbs.db",
 ];
 
+/// A path in the one spelling that comparisons can trust.
+///
+/// `starts_with` compares components as written: `d:\x` is not a prefix of
+/// `D:\X\profiles` on Windows, and `/a/b/../c` is not under `/a/c` anywhere.
+/// The purge check below is the last thing between a stray variable and a
+/// recursive delete, so it compares these instead: the longest existing part
+/// resolved by the file system, the rest cleaned up by hand, and case folded
+/// where the file system ignores it.
+pub fn comparable(path: &Path) -> PathBuf {
+    use std::path::Component;
+
+    let mut lexical = PathBuf::new();
+    for part in path.components() {
+        match part {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                lexical.pop();
+            }
+            other => lexical.push(other),
+        }
+    }
+
+    let fold = |p: PathBuf| {
+        if cfg!(windows) {
+            PathBuf::from(p.to_string_lossy().to_lowercase())
+        } else {
+            p
+        }
+    };
+
+    let mut existing = lexical.clone();
+    let mut missing = Vec::new();
+    loop {
+        if let Ok(real) = std::fs::canonicalize(&existing) {
+            let mut full = real;
+            for part in missing.iter().rev() {
+                full.push(part);
+            }
+            return fold(full);
+        }
+        match existing.file_name() {
+            Some(name) => {
+                missing.push(name.to_os_string());
+                existing.pop();
+            }
+            None => return fold(lexical),
+        }
+    }
+}
+
 /// Decide whether deleting `data_dir` outright is safe.
 ///
 /// `CCRED_HOME` can point anywhere, and a recursive delete of the wrong
@@ -218,10 +268,12 @@ pub fn purge_refusal(
         .filter(|e| !OURS.contains(e))
         .collect();
     if !foreign.is_empty() {
-        return Some(format!(
-            "it holds files ccred did not create ({})",
-            foreign.join(", ")
-        ));
+        const SHOWN: usize = 3;
+        let mut listed = foreign[..foreign.len().min(SHOWN)].join(", ");
+        if foreign.len() > SHOWN {
+            listed.push_str(&format!(" and {} more", foreign.len() - SHOWN));
+        }
+        return Some(format!("it holds files ccred did not create ({listed})"));
     }
     None
 }
@@ -332,7 +384,13 @@ pub fn plan(ctx: &Ctx, purge: bool) -> crate::Result<Plan> {
                 .collect()
         })
         .unwrap_or_default();
-    let purge_refused = purge_refusal(&data_dir, paths.home(), paths.claude_config_dir(), &entries);
+    // Compared in one spelling each: see `comparable`.
+    let purge_refused = purge_refusal(
+        &comparable(&data_dir),
+        &comparable(paths.home()),
+        &comparable(paths.claude_config_dir()),
+        &entries,
+    );
     let (profiles, profiles_unreadable) = entry_names(&paths.profiles_dir());
     let (backups, backups_unreadable) = entry_names(&paths.backups_dir());
 
@@ -729,6 +787,59 @@ mod tests {
         );
         // Registered, command unreadable: ours to remove.
         assert_eq!(schedule_decision(Some(None), &here), (true, None));
+    }
+
+    /// A different spelling of the same directory must not get past the
+    /// purge check.
+    #[test]
+    fn the_purge_check_sees_through_spelling() {
+        let root = tempfile::TempDir::new().unwrap();
+        let data = root.path().join("x");
+        let home = root.path().join("home");
+        std::fs::create_dir_all(data.join("profiles").join("work")).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        let entries = names(&["profiles"]);
+        let refused = |claude: &Path| {
+            purge_refusal(
+                &comparable(&data),
+                &comparable(&home),
+                &comparable(claude),
+                &entries,
+            )
+            .is_some()
+        };
+
+        // `..` that leads back inside the data directory.
+        assert!(refused(
+            &root
+                .path()
+                .join("elsewhere")
+                .join("..")
+                .join("x")
+                .join("profiles")
+        ));
+        // Case, where the file system ignores it.
+        if cfg!(windows) {
+            assert!(refused(
+                &root.path().join("X").join("PROFILES").join("work")
+            ));
+        }
+        // A directory that does not exist yet still compares.
+        assert!(comparable(&data.join("not-yet")).starts_with(comparable(&data)));
+        // And an unrelated one is still fine.
+        assert!(!refused(&root.path().join("claude")));
+    }
+
+    #[test]
+    fn a_long_list_of_foreign_files_is_cut_short() {
+        let why = purge_refusal(
+            Path::new("/srv/x"),
+            Path::new("/home/x"),
+            Path::new("/home/x/.claude"),
+            &names(&["a", "b", "c", "d", "e"]),
+        )
+        .unwrap();
+        assert!(why.ends_with("(a, b, c and 2 more)"), "{why}");
     }
 
     fn names(list: &[&str]) -> Vec<String> {
