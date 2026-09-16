@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.2.26
+
+Nothing here was found by a user; a smoke run of the released binary turned
+all of it up.
+
+- **The credential file is written the way Claude Code writes it**, on one
+  line with no trailing newline. ccred pretty-printed it, so a switch left
+  the file 20% larger and across thirteen lines. Both shapes parse and
+  nothing was lost either way, but a file someone opens should look the way
+  they left it. `.claude.json`, which Claude Code does pretty-print, is
+  unchanged.
+- **`list` says when the active profile no longer exists.** It showed a
+  table with no active row and the summary "all healthy", which reads as
+  "nothing is active" rather than "the one you were using is gone".
+  `current` and `doctor` already reported it. `list --json` is still an
+  array of profiles.
+- `ccred switch` to the profile that is already active reported `work ->
+  work`. It is a resync, and says so.
+- An orphaned-credential backup path came out with a lone forward slash
+  among the backslashes on Windows -- in a path printed for someone to go
+  and read after a switch went sideways.
+- Whether a refresh probe rewrote the credential store is now judged from
+  the file's bytes. It was the modification time and the length: a token
+  swap keeps the length, and the timestamp can be coarser than the write.
+  Only a diagnostic line was ever wrong because of it.
+- The `.deb` carries a provenance attestation and a `.sha256`, like every
+  other artifact. It is the one people install as root, and the README told
+  them to hand it to `apt` with nothing to check it against. The 0.2.25
+  packages were rebuilt with both.
+- The summary line in `list` had two spaces after its comma.
+
 ## 0.2.25
 
 - **The installer's PATH advice is one command per line.** The line
