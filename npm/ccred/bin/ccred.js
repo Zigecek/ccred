@@ -23,7 +23,11 @@ function libcSuffix() {
   // glibcVersionRuntime is absent on musl. The `libc` package.json field is
   // honoured by newer npm/pnpm/yarn but not by all of them, so this runtime
   // check stays as the fallback -- do not remove it.
-  const report = process.report && process.report.getReport();
+  if (!process.report) return "";
+  // Without this, Node 22+ gathers network interface details for the report,
+  // which can take seconds -- on every single `ccred` invocation.
+  process.report.excludeNetwork = true;
+  const report = process.report.getReport();
   const runtime = report && report.header && report.header.glibcVersionRuntime;
   return runtime ? "" : "-musl";
 }
@@ -37,9 +41,8 @@ try {
 } catch {
   console.error(
     `ccred: no prebuilt binary for ${process.platform}-${process.arch}.\n` +
-      `Install another way instead:\n` +
-      `  cargo install ccred\n` +
-      `  https://github.com/Zigecek/ccred#install`
+      `Install another way instead -- the options, including building from\n` +
+      `source, are at https://github.com/Zigecek/ccred#install`
   );
   process.exit(1);
 }
