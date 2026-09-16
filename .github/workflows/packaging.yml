@@ -141,6 +141,31 @@ jobs:
           export CCRED_VERSION="${TAG#v}"
           ./nfpm pkg --packager deb --config packaging/nfpm.yaml --target dist/
 
+      # The package is installed as root by people who will not read it
+      # first, so it is installed here, on the architecture the runner can
+      # actually run, and asked to do something before it is published.
+      # `dpkg -c` alone would not have caught a binary that cannot start.
+      - name: Install it and use it
+        if: matrix.arch == 'amd64'
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y ./dist/ccred_*_amd64.deb
+          test "$(ccred --version)" = "ccred ${TAG#v}"
+          # Static on purpose: built against musl, so the package declares no
+          # dependency on a libc. ldd words that two ways depending on whether
+          # the binary is position independent.
+          ldd "$(command -v ccred)" 2>&1 | grep -Eq "not a dynamic executable|statically linked"
+          test -f /usr/share/doc/ccred/copyright
+          export CCRED_NO_AUTO_SCHEDULE=1
+          home="$(mktemp -d)"
+          conf="$(mktemp -d)"
+          # No login anywhere in sight: the answer is a report, not a crash.
+          # What the commands say is the test suite's job, on this same
+          # runner; this asks only whether the packaged binary runs at all.
+          ccred --ccred-home "$home" --claude-config-dir "$conf" list --json | jq -e 'type == "array"'
+          ccred --ccred-home "$home" --claude-config-dir "$conf" current --json | jq -e '.logged_in == false'
+          sudo apt-get remove -y ccred
+
       # Everything dist builds carries a provenance attestation and a
       # checksum; the package built here is the one thing people install with
       # root, so it gets both too. `--clobber` would otherwise leave a stale
