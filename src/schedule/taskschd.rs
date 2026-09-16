@@ -318,9 +318,6 @@ impl Scheduler for TaskScheduler {
         if next_run.is_none() {
             warnings.push(Warning::RegisteredButNeverFires);
         }
-        if text.contains("DisallowStartIfOnBatteries: TRUE") {
-            warnings.push(Warning::OnBatteryBlocked);
-        }
 
         // Read the registered definition back rather than trusting the `/V`
         // listing. Its headers are localised, and its *values* are ambiguous:
@@ -330,6 +327,13 @@ impl Scheduler for TaskScheduler {
         let xml = self.task_xml().unwrap_or_default();
         if xml.contains("InteractiveToken") {
             warnings.push(Warning::RunsOnlyWhenSignedIn);
+        }
+        // From the XML for the same reason. This read `DisallowStartIfOnBatteries:
+        // TRUE` out of the localised listing, where on a Czech or German Windows
+        // that string never appears -- so the one warning about a laptop that
+        // never refreshes on battery could only fire in English.
+        if setting_says_true(&xml, "DisallowStartIfOnBatteries") {
+            warnings.push(Warning::OnBatteryBlocked);
         }
         let command = registered_command(&xml);
         warnings.extend(super::missing_binary(command.as_deref()));
@@ -360,6 +364,12 @@ pub fn settings_enabled(xml: &str) -> bool {
     let rest = &xml[start..];
     let end = rest.find("</Settings>").unwrap_or(rest.len());
     !rest[..end].contains("<Enabled>false</Enabled>")
+}
+
+/// One boolean out of the task definition. Element names in the XML are the
+/// same on every Windows; the `/V` listing's are not.
+fn setting_says_true(xml: &str, name: &str) -> bool {
+    xml.contains(&format!("<{name}>true</{name}>"))
 }
 
 /// Pull the next-run time out of `schtasks /FO LIST /V`.
@@ -393,6 +403,25 @@ pub fn parse_query(text: &str) -> Option<String> {
 mod tests {
     use super::*;
     use crate::schedule::tests::{awkward_exes, spec};
+
+    /// The battery setting used to be read out of the localised `/V` listing,
+    /// where `DisallowStartIfOnBatteries: TRUE` appears only in English. A
+    /// laptop on a Czech Windows would never have been warned.
+    #[test]
+    fn the_battery_setting_is_read_from_the_xml() {
+        let blocked =
+            "<Settings><DisallowStartIfOnBatteries>true</DisallowStartIfOnBatteries></Settings>";
+        assert!(setting_says_true(blocked, "DisallowStartIfOnBatteries"));
+
+        // What we register ourselves, which must not raise the warning.
+        let ours = render_task_xml(&spec(), Privilege::Elevated);
+        assert!(
+            ours.contains("<DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>"),
+            "{ours}"
+        );
+        assert!(!setting_says_true(&ours, "DisallowStartIfOnBatteries"));
+        assert!(!setting_says_true("", "DisallowStartIfOnBatteries"));
+    }
 
     /// `doctor` and `uninstall` both judge a task by the binary it starts,
     /// so reading it back must invert exactly what was written.

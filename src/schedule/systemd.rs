@@ -396,7 +396,12 @@ pub fn parse_properties(text: &str) -> std::collections::HashMap<String, String>
 }
 
 fn linger_enabled() -> Option<bool> {
-    let user = std::env::var("USER").ok()?;
+    // `LOGNAME` as well as `USER`: a systemd service, a container and `su -c`
+    // each set a different subset of the two, and without a name there is no
+    // question to ask -- which reads as "linger is fine" and warns nobody.
+    let user = std::env::var("USER")
+        .or_else(|_| std::env::var("LOGNAME"))
+        .ok()?;
     let out = Command::new("loginctl")
         .args(["show-user", &user, "-p", "Linger", "--value"])
         .output()
