@@ -980,3 +980,44 @@ fn an_explicit_null_in_the_live_store_is_not_fatal() {
     let (out, _, _) = sb.run(&["list"]);
     assert!(out.contains("ok"), "{out}");
 }
+
+/// `uninstall --dry-run` is the way to read what an uninstall would destroy,
+/// so it must name the profiles and remove nothing -- not the data, and not
+/// the binary running the suite.
+///
+/// Only the dry run is exercised end to end. A real uninstall would remove
+/// the platform scheduler's job, and the scheduler is not sandboxed: on a
+/// developer's machine that is their real schedule. The decision to ask or
+/// refuse is covered by `consent`'s unit tests instead.
+#[test]
+fn uninstall_dry_run_names_what_it_would_delete_and_removes_nothing() {
+    let sb = Sandbox::new();
+    sb.run(&["save", "work"]);
+    let exe = assert_cmd::cargo::cargo_bin("ccred");
+    let before = walk(sb.path());
+
+    let (out, err, code) = sb.run(&["uninstall", "--purge", "--dry-run"]);
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("DELETED: work"), "{out}");
+    assert!(out.contains("dry run"), "{out}");
+    assert!(out.contains("not touched"), "{out}");
+
+    let (out, err, code) = sb.run(&["uninstall", "--dry-run", "--json"]);
+    assert_eq!(code, 0, "{err}");
+    let plan: serde_json::Value = serde_json::from_str(&out).expect(&out);
+    assert_eq!(plan["purge"], false, "{out}");
+    assert_eq!(plan["profiles"][0], "work", "{out}");
+    assert!(
+        plan["data_dir"]
+            .as_str()
+            .is_some_and(|d| d.ends_with(".ccred")),
+        "{out}"
+    );
+
+    assert_eq!(
+        before,
+        walk(sb.path()),
+        "a dry run must not change anything"
+    );
+    assert!(exe.exists(), "a dry run must not remove the binary");
+}

@@ -187,6 +187,14 @@ pub fn render_task_xml(spec: &ScheduleSpec, privilege: Privilege) -> String {
     )
 }
 
+/// The program a registered task starts, from its exported XML.
+pub fn registered_command(xml: &str) -> Option<PathBuf> {
+    let start = xml.find("<Command>")? + "<Command>".len();
+    let end = start + xml[start..].find("</Command>")?;
+    let raw = xml[start..end].trim().trim_matches('"');
+    (!raw.is_empty()).then(|| PathBuf::from(super::xml_unescape(raw)))
+}
+
 fn xml_escape(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
@@ -287,11 +295,14 @@ impl Scheduler for TaskScheduler {
         if xml.contains("InteractiveToken") {
             warnings.push(Warning::RunsOnlyWhenSignedIn);
         }
+        let command = registered_command(&xml);
+        warnings.extend(super::missing_binary(command.as_deref()));
 
         Ok(State::Installed(Health {
             enabled: settings_enabled(&xml),
             next_run,
             last_run: None,
+            command,
             warnings,
         }))
     }
@@ -345,7 +356,20 @@ pub fn parse_query(text: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schedule::tests::spec;
+    use crate::schedule::tests::{awkward_exes, spec};
+
+    /// `doctor` and `uninstall` both judge a task by the binary it starts,
+    /// so reading it back must invert exactly what was written.
+    #[test]
+    fn the_registered_command_reads_back_what_was_written() {
+        for exe in awkward_exes() {
+            let mut s = spec();
+            s.exe = exe.clone();
+            let xml = render_task_xml(&s, Privilege::Elevated);
+            assert_eq!(registered_command(&xml), Some(exe), "{xml}");
+        }
+        assert_eq!(registered_command("<Task></Task>"), None);
+    }
 
     #[test]
     fn the_battery_defaults_are_overridden() {

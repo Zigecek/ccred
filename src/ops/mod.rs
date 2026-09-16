@@ -9,6 +9,7 @@ pub mod refresh;
 pub mod schedule;
 pub mod simple;
 pub mod switch;
+pub mod uninstall;
 
 use crate::model::{AccountSnapshot, ClaudeJsonDoc};
 use crate::paths::Paths;

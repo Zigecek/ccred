@@ -228,6 +228,10 @@ impl Scheduler for Systemd {
         if linger_enabled() == Some(false) {
             warnings.push(Warning::LingerDisabled);
         }
+        let command = std::fs::read_to_string(self.unit_dir().join(format!("{UNIT_NAME}.service")))
+            .ok()
+            .and_then(|unit| registered_command(&unit));
+        warnings.extend(super::missing_binary(command.as_deref()));
 
         Ok(State::Installed(Health {
             enabled: props.get("UnitFileState").map(String::as_str) == Some("enabled"),
@@ -236,9 +240,24 @@ impl Scheduler for Systemd {
                 .get("LastTriggerUSec")
                 .filter(|v| !v.is_empty() && *v != "n/a")
                 .cloned(),
+            command,
             warnings,
         }))
     }
+}
+
+/// The program a unit starts: the first word of `ExecStart=`, which
+/// `command_line` quotes when it holds a space.
+pub fn registered_command(unit: &str) -> Option<PathBuf> {
+    let value = unit
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("ExecStart="))?
+        .trim();
+    let path = match value.strip_prefix('"') {
+        Some(rest) => rest.split('"').next()?,
+        None => value.split_whitespace().next()?,
+    };
+    (!path.is_empty()).then(|| PathBuf::from(path))
 }
 
 /// `key=value` lines, as `systemctl show` emits them.
@@ -268,6 +287,26 @@ fn linger_enabled() -> Option<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_registered_command_reads_back_what_was_written() {
+        for exe in crate::schedule::tests::awkward_exes() {
+            let mut s = crate::schedule::tests::spec();
+            s.exe = exe.clone();
+            for hardened in [true, false] {
+                let unit = render_service(&s, hardened);
+                assert_eq!(registered_command(&unit), Some(exe.clone()), "{unit}");
+            }
+        }
+        assert_eq!(
+            registered_command(
+                "[Service]
+Type=oneshot
+"
+            ),
+            None
+        );
+    }
     use crate::schedule::tests::spec;
 
     #[test]

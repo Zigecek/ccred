@@ -591,6 +591,16 @@ pub fn schedule_status(theme: &Theme, state: &State, backend: Backend) {
             if let Some(t) = &h.last_run {
                 f.add("Last run", paint(MUTED, t));
             }
+            if let Some(c) = &h.command {
+                f.add(
+                    "Runs",
+                    if c.exists() {
+                        paint(MUTED, &c.display().to_string())
+                    } else {
+                        paint(ERR, &format!("{} (missing)", c.display()))
+                    },
+                );
+            }
             println!("{}", f.render(PAD));
             print_warnings(theme, &h.warnings);
         }
@@ -701,6 +711,214 @@ pub fn log(theme: &Theme, entries: &[crate::logbook::Entry], path: &std::path::P
     println!("{}", t.render(theme, PAD));
     println!();
     println!("{PAD}{}", paint(MUTED, &path.display().to_string()));
+    println!();
+}
+
+// --- uninstall ------------------------------------------------------------
+
+fn owner_line(owner: &crate::ops::uninstall::Owner) -> (anstyle::Style, String) {
+    use crate::ops::uninstall::Owner;
+    match owner {
+        Owner::Installer => (OK, "will be removed (release installer)".into()),
+        Owner::Unmanaged => (OK, "will be removed".into()),
+        Owner::PackageManager { name, command } => {
+            (WARN, format!("left for {name} -- run `{command}`"))
+        }
+    }
+}
+
+/// What `uninstall` is about to do. Shown by `--dry-run`, and above the
+/// question when the plan would delete stored profiles.
+pub fn uninstall_plan(theme: &Theme, p: &crate::ops::uninstall::Plan, dry_run: bool) {
+    let g = theme.glyphs;
+    println!();
+    println!("{}", heading(theme, PAD, "Uninstall"));
+    println!();
+
+    let mut f = Fields::new();
+    let (style, binary) = owner_line(&p.owner);
+    f.add(
+        "Binary",
+        format!(
+            "{}   {}",
+            paint(style, &binary),
+            paint(MUTED, &p.exe.display().to_string())
+        ),
+    );
+    let schedule = match (&p.schedule, &p.schedule_for) {
+        (true, _) => paint(OK, "will be removed"),
+        (false, Some(other)) => format!(
+            "{}   {}",
+            paint(WARN, "left alone, it starts another copy"),
+            paint(MUTED, &other.display().to_string())
+        ),
+        (false, None) => paint(MUTED, "none registered"),
+    };
+    f.add("Schedule", schedule);
+    if let Some(r) = &p.receipt {
+        f.add(
+            "Receipt",
+            format!(
+                "{}   {}",
+                paint(OK, "will be removed"),
+                paint(MUTED, &r.display().to_string())
+            ),
+        );
+    }
+    let data = p.data_dir.display().to_string();
+    let profiles = if p.profiles.is_empty() {
+        "no profiles".to_string()
+    } else {
+        p.profiles.join(", ")
+    };
+    let row = if !p.data_exists {
+        paint(MUTED, "none stored")
+    } else if p.deletes_data() {
+        format!(
+            "{}   {}",
+            paint(ERR, &format!("will be DELETED: {profiles}")),
+            paint(MUTED, &data)
+        )
+    } else if let (true, Some(why)) = (p.purge, &p.purge_refused) {
+        format!(
+            "{}   {}",
+            paint(WARN, "kept, purge refused"),
+            paint(MUTED, &format!("{data} -- {why}"))
+        )
+    } else {
+        format!(
+            "{}   {}",
+            paint(OK, &format!("kept: {profiles}")),
+            paint(MUTED, &format!("{data} -- --purge deletes them"))
+        )
+    };
+    f.add("Profiles", row);
+    f.add(
+        "Claude Code",
+        paint(MUTED, "not touched -- the login in ~/.claude stays"),
+    );
+    println!("{}", f.render(PAD));
+    println!();
+    if dry_run {
+        println!(
+            "{PAD}{} {}",
+            paint(MUTED, g.bullet),
+            paint(MUTED, "dry run -- nothing was removed")
+        );
+        println!();
+    }
+}
+
+pub fn uninstall_confirm(theme: &Theme, p: &crate::ops::uninstall::Plan) {
+    let mut what = Vec::new();
+    if !p.profiles.is_empty() {
+        what.push(plural(
+            p.profiles.len(),
+            "stored profile",
+            "stored profiles",
+        ));
+    }
+    if p.backups > 0 {
+        what.push(plural(p.backups, "backup", "backups"));
+    }
+    if p.unreadable {
+        what.push("whatever it could not list".to_string());
+    }
+    println!(
+        "{PAD}{} {}",
+        paint(ERR, theme.glyphs.err),
+        paint(
+            HEAD,
+            &format!(
+                "this deletes {}, and it cannot be undone",
+                what.join(" and ")
+            )
+        )
+    );
+    println!(
+        "{PAD}  {}",
+        paint(
+            MUTED,
+            "they are the only copies of accounts that are not logged in right now"
+        )
+    );
+    // No trailing newline: the answer is typed on this line.
+    anstream::print!("{PAD}  type yes to continue: ");
+    use std::io::Write;
+    let _ = std::io::stdout().flush();
+}
+
+pub fn uninstall_cancelled(theme: &Theme) {
+    println!();
+    println!(
+        "{PAD}{} {}",
+        paint(MUTED, theme.glyphs.bullet),
+        paint(VALUE, "cancelled -- nothing was removed")
+    );
+    println!();
+}
+
+pub fn uninstalled(
+    theme: &Theme,
+    p: &crate::ops::uninstall::Plan,
+    o: &crate::ops::uninstall::Outcome,
+) {
+    use crate::ops::uninstall::Owner;
+    let g = theme.glyphs;
+    println!();
+    if o.schedule_removed {
+        println!("{PAD}{} refresh schedule removed", paint(OK, g.ok));
+    }
+    if o.data_removed {
+        println!(
+            "{PAD}{} deleted {}",
+            paint(OK, g.ok),
+            paint(MUTED, &p.data_dir.display().to_string())
+        );
+    }
+    if o.receipt_removed {
+        println!("{PAD}{} installer receipt removed", paint(OK, g.ok));
+    }
+    match &p.owner {
+        Owner::PackageManager { name, command } => println!(
+            "{PAD}{} the binary belongs to {name}; remove it with {}",
+            paint(WARN, g.warn),
+            paint(NAME, command)
+        ),
+        _ if o.binary_removed => println!(
+            "{PAD}{} ccred removed {}",
+            paint(OK, g.ok),
+            paint(
+                MUTED,
+                if cfg!(windows) {
+                    "(the file goes as soon as this command exits)"
+                } else {
+                    ""
+                }
+            )
+        ),
+        _ => {}
+    }
+    if !p.purge && p.data_exists {
+        println!();
+        println!(
+            "{PAD}{} {}",
+            paint(MUTED, g.bullet),
+            paint(
+                MUTED,
+                &format!(
+                    concat!(
+                        "your profiles are kept in {} -- delete that folder ",
+                        "yourself once you no longer need them"
+                    ),
+                    p.data_dir.display()
+                )
+            )
+        );
+    }
+    for problem in &o.problems {
+        println!("{PAD}{} {}", paint(ERR, g.err), paint(VALUE, problem));
+    }
     println!();
 }
 

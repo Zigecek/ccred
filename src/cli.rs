@@ -144,12 +144,35 @@ pub enum Command {
     #[command(display_order = 9)]
     Doctor,
 
+    /// Remove ccred from this machine.
+    ///
+    /// Removes the refresh schedule, the installer's receipt and the binary.
+    /// Stored profiles are kept unless `--purge` is given. The Claude Code
+    /// login in ~/.claude is never touched.
+    ///
+    /// A binary installed by Scoop, npm, Homebrew, apt or cargo is left for
+    /// that tool to remove, and the command to do it is printed: deleting a
+    /// file a package manager tracks corrupts its record of what is installed.
+    #[command(display_order = 10)]
+    Uninstall {
+        /// Also delete every stored profile, backup and log under ~/.ccred.
+        /// Those are the only copies of accounts that are not logged in.
+        #[arg(long)]
+        purge: bool,
+        /// Do not ask before deleting stored credentials.
+        #[arg(long, short)]
+        yes: bool,
+        /// Show what would be removed, and remove nothing.
+        #[arg(long)]
+        dry_run: bool,
+    },
+
     /// Show what the scheduled runs did.
     ///
     /// A scheduled run is otherwise invisible on Windows, where Task
     /// Scheduler discards its output entirely. Decisions and numbers only --
     /// never an error message, which could echo a token.
-    #[command(display_order = 10)]
+    #[command(display_order = 11)]
     Log {
         /// How many runs to show.
         #[arg(long, short = 'n', value_name = "COUNT", default_value_t = 20)]

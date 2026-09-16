@@ -9,7 +9,7 @@ use clap::Parser;
 
 use ccred::cli::{Cli, Command, ScheduleAction};
 use ccred::error::ExitCode;
-use ccred::ops::{Ctx, doctor, refresh, schedule as sched_ops, simple, switch};
+use ccred::ops::{Ctx, doctor, refresh, schedule as sched_ops, simple, switch, uninstall};
 use ccred::ui::{Theme, render};
 use ccred::validate::validate_profile_name;
 
@@ -155,6 +155,67 @@ fn run(cli: &Cli, theme: &Theme) -> ccred::Result<ExitCode> {
                     Ok(ExitCode::Ok)
                 }
             }
+        }
+
+        Some(Command::Uninstall {
+            purge,
+            yes,
+            dry_run,
+        }) => {
+            let plan = uninstall::plan(&ctx, *purge)?;
+            if *dry_run {
+                if cli.json {
+                    print_json(&plan);
+                } else {
+                    render::uninstall_plan(theme, &plan, true);
+                }
+                return Ok(ExitCode::Ok);
+            }
+
+            // JSON output has no room for a prompt, so it counts as unattended.
+            let can_ask = {
+                use std::io::IsTerminal;
+                !cli.json && std::io::stdin().is_terminal() && std::io::stdout().is_terminal()
+            };
+            match uninstall::consent(&plan, *yes, can_ask) {
+                uninstall::Consent::Proceed => {}
+                uninstall::Consent::Blocked(why) => {
+                    return Err(ccred::CcredError::UnsafeWrite(format!(
+                        "{why}; nothing was removed"
+                    )));
+                }
+                uninstall::Consent::Refuse => {
+                    return Err(ccred::CcredError::UnsafeWrite(
+                        concat!(
+                            "`--purge` would delete stored credentials; pass --yes ",
+                            "to confirm when running without a terminal"
+                        )
+                        .into(),
+                    ));
+                }
+                uninstall::Consent::Ask => {
+                    render::uninstall_plan(theme, &plan, false);
+                    render::uninstall_confirm(theme, &plan);
+                    let mut answer = String::new();
+                    let _ = std::io::stdin().read_line(&mut answer);
+                    if answer.trim() != "yes" {
+                        render::uninstall_cancelled(theme);
+                        return Ok(ExitCode::Usage);
+                    }
+                }
+            }
+
+            let outcome = uninstall::execute(&plan);
+            if cli.json {
+                print_json(&outcome);
+            } else {
+                render::uninstalled(theme, &plan, &outcome);
+            }
+            Ok(if outcome.problems.is_empty() {
+                ExitCode::Ok
+            } else {
+                ExitCode::Internal
+            })
         }
 
         Some(Command::Log { count }) => {

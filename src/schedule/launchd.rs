@@ -105,6 +105,15 @@ pub fn render_plist(spec: &ScheduleSpec) -> String {
     )
 }
 
+/// The program an agent starts: the first string of `ProgramArguments`.
+pub fn registered_command(plist: &str) -> Option<PathBuf> {
+    let after = &plist[plist.find("<key>ProgramArguments</key>")?..];
+    let start = after.find("<string>")? + "<string>".len();
+    let end = start + after[start..].find("</string>")?;
+    let raw = after[start..end].trim();
+    (!raw.is_empty()).then(|| PathBuf::from(super::xml_unescape(raw)))
+}
+
 fn xml_escape(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
@@ -209,10 +218,16 @@ impl Scheduler for Launchd {
             None
         };
 
+        let command = std::fs::read_to_string(self.plist_path())
+            .ok()
+            .and_then(|plist| registered_command(&plist));
+        warnings.extend(super::missing_binary(command.as_deref()));
+
         Ok(State::Installed(Health {
             enabled: loaded,
             next_run,
             last_run: None,
+            command,
             warnings,
         }))
     }
@@ -221,6 +236,17 @@ impl Scheduler for Launchd {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_registered_command_reads_back_what_was_written() {
+        for exe in crate::schedule::tests::awkward_exes() {
+            let mut s = crate::schedule::tests::spec();
+            s.exe = exe.clone();
+            let plist = render_plist(&s);
+            assert_eq!(registered_command(&plist), Some(exe), "{plist}");
+        }
+        assert_eq!(registered_command("<plist></plist>"), None);
+    }
     use crate::schedule::tests::spec;
 
     #[test]

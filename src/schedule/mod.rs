@@ -27,7 +27,7 @@ pub mod launchd;
 pub mod systemd;
 pub mod taskschd;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
@@ -209,7 +209,29 @@ pub struct Health {
     /// `None` here is a red flag, not a detail.
     pub next_run: Option<String>,
     pub last_run: Option<String>,
+    /// The binary the job starts, read back from its registered definition.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub command: Option<PathBuf>,
     pub warnings: Vec<Warning>,
+}
+
+/// Undo the three escapes the backends write. `&amp;` goes last, so an
+/// escaped escape is not decoded twice.
+pub(crate) fn xml_unescape(s: &str) -> String {
+    s.replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
+        .replace("&amp;", "&")
+}
+
+/// A job whose binary has gone -- moved by a package upgrade, or left behind
+/// by a removal -- is started on time and fails at once, and that failure is
+/// logged nowhere a person looks. The scheduler still reports a next run, so
+/// nothing else catches it.
+pub(crate) fn missing_binary(command: Option<&Path>) -> Option<Warning> {
+    let command = command?;
+    (!command.exists()).then(|| Warning::BinaryMissing(command.display().to_string()))
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -299,6 +321,27 @@ pub(crate) mod tests {
         // The schedule is a hint; the real limit is in the command.
         let s = spec();
         assert!(s.args.contains(&"--if-older-than".to_string()));
+    }
+
+    /// Awkward but legal paths: a space, and the one character every XML
+    /// backend has to escape.
+    pub(crate) fn awkward_exes() -> Vec<PathBuf> {
+        vec![
+            PathBuf::from("/usr/local/bin/ccred"),
+            PathBuf::from("/opt/my tools/ccred"),
+            PathBuf::from("/home/R&D/bin/ccred"),
+        ]
+    }
+
+    #[test]
+    fn a_binary_that_is_gone_is_reported_and_one_that_exists_is_not() {
+        let here = std::env::current_exe().unwrap();
+        assert_eq!(missing_binary(Some(&here)), None);
+        assert_eq!(missing_binary(None), None);
+        assert!(matches!(
+            missing_binary(Some(Path::new("/nonexistent/ccred"))),
+            Some(Warning::BinaryMissing(_))
+        ));
     }
 
     #[test]

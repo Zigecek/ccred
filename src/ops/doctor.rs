@@ -7,7 +7,7 @@ use crate::journal::SwitchJournal;
 use crate::lockfile::lock_path_for;
 use crate::paths::storage_write_lock_target;
 use crate::proc::running_claude_pids;
-use crate::schedule::{State, Warning, detect};
+use crate::schedule::{Health, State, Warning, detect};
 use crate::store::{CredentialStore, now_ms};
 use crate::validate::ProfileName;
 use crate::validate::validate_credentials;
@@ -415,6 +415,18 @@ fn schedule_finding(status: crate::Result<State>, profile_count: usize) -> Findi
     };
 
     match state {
+        // First: the scheduler still reports a next run for a job whose
+        // binary has gone, so every other check would call it healthy.
+        State::Installed(Health {
+            command: Some(command),
+            ..
+        }) if !command.exists() => Finding::error(
+            "the refresh schedule starts a binary that no longer exists",
+            format!(
+                "{} is gone; run `ccred schedule install` again to point it at this one",
+                command.display()
+            ),
+        ),
         State::Installed(h) if h.next_run.is_none() => Finding::error(
             "the refresh schedule is registered but will never run",
             "reinstall it with `ccred schedule install`, which verifies the next run".to_string(),
@@ -486,13 +498,13 @@ pub fn worst(findings: &[Finding]) -> Severity {
 mod tests {
     use super::*;
     use crate::error::CcredError;
-    use crate::schedule::Health;
 
     fn health(enabled: bool, next_run: Option<&str>) -> Health {
         Health {
             enabled,
             next_run: next_run.map(str::to_string),
             last_run: None,
+            command: None,
             warnings: Vec::new(),
         }
     }
@@ -531,6 +543,26 @@ mod tests {
         let f = schedule_finding(Ok(State::Installed(health(true, Some("Fri 03:00")))), 2);
         assert_eq!(f.severity, Severity::Ok);
         assert!(f.title.contains("Fri 03:00"), "{f:?}");
+    }
+
+    /// The shape a package upgrade leaves behind: the job still reports a
+    /// next run, and the binary it names has moved.
+    #[test]
+    fn a_schedule_whose_binary_has_gone_is_an_error() {
+        let gone = Health {
+            command: Some("/nonexistent/ccred".into()),
+            ..health(true, Some("Fri 03:00"))
+        };
+        let f = schedule_finding(Ok(State::Installed(gone)), 2);
+        assert_eq!(f.severity, Severity::Error, "{f:?}");
+        assert!(f.detail.unwrap().contains("/nonexistent/ccred"));
+
+        let present = Health {
+            command: Some(std::env::current_exe().unwrap()),
+            ..health(true, Some("Fri 03:00"))
+        };
+        let f = schedule_finding(Ok(State::Installed(present)), 2);
+        assert_eq!(f.severity, Severity::Ok, "{f:?}");
     }
 
     #[test]

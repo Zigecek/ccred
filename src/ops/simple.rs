@@ -445,6 +445,7 @@ mod tests {
             enabled: true,
             next_run: Some("Fri 03:00".into()),
             last_run: None,
+            command: None,
             warnings: Vec::new(),
         })
     }
