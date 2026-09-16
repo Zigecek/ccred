@@ -39,8 +39,8 @@ impl Secret {
         format!("sha256:{}", &hex::encode(digest)[..12])
     }
 
-    /// The only accessor for the raw value. Call it from `store` and
-    /// `validate` only.
+    /// The only accessor for the raw value. Its call sites are this file and
+    /// `validate.rs`, and CI fails the build if a third appears.
     pub fn expose(&self) -> &str {
         &self.0
     }

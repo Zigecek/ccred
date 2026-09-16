@@ -65,12 +65,12 @@ const LOCK_TIMEOUT: Duration = Duration::from_secs(5);
 /// When to act, and how hard to try.
 #[derive(Debug, Clone)]
 pub struct RefreshPolicy {
-    /// Refresh once the remaining refresh window drops below this.
+    /// Start exchanging tokens once the refresh window drops below this.
     ///
-    /// A successful refresh resets the whole window, so acting with ten days
-    /// to spare leaves at least three scheduled runs of margin before anything
-    /// could actually die -- while making far fewer calls than refreshing on
-    /// the access token's eight-hour cadence.
+    /// Not because an exchange extends the window -- it does not; the
+    /// deadline is fixed at login -- but because a profile nobody uses stops
+    /// having its tokens rotated at all, and ten days is when that begins to
+    /// matter. Earlier than that it would only multiply calls.
     pub window_below_ms: i64,
     /// Never attempt the same profile more often than this.
     pub min_interval_ms: i64,
@@ -122,11 +122,10 @@ pub enum Decision {
     Refresh,
     /// The access token has not expired yet, so there is nothing to exchange.
     ///
-    /// The refresh window only moves when Claude Code actually performs a
-    /// token exchange, and it only does that when the access token needs
-    /// renewing. Spawning against a profile whose access token is still live
-    /// cannot extend anything -- and, because success is judged by the window
-    /// moving, it would be recorded as a failure and earn a backoff.
+    /// Claude Code performs a token exchange only when it needs a new access
+    /// token. Spawning against a profile whose access token is still live
+    /// renews nothing, and since success is judged by the access token
+    /// renewing, it would be recorded as a failure and earn a backoff.
     SkipAccessLive,
     /// The refresh deadline is close and nothing can postpone it.
     ///
@@ -202,8 +201,7 @@ pub struct TokenState {
     /// The refresh token itself is past its stated expiry.
     pub refresh_expired: bool,
     /// The access token is past its stated expiry, so a probe would cause
-    /// Claude Code to exchange tokens -- which is the only thing that moves
-    /// the refresh window.
+    /// Claude Code to exchange tokens. Without that, a probe renews nothing.
     pub access_expired: bool,
     /// The credentials parse and pass validation at all.
     pub usable: bool,
@@ -561,6 +559,31 @@ fn restore_if_cleared(
     }
 }
 
+/// Put the real access-token expiry back after a forced run that renewed
+/// nothing.
+///
+/// Only when the store still holds exactly the backdated value. If anything
+/// else is there, Claude Code wrote it -- a renewal, or something the
+/// cleared-profile guard has already dealt with -- and it is not ours to
+/// overwrite.
+fn undo_backdate(
+    store: &dyn CredentialStore,
+    pre: Option<&crate::store::Loaded>,
+    backdated_to: Option<i64>,
+) {
+    let (Some(stale), Some(good)) = (backdated_to, pre) else {
+        return;
+    };
+    let still_ours = store
+        .load()
+        .ok()
+        .flatten()
+        .is_some_and(|l| l.creds.oauth.expires_at == stale);
+    if still_ours {
+        let _ = store.replace(&good.creds);
+    }
+}
+
 /// Refresh one idle profile by running Claude Code against its own store.
 ///
 /// Success is judged by an observed change in the credential store, never by
@@ -605,14 +628,15 @@ fn refresh_one(
 
     // `--force` means "make it happen now", and the one thing that stops it
     // happening is an access token that has not expired: Claude Code only
-    // exchanges tokens when it needs a new access token, and only an exchange
-    // moves the refresh window. Backdating the stored expiry is what turns a
-    // forced run into an actual exchange.
+    // exchanges tokens when it needs a new access token. Backdating the stored
+    // expiry is what turns a forced run into an actual exchange.
     //
-    // Safe to write: `assert_safe_replacement` guards the refresh window,
-    // which this does not touch. If the probe then fails, the profile is left
-    // claiming an expiry that has passed -- which only means the next run
-    // tries again, and the first success corrects it.
+    // This goes through `replace`, which checks validity and nothing else --
+    // it does not run the monotonic window gate. That is acceptable only
+    // because the write is undone on every path that does not end in a
+    // renewal: see `undo_backdate`. Left in place, a failed forced run would
+    // leave the profile's only record of its access token lying about it.
+    let mut backdated_to: Option<i64> = None;
     if force
         && let Some(good) = &pre
         && !validate_credentials(&good.creds.oauth, now)
@@ -627,7 +651,10 @@ fn refresh_one(
             // what was there a moment ago. Comparing against the original
             // would call a real exchange a failure whenever the token it
             // replaced happened to live longer than the new one.
-            Ok(()) => access_before = Some(stale),
+            Ok(()) => {
+                access_before = Some(stale);
+                backdated_to = Some(stale);
+            }
             // Not fatal. Everything else on this path degrades per profile,
             // and a forced run that cannot backdate is merely a forced run
             // that will find nothing to do.
@@ -658,7 +685,15 @@ fn refresh_one(
     let revision_before = store.revision().ok().flatten();
 
     for probe in ladder {
-        let outcome = cli.run(&scope, probe, policy.spawn_timeout)?;
+        let outcome = match cli.run(&scope, probe, policy.spawn_timeout) {
+            Ok(o) => o,
+            Err(e) => {
+                // The caller contains this error to the profile, but the
+                // backdated expiry would outlive it.
+                undo_backdate(&store, pre.as_ref(), backdated_to);
+                return Err(e);
+            }
+        };
 
         // Did the probe leave the profile worse than it found it?
         if let Some(restored) = restore_if_cleared(&store, pre.as_ref(), pre_was_usable, now) {
@@ -714,7 +749,9 @@ fn refresh_one(
         // in. The variable is honoured, so the renewal test below is the whole
         // proof: had another store been used, this profile's file could not
         // have changed.
-        let reloaded = store.load()?;
+        // A failed read is "not renewed", not a reason to leave: leaving here
+        // would skip the undo below and strand a backdated expiry.
+        let reloaded = store.load().ok().flatten();
         let access_after = reloaded.as_ref().map(|l| l.creds.oauth.expires_at);
 
         // Both sides must exist. `Some(0) > None` is true, so a store that
@@ -742,8 +779,11 @@ fn refresh_one(
         };
     }
 
-    // Nothing on the ladder worked. Back off rather than hammering: an
-    // unrecognised refresher that keeps retrying is how accounts get blocked.
+    // Nothing on the ladder worked, so a forced run leaves nothing behind.
+    undo_backdate(&store, pre.as_ref(), backdated_to);
+
+    // Back off rather than hammering: an unrecognised refresher that keeps
+    // retrying is how accounts get blocked.
     let failures = state.consecutive_failures.saturating_add(1);
     let next = now + backoff_ms(failures);
     ctx.repo().update_meta(name, |m| {
@@ -1400,5 +1440,71 @@ mod tests {
 
         let quiet = report(Decision::SkipFresh);
         assert!(!quiet.needs_attention() && !quiet.worth_retrying_sooner());
+    }
+
+    /// A forced run that renews nothing must leave the profile as it found
+    /// it. `--force` backdates the stored access-token expiry so that Claude
+    /// Code exchanges tokens; if nothing is exchanged, that false expiry was
+    /// staying behind as the profile's only record of its access token.
+    #[test]
+    fn a_forced_run_that_renews_nothing_leaves_the_real_expiry() {
+        use crate::store::CredentialStore;
+        use crate::store::file::FileStore;
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let store = FileStore::new(dir.path().to_path_buf());
+        let good: crate::model::CredentialsFile = serde_json::from_str(
+            r#"{"claudeAiOauth":{"accessToken":"sk-ant-oat01-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+               "refreshToken":"sk-ant-ort01-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+               "expiresAt":1788003600000,"refreshTokenExpiresAt":1790000000000,
+               "scopes":["user:inference"]}}"#,
+        )
+        .unwrap();
+        store.replace(&good).unwrap();
+        let pre = store.load().unwrap();
+
+        let stale = NOW - 60_000;
+        let mut backdated = good.clone();
+        backdated.oauth.expires_at = stale;
+        store.replace(&backdated).unwrap();
+
+        undo_backdate(&store, pre.as_ref(), Some(stale));
+        assert_eq!(
+            store.load().unwrap().unwrap().creds.oauth.expires_at,
+            1_788_003_600_000,
+            "the real expiry must be back"
+        );
+    }
+
+    /// If Claude Code wrote anything, it is not ours to overwrite -- that is
+    /// a renewal, or damage the cleared-profile guard has already handled.
+    #[test]
+    fn undoing_a_backdate_never_overwrites_what_claude_wrote() {
+        use crate::store::CredentialStore;
+        use crate::store::file::FileStore;
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let store = FileStore::new(dir.path().to_path_buf());
+        let good: crate::model::CredentialsFile = serde_json::from_str(
+            r#"{"claudeAiOauth":{"accessToken":"sk-ant-oat01-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+               "refreshToken":"sk-ant-ort01-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+               "expiresAt":1788003600000,"refreshTokenExpiresAt":1790000000000,
+               "scopes":["user:inference"]}}"#,
+        )
+        .unwrap();
+        store.replace(&good).unwrap();
+        let pre = store.load().unwrap();
+
+        // A renewal landed: a new expiry, not the backdated one.
+        let mut renewed = good.clone();
+        renewed.oauth.expires_at = NOW + 8 * 3_600_000;
+        store.replace(&renewed).unwrap();
+
+        undo_backdate(&store, pre.as_ref(), Some(NOW - 60_000));
+        assert_eq!(
+            store.load().unwrap().unwrap().creds.oauth.expires_at,
+            NOW + 8 * 3_600_000,
+            "a renewal must survive"
+        );
     }
 }
