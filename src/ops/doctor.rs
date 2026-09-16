@@ -85,6 +85,21 @@ pub fn doctor(ctx: &Ctx) -> crate::Result<Vec<Finding>> {
         )),
     }
 
+    if let Some(aside) = SwitchJournal::unsettled(&ctx.paths().unsettled_switch()) {
+        findings.push(Finding::error(
+            "an interrupted switch could not be settled",
+            format!(
+                concat!(
+                    "its journal was unreadable and is kept at {}. Until you run ",
+                    "`ccred save <name>` for the account `claude auth status` reports, ",
+                    "or `ccred switch <name>`, nothing copies the live credentials into ",
+                    "a profile"
+                ),
+                aside.display()
+            ),
+        ));
+    }
+
     // --- a lock nobody is holding ----------------------------------------
     let lock = lock_path_for(&storage_write_lock_target(ctx.paths().claude_config_dir()));
     if lock.exists() {
@@ -204,6 +219,57 @@ pub fn doctor(ctx: &Ctx) -> crate::Result<Vec<Finding>> {
             } else {
                 findings.push(Finding::ok(format!("active profile: {name}")));
             }
+        }
+    }
+
+    // --- whose tokens are live -------------------------------------------
+    //
+    // `.claude.json` can name one account while the tokens beside it are
+    // another's: a switch that died half-way leaves exactly that, and the
+    // name check above cannot see it. The tokens can.
+    if let Ok(Some(loaded)) = crate::store::load_unlocked(&live)
+        && let Some(msg) = super::simple::tokens_belong_elsewhere(ctx, active.as_ref(), &loaded)
+    {
+        findings.push(Finding::error(
+            msg,
+            concat!(
+                "if that is the account you are using, `ccred switch` to it; ",
+                "otherwise log in again with `claude auth login`"
+            ),
+        ));
+    }
+
+    // --- profiles that share a token -------------------------------------
+    //
+    // Refreshing either one retires the token the other holds. Allowed before
+    // `save` learned to refuse it, so it can still exist on disk.
+    let mut reported = std::collections::HashSet::new();
+    for name in ctx.repo().list().unwrap_or_default() {
+        if reported.contains(&name) {
+            continue;
+        }
+        let Ok(Some(loaded)) = ctx
+            .repo()
+            .store(&name)
+            .and_then(|s| crate::store::load_unlocked(&s))
+        else {
+            continue;
+        };
+        let holders = ctx.repo().holders_of(&loaded.creds.oauth.refresh_token);
+        if holders.len() > 1 {
+            let names = holders
+                .iter()
+                .map(|n| format!("'{n}'"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            findings.push(Finding::error(
+                format!("profiles {names} hold the same refresh token"),
+                concat!(
+                    "refreshing one signs the others out; keep the one you use ",
+                    "and remove the rest with `ccred rm`"
+                ),
+            ));
+            reported.extend(holders);
         }
     }
 

@@ -11,6 +11,7 @@ pub mod simple;
 pub mod switch;
 pub mod uninstall;
 
+use crate::lockfile::DirLock;
 use crate::model::{AccountSnapshot, ClaudeJsonDoc};
 use crate::paths::{Locations, Paths};
 use crate::profile::ProfileRepo;
@@ -50,6 +51,33 @@ impl Ctx {
     /// The store a plain `claude` reads from.
     pub fn live_store(&self) -> FileStore {
         FileStore::new(self.paths().claude_config_dir().to_path_buf())
+    }
+
+    /// Exclusive use of the profiles, between `ccred` processes.
+    ///
+    /// A refresh runs `claude` against one profile's own store for up to two
+    /// minutes. A switch that made that profile live meanwhile copied a
+    /// token the probe then rotated away, signing the live session out; and
+    /// the refresh, having read the active profile once at the start, never
+    /// knew. So every command that changes which profile is live, or writes
+    /// a profile's credentials, holds this, and `refresh` holds it for one
+    /// profile at a time and reads the active profile under it.
+    ///
+    /// Always taken before the live store's lock, never while holding it, so
+    /// the two cannot deadlock.
+    pub fn lock_profiles(&self, timeout: std::time::Duration) -> crate::Result<DirLock> {
+        crate::lockfile::acquire(&self.paths().state_dir().join(".profiles"), timeout).map_err(
+            |e| match e {
+                crate::error::CcredError::Busy(_) => crate::error::CcredError::Busy(
+                    concat!(
+                        "another ccred command is working on the profiles -- a scheduled ",
+                        "refresh can take a minute or two; try again shortly"
+                    )
+                    .into(),
+                ),
+                other => other,
+            },
+        )
     }
 
     /// Which account the live configuration currently names.

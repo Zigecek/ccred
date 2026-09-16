@@ -486,6 +486,7 @@ fn decision_label(d: Decision) -> (&'static str, anstyle::Style) {
         Decision::ExpiringSoon => ("expiring", WARN),
         Decision::NeedsLogin => ("needs login", ERR),
         Decision::Broken => ("broken", ERR),
+        Decision::Blocked => ("blocked", ERR),
     }
 }
 
@@ -535,7 +536,7 @@ pub fn refresh(theme: &Theme, r: &RefreshReport) {
     // broken for some other reason, such as a mirror refused because another
     // account is logged in.
     let logins = count(Decision::NeedsLogin);
-    let broken = count(Decision::Broken);
+    let broken = count(Decision::Broken) + count(Decision::Blocked);
     // A mirror that found nothing new wrote nothing, so it is not an update.
     let moved = r
         .profiles

@@ -242,24 +242,44 @@ impl ProfileRepo {
         if incoming.refresh_token.is_blank() {
             return Ok(());
         }
-        for other in self.list().unwrap_or_default() {
-            if &other == name {
-                continue;
-            }
-            let Ok(Some(theirs)) = self.store(&other).and_then(|s| s.load()) else {
-                continue;
-            };
-            if theirs.creds.oauth.refresh_token == incoming.refresh_token {
-                return Err(CcredError::UnsafeWrite(format!(
-                    concat!(
-                        "these credentials are the ones stored as profile '{}', not '{}'; ",
-                        "check `ccred current`, and log in again if the account shown is wrong"
-                    ),
-                    other, name
-                )));
-            }
+        if let Some(other) = self
+            .holders_of(&incoming.refresh_token)
+            .into_iter()
+            .find(|other| other != name)
+        {
+            return Err(CcredError::UnsafeWrite(format!(
+                concat!(
+                    "these credentials are the ones stored as profile '{}', not '{}'; ",
+                    "check `ccred current`, and log in again if the account shown is wrong"
+                ),
+                other, name
+            )));
         }
         Ok(())
+    }
+
+    /// The profiles whose stored refresh token is `token`.
+    ///
+    /// A refresh token is issued to one login, so this is the one reliable
+    /// answer to "whose credentials are these" -- `.claude.json` can name a
+    /// different account than the tokens beside it belong to.
+    ///
+    /// A profile that cannot be read is left out rather than failing the
+    /// question: one damaged profile would otherwise refuse every save.
+    pub fn holders_of(&self, token: &crate::redact::Secret) -> Vec<ProfileName> {
+        if token.is_blank() {
+            return Vec::new();
+        }
+        self.list()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|name| {
+                matches!(
+                    self.store(name).and_then(|s| s.load()),
+                    Ok(Some(theirs)) if &theirs.creds.oauth.refresh_token == token
+                )
+            })
+            .collect()
     }
 
     /// Copy credentials from `source` into the named profile.
@@ -281,7 +301,6 @@ impl ProfileRepo {
 
         let existing_meta = self.meta(name)?;
         self.assert_same_account(name, existing_meta.as_ref(), &account.identity)?;
-        self.assert_not_held_elsewhere(name, &loaded.creds.oauth)?;
 
         let target = self.store(name)?;
 
@@ -309,6 +328,11 @@ impl ProfileRepo {
             })?;
             return Ok(SaveOutcome::Unchanged);
         }
+
+        // After the unchanged case, which writes nothing: two profiles that
+        // already share a token -- allowed before this check existed -- would
+        // otherwise be reported broken on every run until the token rotates.
+        self.assert_not_held_elsewhere(name, &loaded.creds.oauth)?;
 
         let outcome = if existing_meta.is_some() {
             SaveOutcome::Updated

@@ -137,6 +137,15 @@ pub enum Decision {
     /// The refresh token is gone; only a person can fix this.
     NeedsLogin,
     Broken,
+    /// Something only a person can settle, and that trying again will not
+    /// change: the live login is another account's, an interrupted switch
+    /// could not be read, a profile holds the tokens that are live.
+    ///
+    /// Kept apart from `Broken` because `Broken` lifts the over-fire rate
+    /// limit, which is right for trouble a retry might clear and wrong for
+    /// this: a mirror refused for as long as another account stays logged in
+    /// turned every scheduler firing into a full run.
+    Blocked,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -168,7 +177,10 @@ impl RefreshReport {
         self.profiles.iter().any(|p| {
             matches!(
                 p.decision,
-                Decision::NeedsLogin | Decision::Broken | Decision::ExpiringSoon
+                Decision::NeedsLogin
+                    | Decision::Broken
+                    | Decision::Blocked
+                    | Decision::ExpiringSoon
             )
         })
     }
@@ -364,19 +376,23 @@ pub fn refresh(ctx: &Ctx, opts: &RefreshOptions) -> crate::Result<RefreshReport>
         crate::journal::SwitchJournal::load(&ctx.paths().switch_journal()),
         Ok(None)
     ) {
+        let profiles = ctx.lock_profiles(PROFILES_LOCK_TIMEOUT);
         let live = ctx.live_store();
-        match live.lock(LOCK_TIMEOUT) {
-            Ok(_guard) => {
-                super::switch::recover_locked(ctx, &mut Vec::new())?;
+        match (profiles, live.lock(LOCK_TIMEOUT)) {
+            (Ok(_profiles), Ok(_live)) => {
+                // An unreadable journal is set aside and marked unsettled;
+                // the mirror below then refuses, and says why. Stopping the
+                // run here instead left no log entry and no last-run record
+                // -- nothing a person could find later.
+                let _ = super::switch::recover_locked(ctx, &mut Vec::new());
             }
-            Err(CcredError::Busy(_)) => {
+            (Err(CcredError::Busy(_)), _) | (_, Err(CcredError::Busy(_))) => {
                 return Ok(RefreshReport::skipped("a switch is in progress"));
             }
-            Err(e) => return Err(e),
+            (Err(e), _) | (_, Err(e)) => return Err(e),
         }
     }
 
-    let active = ctx.repo().active()?;
     let mut results = Vec::new();
     let mut spawned = 0usize;
     // Set when `claude` could not be found, so the run can exit with
@@ -388,6 +404,25 @@ pub fn refresh(ctx: &Ctx, opts: &RefreshOptions) -> crate::Result<RefreshReport>
     let mut cli: Option<ClaudeCli> = None;
 
     for name in ctx.repo().list()? {
+        // One profile at a time under the profiles lock, with the active
+        // profile read under it. Read once for the whole run, it went stale
+        // whenever someone switched during a probe, and the profile they had
+        // just made live was then refreshed through its own store -- rotating
+        // away the token the live session held.
+        let _profiles = match ctx.lock_profiles(PROFILES_LOCK_TIMEOUT) {
+            Ok(guard) => guard,
+            Err(e) => {
+                results.push(ProfileResult {
+                    name: name.as_str().to_string(),
+                    decision: Decision::SkipBackoff,
+                    detail: Some(format!("left for the next run: {e}")),
+                    window_days_before: None,
+                    window_days_after: None,
+                });
+                continue;
+            }
+        };
+        let active = ctx.repo().active()?;
         let is_active = active.as_ref() == Some(&name);
         let store = ctx.repo().store(&name)?;
         let loaded = store.load().ok().flatten();
@@ -446,8 +481,23 @@ pub fn refresh(ctx: &Ctx, opts: &RefreshOptions) -> crate::Result<RefreshReport>
                             detail = Some(format!("{settled}; copied on the next run"));
                         }
                         Err(e) => {
-                            decision = Decision::Broken;
+                            decision = Decision::Blocked;
                             detail = Some(format!("not mirrored: {e}"));
+                        }
+                        Ok(None)
+                            if crate::journal::SwitchJournal::unsettled(
+                                &ctx.paths().unsettled_switch(),
+                            )
+                            .is_some() =>
+                        {
+                            decision = Decision::Blocked;
+                            detail = Some(
+                                concat!(
+                                    "not mirrored: an interrupted switch could not be read. ",
+                                    "Check `ccred current`, then `ccred save` the account it shows"
+                                )
+                                .into(),
+                            );
                         }
                         Ok(None) => {
                             let account = ctx.live_account();
@@ -458,7 +508,7 @@ pub fn refresh(ctx: &Ctx, opts: &RefreshOptions) -> crate::Result<RefreshReport>
                                 // that loses tokens: the live pair renewed, the
                                 // profile still holding the rotated-away one.
                                 Err(e) => {
-                                    decision = Decision::Broken;
+                                    decision = Decision::Blocked;
                                     detail = Some(format!("not mirrored: {e}"));
                                 }
                             }
@@ -471,6 +521,20 @@ pub fn refresh(ctx: &Ctx, opts: &RefreshOptions) -> crate::Result<RefreshReport>
                         detail = Some(format!("not mirrored, store is busy: {e}"));
                     }
                 }
+            }
+            // Whatever the pointer says, a profile holding the very tokens
+            // that are live is the live login's copy: exchanging its token
+            // retires the one the running session uses.
+            Decision::Refresh if holds_the_live_tokens(ctx, loaded.as_ref()) => {
+                decision = Decision::Blocked;
+                detail = Some(
+                    concat!(
+                        "not refreshed: it holds the tokens that are live right now, ",
+                        "and refreshing this copy would sign the live session out. ",
+                        "`ccred current` says which profile is active"
+                    )
+                    .into(),
+                );
             }
             Decision::Refresh => {
                 spawned += 1;
@@ -596,6 +660,23 @@ pub fn refresh(ctx: &Ctx, opts: &RefreshOptions) -> crate::Result<RefreshReport>
     let _ = crate::logbook::append(&ctx.paths().log_dir(), &log_entry(now, &report));
 
     Ok(report)
+}
+
+/// How long a refresh waits for another `ccred` command to finish with the
+/// profiles before leaving a profile for the next run. Short: a switch or a
+/// save holds them for a moment, and an unattended run has no reason to wait
+/// longer than that.
+const PROFILES_LOCK_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Does this stored copy hold the refresh token that is live?
+fn holds_the_live_tokens(ctx: &Ctx, stored: Option<&crate::store::Loaded>) -> bool {
+    let Some(stored) = stored else {
+        return false;
+    };
+    matches!(
+        crate::store::load_unlocked(&ctx.live_store()),
+        Ok(Some(live)) if live.creds.oauth.refresh_token == stored.creds.oauth.refresh_token
+    )
 }
 
 /// Put a profile back if the spawned `claude` emptied it.

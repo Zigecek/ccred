@@ -102,6 +102,29 @@ impl SwitchJournal {
         Ok(aside)
     }
 
+    /// Record that a switch could not be settled, naming where its journal
+    /// went.
+    ///
+    /// Moving the journal aside stops it wedging every later command, but
+    /// the question it would have answered -- whose tokens are live -- is
+    /// still open. While this marker exists nothing copies the live
+    /// credentials into a profile on its own; a `save` or `switch` a person
+    /// runs settles the question and removes it.
+    pub fn mark_unsettled(marker: &Path, aside: &Path) -> crate::Result<()> {
+        write_atomic(marker, aside.to_string_lossy().as_bytes(), true)
+    }
+
+    /// Where the unreadable journal was put, while the question is open.
+    pub fn unsettled(marker: &Path) -> Option<std::path::PathBuf> {
+        std::fs::read_to_string(marker)
+            .ok()
+            .map(|text| std::path::PathBuf::from(text.trim()))
+    }
+
+    pub fn clear_unsettled(marker: &Path) -> crate::Result<()> {
+        Self::clear(marker)
+    }
+
     pub fn clear(path: &Path) -> crate::Result<()> {
         match std::fs::remove_file(path) {
             Ok(()) => Ok(()),

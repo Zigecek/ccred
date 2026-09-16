@@ -165,6 +165,12 @@ impl Paths {
         self.state_dir().join("switch.journal")
     }
 
+    /// Present while an interrupted switch could not be settled; see
+    /// [`crate::journal::SwitchJournal::mark_unsettled`].
+    pub fn unsettled_switch(&self) -> PathBuf {
+        self.state_dir().join("switch.unsettled")
+    }
+
     pub fn last_run(&self) -> PathBuf {
         self.state_dir().join("last-run.json")
     }

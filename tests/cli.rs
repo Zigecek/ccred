@@ -1735,12 +1735,18 @@ fn a_mirror_that_is_refused_is_not_reported_as_done() {
 
     let (out, err, code) = sb.run(&["refresh"]);
     assert_eq!(code, 4, "a person is needed:\n{out}{err}");
-    assert!(out.contains("broken"), "{out}");
+    assert!(out.contains("blocked"), "{out}");
     assert!(
         out.contains("not mirrored"),
         "the reason must be given: {out}"
     );
     assert!(out.contains("1 need attention"), "{out}");
+
+    // Nothing a retry can change, so it must not lift the over-fire limit:
+    // every scheduler firing used to become a full run.
+    let (out, _, code) = sb.run(&["refresh", "--if-older-than", "12"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("nothing to do"), "the limit was lifted: {out}");
     assert!(
         !out.contains("need a login"),
         "logging in is not the fix: {out}"
@@ -1782,4 +1788,117 @@ fn a_switch_that_meets_an_unreadable_journal_stops() {
     assert_eq!(code, 7, "{out}{err}");
     assert!(err.contains("ccred current"), "{err}");
     assert_eq!(std::fs::read(&work).unwrap(), before);
+}
+
+/// A killed switch leaves bob's tokens live under alice's name. `current`
+/// and `doctor` used to trust the name; the tokens say whose they are.
+#[test]
+fn live_tokens_that_are_another_profiles_are_pointed_out() {
+    let (sb, _, _) = sandbox_after_a_killed_switch(b"{ unreadable");
+    std::fs::remove_file(sb.path().join(".ccred/state/switch.journal")).unwrap();
+
+    let (out, _, _) = sb.run(&["current"]);
+    assert!(
+        out.contains("stored as profile 'personal'"),
+        "current trusted the name: {out}"
+    );
+    let (out, _, code) = sb.run(&["doctor"]);
+    assert_eq!(code, 7, "{out}");
+    assert!(out.contains("stored as profile 'personal'"), "{out}");
+}
+
+/// Two profiles with one refresh token -- possible before `save` refused it
+/// -- are a trap: refreshing one signs the other out.
+#[test]
+fn profiles_sharing_a_token_are_reported_and_not_broken() {
+    let sb = Sandbox::new();
+    sb.run(&["save", "work"]);
+    // A second name for the same login, as an older version allowed.
+    let from = sb.path().join(".ccred/profiles/work");
+    let to = sb.path().join(".ccred/profiles/work2");
+    std::fs::create_dir_all(&to).unwrap();
+    for entry in std::fs::read_dir(&from).unwrap().flatten() {
+        std::fs::copy(entry.path(), to.join(entry.file_name())).unwrap();
+    }
+    let meta = std::fs::read_to_string(to.join("ccred.json"))
+        .unwrap()
+        .replace("\"work\"", "\"work2\"");
+    std::fs::write(to.join("ccred.json"), meta).unwrap();
+
+    let (out, _, _) = sb.run(&["doctor"]);
+    assert!(out.contains("hold the same refresh token"), "{out}");
+
+    // The active one still mirrors: nothing new is written, so nothing is
+    // refused.
+    let (out, _, code) = sb.run(&["refresh"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(!out.contains("blocked"), "{out}");
+}
+
+/// Holds `~/.ccred/state/.profiles.lock` the way a running refresh does,
+/// heartbeat included, until dropped.
+struct ProfilesHeld {
+    lock: std::path::PathBuf,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    beat: Option<std::thread::JoinHandle<()>>,
+}
+
+impl ProfilesHeld {
+    fn new(sb: &Sandbox) -> Self {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let lock = sb.path().join(".ccred/state/.profiles.lock");
+        std::fs::create_dir_all(&lock).unwrap();
+        let stop = std::sync::Arc::new(AtomicBool::new(false));
+        let beat = {
+            let stop = std::sync::Arc::clone(&stop);
+            let lock = lock.clone();
+            std::thread::spawn(move || {
+                while !stop.load(Ordering::Relaxed) {
+                    let f = lock.join("beat");
+                    let _ = std::fs::write(&f, b"1");
+                    let _ = std::fs::remove_file(&f);
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                }
+            })
+        };
+        ProfilesHeld {
+            lock,
+            stop,
+            beat: Some(beat),
+        }
+    }
+}
+
+impl Drop for ProfilesHeld {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        if let Some(beat) = self.beat.take() {
+            let _ = beat.join();
+        }
+        let _ = std::fs::remove_dir_all(&self.lock);
+    }
+}
+
+/// While a refresh is probing a profile, a switch must not make that
+/// profile live -- the probe would then retire the token the new live
+/// session holds -- and a refresh must not probe what a switch is moving.
+#[test]
+fn a_switch_and_a_refresh_never_work_on_the_profiles_at_once() {
+    let sb = Sandbox::new();
+    sb.run(&["save", "work"]);
+    sb.login_b();
+    sb.run(&["save", "personal"]);
+    let held = ProfilesHeld::new(&sb);
+
+    let (out, err, code) = sb.run(&["switch", "work"]);
+    assert_eq!(code, 6, "a busy lock is Busy:\n{out}{err}");
+    assert!(err.contains("try again shortly"), "{err}");
+
+    let (out, _, code) = sb.run(&["refresh"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("left for the next run"), "{out}");
+
+    drop(held);
+    let (out, err, code) = sb.run(&["switch", "work"]);
+    assert_eq!(code, 0, "{out}{err}");
 }

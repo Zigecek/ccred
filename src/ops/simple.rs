@@ -118,6 +118,14 @@ pub fn current(ctx: &Ctx) -> crate::Result<CurrentReport> {
             account.label()
         ));
     }
+    // The name in `.claude.json` can be stale while the tokens are another
+    // profile's -- what a switch leaves when it dies half-way. The tokens say
+    // whose they are.
+    if pointer_mismatch.is_none()
+        && let Some(l) = &loaded
+    {
+        pointer_mismatch = tokens_belong_elsewhere(ctx, active.as_ref(), l);
+    }
 
     let last_synced_at_ms = match &active {
         Some(name) => ctx
@@ -144,6 +152,24 @@ pub fn current(ctx: &Ctx) -> crate::Result<CurrentReport> {
         pointer_mismatch,
         live_error,
     })
+}
+
+/// The warning for live tokens that are stored as a profile other than the
+/// active one, if they are.
+pub fn tokens_belong_elsewhere(
+    ctx: &Ctx,
+    active: Option<&ProfileName>,
+    live: &crate::store::Loaded,
+) -> Option<String> {
+    let holders = ctx.repo().holders_of(&live.creds.oauth.refresh_token);
+    if holders.is_empty() || active.is_some_and(|a| holders.contains(a)) {
+        return None;
+    }
+    Some(format!(
+        "the live credentials are the ones stored as profile '{}', but the active profile is {}",
+        holders[0],
+        active.map_or_else(|| "none".to_string(), |a| format!("'{a}'"))
+    ))
 }
 
 pub fn list(ctx: &Ctx) -> crate::Result<Vec<ProfileRow>> {
@@ -334,6 +360,10 @@ pub fn save(ctx: &Ctx, name: &ProfileName) -> crate::Result<SaveReport> {
     // hung, with our heartbeat keeping the lock from ever looking stale.
     let live = ctx.live_store();
     let mut warnings = Vec::new();
+    // Held to the end, unlike the live lock: a scheduled refresh must not
+    // probe this profile between the store being written and the pointer
+    // naming it.
+    let _profiles = ctx.lock_profiles(SAVE_LOCK_TIMEOUT)?;
     let (outcome, account) = {
         let _guard = live.lock(SAVE_LOCK_TIMEOUT)?;
 
@@ -362,6 +392,9 @@ pub fn save(ctx: &Ctx, name: &ProfileName) -> crate::Result<SaveReport> {
     // every later command would (correctly) report a mismatch that the user
     // had in fact just resolved.
     ctx.repo().set_active(name)?;
+    // A person saved the account that is logged in under a name they chose:
+    // that answers what an unreadable switch journal left open.
+    crate::journal::SwitchJournal::clear_unsettled(&ctx.paths().unsettled_switch())?;
 
     let already_expired = live
         .load()
@@ -370,6 +403,9 @@ pub fn save(ctx: &Ctx, name: &ProfileName) -> crate::Result<SaveReport> {
         .and_then(|l| validate_credentials(&l.creds.oauth, now_ms()).ok())
         .is_some_and(|h| h.refresh_expired);
 
+    // Released before the scheduler is touched: registering it can start the
+    // job, which runs `ccred refresh`, which would wait on this lock.
+    drop(_profiles);
     let schedule = auto_schedule(ctx, outcome);
 
     Ok(SaveReport {
@@ -389,6 +425,7 @@ pub fn save(ctx: &Ctx, name: &ProfileName) -> crate::Result<SaveReport> {
 
 /// Put a profile's last-known-good credentials back.
 pub fn restore(ctx: &Ctx, name: &ProfileName) -> crate::Result<()> {
+    let _profiles = ctx.lock_profiles(SAVE_LOCK_TIMEOUT)?;
     if !ctx.repo().exists(name)? {
         return Err(CcredError::ProfileNotFound(name.as_str().to_string()));
     }
@@ -405,6 +442,8 @@ pub fn restore(ctx: &Ctx, name: &ProfileName) -> crate::Result<()> {
 }
 
 pub fn remove(ctx: &Ctx, name: &ProfileName) -> crate::Result<RemoveReport> {
+    // A refresh may be running `claude` against this very directory.
+    let _profiles = ctx.lock_profiles(SAVE_LOCK_TIMEOUT)?;
     if !ctx.repo().exists(name)? {
         return Err(CcredError::ProfileNotFound(name.as_str().to_string()));
     }

@@ -309,11 +309,13 @@ fn exec_line(spec: &ScheduleSpec) -> String {
 /// usable command; refusing up front says why, and what to do.
 fn unusable_binary_path(exe: &std::path::Path) -> Option<String> {
     let text = exe.to_string_lossy();
-    text.contains(['\'', '"', '\\']).then(|| {
+    let refused = |c: char| matches!(c, '\'' | '"' | '\\') || c.is_control();
+    text.contains(refused).then(|| {
         format!(
             concat!(
-                "systemd will not start a program whose path contains a quote or a ",
-                "backslash ({}); install ccred somewhere else and run this again"
+                "systemd will not start a program whose path contains a quote, a ",
+                "backslash or a control character ({:?}); install ccred somewhere ",
+                "else and run this again"
             ),
             text
         )
@@ -495,6 +497,9 @@ mod tests {
                 "{err}"
             );
         }
+        let mut s = crate::schedule::tests::spec();
+        s.exe = PathBuf::from("/opt/tab\there/ccred");
+        assert!(Systemd.render(&s).is_err(), "a control character too");
         let mut s = crate::schedule::tests::spec();
         s.exe = PathBuf::from("/opt/100% $HOME/ccred");
         assert!(Systemd.render(&s).is_ok());

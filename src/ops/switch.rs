@@ -56,6 +56,7 @@ pub fn switch(ctx: &Ctx, target: &ProfileName, force: bool) -> crate::Result<Swi
     // Held from before recovery to the end. A journal left by a crash and a
     // journal belonging to a switch that is still running look the same from
     // outside; only the lock tells them apart.
+    let _profiles = ctx.lock_profiles(LOCK_TIMEOUT)?;
     let live = ctx.live_store();
     let _guard = live.lock(LOCK_TIMEOUT)?;
     let recovered = recover_locked(ctx, &mut warnings)?;
@@ -123,6 +124,9 @@ pub fn switch(ctx: &Ctx, target: &ProfileName, force: bool) -> crate::Result<Swi
     ctx.repo().set_active(target)?;
     journal.advance(&journal_path, SwitchPhase::PointerUpdated)?;
     SwitchJournal::clear(&journal_path)?;
+    // The live store now holds exactly the target's stored credentials and
+    // `.claude.json` names its account: whatever was unsettled, is not.
+    SwitchJournal::clear_unsettled(&ctx.paths().unsettled_switch())?;
 
     let account = ctx
         .repo()
@@ -156,6 +160,17 @@ fn sync_outgoing(ctx: &Ctx, from: Option<&ProfileName>) -> crate::Result<Outgoin
     let Some(from) = from else {
         return Ok(OutgoingSync::NothingActive);
     };
+    if SwitchJournal::unsettled(&ctx.paths().unsettled_switch()).is_some() {
+        return Ok(OutgoingSync::Skipped {
+            profile: from.as_str().to_string(),
+            reason: concat!(
+                "an interrupted switch could not be read, so the live credentials ",
+                "may belong to another account"
+            )
+            .into(),
+            backup: None,
+        });
+    }
     if !ctx.repo().exists(from)? {
         return Ok(OutgoingSync::Skipped {
             profile: from.as_str().to_string(),
@@ -230,6 +245,7 @@ pub(crate) fn recover_locked(
             // replaced the live credentials without updating the account
             // `.claude.json` names, and carrying on would trust that name.
             let aside = SwitchJournal::set_aside(&path, now_ms())?;
+            SwitchJournal::mark_unsettled(&ctx.paths().unsettled_switch(), &aside)?;
             return Err(CcredError::UnsafeWrite(format!(
                 concat!(
                     "an interrupted switch left a journal that cannot be read; it was moved ",
