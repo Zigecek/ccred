@@ -218,6 +218,70 @@ pub struct TokenState {
     pub usable: bool,
 }
 
+/// What the stored credentials say about themselves. Unusable or absent
+/// credentials come back as the default, which `decide` reads as `Broken`.
+fn token_state(loaded: Option<&crate::store::Loaded>, now: i64) -> TokenState {
+    match loaded {
+        Some(l) => match validate_credentials(&l.creds.oauth, now) {
+            Ok(h) => TokenState {
+                window_left_ms: h.refresh_window_left_ms,
+                refresh_expired: h.refresh_expired,
+                access_expired: h.access_expired,
+                usable: true,
+            },
+            Err(_) => TokenState::default(),
+        },
+        None => TokenState::default(),
+    }
+}
+
+/// What a refresh would do, without spawning anything or writing anything.
+///
+/// The decision phase and nothing else: no lock is taken, for the same
+/// reason `list` takes none -- a preview must not queue behind the run it is
+/// previewing. It therefore reports what is true at this moment, which is
+/// what a preview is.
+pub fn preview(ctx: &Ctx, opts: &RefreshOptions) -> crate::Result<RefreshReport> {
+    let now = now_ms();
+    let active = ctx.repo().active().unwrap_or(None);
+    let mut profiles = Vec::new();
+
+    for name in ctx.repo().list()? {
+        let is_active = active.as_ref() == Some(&name);
+        let loaded = ctx
+            .repo()
+            .store(&name)
+            .ok()
+            .and_then(|s| s.load().ok().flatten());
+        let tokens = token_state(loaded.as_ref(), now);
+        let window_before = tokens.window_left_ms;
+        let state = ctx
+            .repo()
+            .meta(&name)
+            .ok()
+            .flatten()
+            .map(|m| m.refresh)
+            .unwrap_or_default();
+        let (state, tokens, policy) = if opts.force {
+            forced(state, tokens, &opts.policy)
+        } else {
+            (state, tokens, opts.policy.clone())
+        };
+        profiles.push(ProfileResult {
+            name: name.as_str().to_string(),
+            decision: decide(is_active, tokens, &state, now, &policy),
+            detail: None,
+            window_days_before: window_before.map(|ms| ms / DAY_MS),
+            window_days_after: None,
+        });
+    }
+
+    Ok(RefreshReport {
+        status: "dry run".to_string(),
+        profiles,
+    })
+}
+
 /// Decide what to do with one profile. Pure, so the policy is testable.
 pub fn decide(
     is_active: bool,
@@ -427,18 +491,7 @@ pub fn refresh(ctx: &Ctx, opts: &RefreshOptions) -> crate::Result<RefreshReport>
         let store = ctx.repo().store(&name)?;
         let loaded = store.load().ok().flatten();
 
-        let tokens = match &loaded {
-            Some(l) => match validate_credentials(&l.creds.oauth, now) {
-                Ok(h) => TokenState {
-                    window_left_ms: h.refresh_window_left_ms,
-                    refresh_expired: h.refresh_expired,
-                    access_expired: h.access_expired,
-                    usable: true,
-                },
-                Err(_) => TokenState::default(),
-            },
-            None => TokenState::default(),
-        };
+        let tokens = token_state(loaded.as_ref(), now);
         let window_before = tokens.window_left_ms;
 
         let meta = ctx.repo().meta(&name)?;

@@ -1595,6 +1595,45 @@ fn a_due_profile_is_renewed_through_the_first_rung_that_works() {
     assert!(out.contains("work refresh"), "{out}");
 }
 
+/// "Why did the schedule leave that profile alone" should not cost an
+/// exchange to answer. A preview decides and stops: nothing spawned, nothing
+/// written, not even the log.
+#[test]
+fn a_dry_run_refresh_decides_and_touches_nothing() {
+    let (sb, creds) = sandbox_with_a_due_profile();
+    let before = std::fs::read(&creds).unwrap();
+
+    let (out, err, code) = sb.run(&["refresh", "--dry-run"]);
+    assert_eq!(code, 0, "{err}{out}");
+    assert!(out.contains("would refresh"), "{out}");
+    assert!(out.contains("dry run"), "{out}");
+    assert!(!out.contains("refreshed"), "nothing happened: {out}");
+
+    assert_eq!(
+        std::fs::read(&creds).unwrap(),
+        before,
+        "a preview must not write a credential file"
+    );
+    assert!(
+        !sb.path().join(".ccred/logs/ccred.jsonl").exists(),
+        "a preview must not leave a log entry"
+    );
+    assert!(
+        !sb.path().join(".ccred/state/last-run.json").exists(),
+        "a preview must not count as a run"
+    );
+
+    // And the same decisions come back as JSON.
+    let (out, _, code) = sb.run(&["refresh", "--dry-run", "--json"]);
+    assert_eq!(code, 0, "{out}");
+    let report: serde_json::Value = serde_json::from_str(&out).expect("valid JSON");
+    assert_eq!(report["status"], serde_json::json!("dry run"));
+    assert!(
+        report["profiles"].as_array().unwrap().len() >= 2,
+        "{report}"
+    );
+}
+
 /// "The timer has not fired since Tuesday and you have been refreshing by
 /// hand" is a thing the log could not say: every run looked alike. Only the
 /// registered job passes `--if-older-than`, so that is what tells them apart.

@@ -150,6 +150,13 @@ pub enum Command {
         /// Path to the claude binary, when it is not on PATH.
         #[arg(long, value_name = "PATH")]
         claude_path: Option<std::path::PathBuf>,
+        /// Say what each profile would do, without doing any of it.
+        ///
+        /// Nothing is spawned and nothing is written, so this answers "why
+        /// did the schedule leave that profile alone" without spending an
+        /// exchange to find out.
+        #[arg(long)]
+        dry_run: bool,
     },
 
     /// Install, remove or inspect the background refresh schedule.

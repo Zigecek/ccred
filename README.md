@@ -136,7 +136,7 @@ ccred save <name>         store the account that is logged in, under a name
 ccred switch <name>       make a saved profile the active account
 ccred rm <name>           delete a profile
 ccred restore <name>      put a profile's last-known-good credentials back
-ccred refresh             keep stored profiles from expiring
+ccred refresh             keep stored profiles from expiring (--dry-run to just look)
 ccred schedule install    run that refresh automatically, twice a week
 ccred schedule status     is it registered, and when does it next run
 ccred doctor              check for anything quietly wrong
@@ -190,6 +190,10 @@ decided it was signed out, and it wrote an empty credential blob over the
 store. Every safety gate here guards what *ccred* writes, and that write was
 not ours. `refresh` now undoes such damage by itself, and `doctor` says which
 profiles have a copy worth restoring.
+
+`ccred refresh --dry-run` says what each profile would do and stops there --
+nothing spawned, nothing written, not even a log entry. It is how to find out
+why the schedule left a profile alone without spending an exchange to see.
 
 `ccred schedule install --dry-run` prints the exact unit file, plist or task
 XML it would register, without writing anything.

@@ -105,6 +105,7 @@ fn run(cli: &Cli, theme: &Theme) -> ccred::Result<ExitCode> {
             force,
             all: _,
             claude_path,
+            dry_run,
         }) => {
             let opts = refresh::RefreshOptions {
                 if_older_than_ms: if_older_than.map(|h| i64::from(h) * 3_600_000),
@@ -112,6 +113,17 @@ fn run(cli: &Cli, theme: &Theme) -> ccred::Result<ExitCode> {
                 force: *force,
                 ..Default::default()
             };
+            if *dry_run {
+                let report = refresh::preview(&ctx, &opts)?;
+                if cli.json {
+                    print_json(&report);
+                } else {
+                    render::refresh_preview(theme, &report);
+                }
+                // A preview is a report, not a verdict: it must not turn a
+                // scheduler red for something it only looked at.
+                return Ok(ExitCode::Ok);
+            }
             let report = refresh::refresh(&ctx, &opts)?;
             if cli.json {
                 print_json(&report);

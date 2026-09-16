@@ -515,14 +515,17 @@ pub fn switch(theme: &Theme, r: &SwitchReport) {
 // --- refresh --------------------------------------------------------------
 
 /// What each decision means, in the words a reader would use.
-fn decision_label(d: Decision) -> (&'static str, anstyle::Style) {
+fn decision_label(d: Decision, done: bool) -> (&'static str, anstyle::Style) {
     match d {
-        Decision::MirrorActive => ("mirrored", OK),
+        // The four that describe an action read differently before it
+        // happens: a preview that says "refreshed" is a report of something
+        // that did not occur.
+        Decision::MirrorActive => (if done { "mirrored" } else { "would mirror" }, OK),
+        Decision::Refresh => (if done { "refreshed" } else { "would refresh" }, OK),
         Decision::SkipFresh => ("up to date", MUTED),
         Decision::SkipAccessLive => ("not due yet", MUTED),
         Decision::SkipBackoff => ("backing off", WARN),
         Decision::SkipCap => ("rate capped", WARN),
-        Decision::Refresh => ("refreshed", OK),
         Decision::ExpiringSoon => ("expiring", WARN),
         Decision::NeedsLogin => ("needs login", ERR),
         Decision::Broken => ("broken", ERR),
@@ -531,6 +534,23 @@ fn decision_label(d: Decision) -> (&'static str, anstyle::Style) {
 }
 
 pub fn refresh(theme: &Theme, r: &RefreshReport) {
+    refresh_report(theme, r, true);
+}
+
+/// The same table for a preview, in the tense of something that has not
+/// happened yet.
+pub fn refresh_preview(theme: &Theme, r: &RefreshReport) {
+    refresh_report(theme, r, false);
+    callout(
+        MUTED,
+        theme.glyphs.bullet,
+        "dry run -- nothing was spawned and nothing was written",
+        &[],
+    );
+    println!();
+}
+
+fn refresh_report(theme: &Theme, r: &RefreshReport, done: bool) {
     let g = theme.glyphs;
     println!();
 
@@ -551,7 +571,7 @@ pub fn refresh(theme: &Theme, r: &RefreshReport) {
         ("WINDOW", Align::Left),
     ]);
     for p in &r.profiles {
-        let (label, style) = decision_label(p.decision);
+        let (label, style) = decision_label(p.decision, done);
         let window = match (p.window_days_before, p.window_days_after) {
             (Some(before), Some(after)) if after != before => {
                 format!("{before}d {} {after}d", g.arrow)
@@ -590,8 +610,9 @@ pub fn refresh(theme: &Theme, r: &RefreshReport) {
     let mut summary = paint(
         MUTED,
         &format!(
-            "{}, {moved} updated",
-            plural(r.profiles.len(), "profile", "profiles")
+            "{}, {moved} {}",
+            plural(r.profiles.len(), "profile", "profiles"),
+            if done { "updated" } else { "to update" }
         ),
     );
     if logins > 0 {
@@ -1171,12 +1192,15 @@ mod tests {
             Decision::NeedsLogin,
             Decision::Broken,
         ] {
-            let (label, _) = decision_label(d);
-            assert!(!label.is_empty(), "{d:?} has no label");
-            assert!(
-                label.chars().all(|c| c.is_ascii_lowercase() || c == ' '),
-                "{d:?} produced {label:?}, which looks like a Debug spelling"
-            );
+            // Both tenses: a preview says what would happen, a run what did.
+            for done in [true, false] {
+                let (label, _) = decision_label(d, done);
+                assert!(!label.is_empty(), "{d:?} has no label");
+                assert!(
+                    label.chars().all(|c| c.is_ascii_lowercase() || c == ' '),
+                    "{d:?} produced {label:?}, which looks like a Debug spelling"
+                );
+            }
         }
     }
 
