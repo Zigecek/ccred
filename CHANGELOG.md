@@ -1,5 +1,31 @@
 # Changelog
 
+## Unreleased
+
+### Fixes
+
+- **A lock taken over while `ccred` was stalled is no longer deleted or kept
+  alive.** Past the 15-second stale limit Claude Code may reclaim the lock;
+  `ccred` then removed Claude Code's lock on exit and kept refreshing it, so a
+  crash would have wedged it. The lock's mtime now says whose it is, as in
+  `proper-lockfile`.
+- **An interrupted switch is only healed under the switch's own lock.** A
+  switch still in progress looks the same from outside, and healing it could
+  leave the pointer naming one account while the live store held another.
+- **`CLAUDE_CONFIG_DIR` reaches the spawned `claude`.** It was scrubbed, so for
+  anyone with a relocated configuration the refresh probe read a different
+  `.claude.json`, and for the default scope a different credential file.
+
+### Distribution
+
+- **The Scoop bucket was stuck on 0.2.0.** Nothing ran its `autoupdate`. It now
+  updates itself within a few hours of a release, after checking the archive's
+  checksum. If you installed through Scoop, run `scoop update ccred`.
+- Release runs are green again: the crates.io and npm jobs stay off until their
+  accounts exist.
+- `scripts/tag-release.sh` no longer runs `gh release create` out of its own
+  help text.
+
 ## 0.2.15
 
 ### `ccred uninstall`

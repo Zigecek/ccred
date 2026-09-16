@@ -8,7 +8,7 @@ follows is which ones are worth maintaining, and why.
 
 | Channel | Command | State |
 |---|---|---|
-| Scoop | `scoop bucket add ccred https://github.com/Zigecek/scoop-ccred` then `scoop install ccred` | **Live.** No admin, no execution policy, no SmartScreen prompt |
+| Scoop | `scoop bucket add ccred https://github.com/Zigecek/scoop-ccred` then `scoop install ccred` | **Live.** No admin, no execution policy, no SmartScreen prompt. The bucket follows new releases within about three hours |
 | apt | `sudo apt install ./ccred_<ver>_amd64.deb` | **Live.** amd64 and arm64 on every release |
 | GitHub Releases | shell / PowerShell installer | **Live.** What every other channel points at |
 | npm | `npm i -g ccred`, or `npx ccred` | Needs the `@ccred` scope reserved and eight trusted publishers |

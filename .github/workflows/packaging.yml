@@ -2,8 +2,14 @@ name: packaging
 
 # Downstream packaging, after a release exists.
 #
-# The .deb is attached to the same release; the AUR and Scoop steps push to
-# other repositories, so they are safe to run afterwards.
+# The .deb is attached to the same release; the AUR step pushes to another
+# repository, so it is safe to run afterwards.
+#
+# Scoop is not here. Pushing to Zigecek/scoop-ccred from this repository would
+# need a long-lived personal token, so the bucket updates itself: a scheduled
+# workflow there moves the manifest to the latest release after checking the
+# archive's checksum. It once sat on 0.2.0 for fourteen releases because
+# nothing ran the manifest's `autoupdate` at all.
 #
 # NOTE: if repository-level immutable releases are ever enabled, attaching the
 # .deb here will start failing, because assets cannot be added to a published
