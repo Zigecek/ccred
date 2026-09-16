@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.2.36
+
+**A file that is not UTF-8 says so.** PowerShell writes UTF-16 whenever it
+redirects output, so a credential file copied between machines with
+`Get-Content | Out-File` arrives in it -- and what ccred said about that was
+"malformed JSON", which sends someone looking for a syntax error in a file
+whose syntax is fine. `save` said "is Claude Code set up in this home?",
+which is not what is wrong either.
+
+Encoding is its own error now, so its sentence survives being turned into a
+string, which is all a `doctor` finding or a `current` report keeps of one.
+A refusal to save names the reason the account could not be read rather than
+guessing at it.
+
 ## 0.2.35
 
 Two things that made ccred refuse to work on a file, or a machine, that was

@@ -61,7 +61,7 @@ which is also the entry workflow, so `release.yml` is right in both places.
 Reserve the `@ccred` organisation on npm first, so the scope cannot be taken.
 
 The packages themselves are already known to work: the eight were generated
-from the real 0.2.35 artifacts, packed with `npm pack`, installed from the
+from the real 0.2.36 artifacts, packed with `npm pack`, installed from the
 tarballs into an empty project, and run. The wrapper resolved the platform
 binary and passed its exit codes through -- `switch <missing>` came back as 3.
 To repeat it for a later release:
