@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.2.28
+
+**Linux installs, read this one.** A scheduled refresh inherits the user
+manager's environment and reads no shell profile -- so a `claude` installed
+by nvm, volta, bun or asdf works when you type it and cannot be found when
+the timer fires. That is the failure a Linux install is most likely to hit,
+and it is silent: the job exits into a log nobody opens while profiles go
+stale.
+
+- Those directories are searched directly now, alongside `~/.local/bin`,
+  `/usr/bin`, `/usr/local/bin` and `/opt/homebrew/bin`.
+- `ccred schedule install --claude-path /full/path/to/claude` registers a
+  path with the job for anywhere else. It is made absolute, since the job
+  starts in a directory of the scheduler's choosing, and a path that is not
+  there is refused while a person is present to fix it.
+- `ccred doctor` says which `claude` it found, or warns that it found none.
+  A warning rather than an error: switching profiles never spawns it.
+- The README claimed a refresh leaves the deadline "where it was, to the
+  millisecond". It does not, and the program knows -- `WINDOW_JITTER_MS`
+  exists because one measured exchange moved it 809 ms earlier.
+
+Two things that do not change what ccred does, but change what is known
+about it. A CI job now registers a real systemd timer, asks `systemctl
+--user` what it made of it, and removes it again; every previous check on
+that backend compared text ccred wrote against text ccred expected. And the
+property this program exists for -- no sequence of writes leaves a profile
+without usable credentials -- is a test rather than an intention, after a
+fuzz run over ccred's own state files and 80 commands racing in one
+directory failed to break it.
+
 ## 0.2.27
 
 A fuzz run over ccred's own state files and 80 commands racing each other in
