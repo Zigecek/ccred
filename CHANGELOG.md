@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- **A credential file caught mid-write is no longer reported as damaged.**
+  `current`, `list` and `doctor` read without the lock Claude Code writes
+  under; a half-written file made `doctor` recommend `ccred restore` over a
+  file that was whole a moment later. They now read it again before judging.
+- **A Pro plan shows as "Pro"**, not "ai". Such accounts report a generic
+  rate-limit tier, so the organization type is used instead.
+
 ## 0.2.16
 
 ### Fixes
