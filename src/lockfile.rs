@@ -21,9 +21,9 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, Instant};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant, SystemTime};
 
 use crate::error::CcredError;
 
@@ -37,7 +37,40 @@ const HEARTBEAT: Duration = Duration::from_millis(5_000);
 pub struct DirLock {
     path: PathBuf,
     stop: Arc<AtomicBool>,
+    /// The mtime our last heartbeat left on the directory. Anything else
+    /// there means the lock is no longer ours; see [`Ownership`].
+    beat: Arc<Mutex<Option<SystemTime>>>,
     handle: Option<std::thread::JoinHandle<()>>,
+}
+
+/// Whether the directory at the lock path is still the one we created.
+///
+/// A process that stalls for longer than `STALE` -- a laptop lid closed
+/// mid-run is enough -- loses its lock by the protocol's own rules: Claude
+/// Code reclaims it and creates its own directory at the same path. Nothing
+/// about the path says so. The mtime does: ours is whatever our last
+/// heartbeat set, and a directory made later carries a different one. This is
+/// the check `proper-lockfile` itself uses to call a lock "compromised".
+#[derive(Debug, PartialEq, Eq)]
+enum Ownership {
+    Ours,
+    Lost,
+}
+
+fn ownership(dir: &Path, last_beat: Option<SystemTime>) -> Ownership {
+    match (fs::metadata(dir).and_then(|m| m.modified()).ok(), last_beat) {
+        (Some(now), Some(ours)) if now == ours => Ownership::Ours,
+        _ => Ownership::Lost,
+    }
+}
+
+/// Beat, and remember what the beat left behind.
+fn beat_and_record(dir: &Path, record: &Mutex<Option<SystemTime>>) {
+    touch(dir);
+    let stamp = fs::metadata(dir).and_then(|m| m.modified()).ok();
+    if let Ok(mut slot) = record.lock() {
+        *slot = stamp;
+    }
 }
 
 impl DirLock {
@@ -52,10 +85,14 @@ impl Drop for DirLock {
         if let Some(h) = self.handle.take() {
             let _ = h.join();
         }
-        // The directory is normally empty; remove_dir_all is a fallback in
-        // case something was left inside.
-        if fs::remove_dir(&self.path).is_err() {
-            let _ = fs::remove_dir_all(&self.path);
+        let last = self.beat.lock().ok().and_then(|slot| *slot);
+        // A lock that was taken over belongs to its new holder. Removing it
+        // would let a third writer in beside them.
+        //
+        // `remove_dir`, never `remove_dir_all`: our directory is always empty
+        // (see `touch`), so anything inside was put there by someone else.
+        if ownership(&self.path, last) == Ownership::Ours {
+            let _ = fs::remove_dir(&self.path);
         }
     }
 }
@@ -104,9 +141,11 @@ pub fn acquire(target: &Path, timeout: Duration) -> crate::Result<DirLock> {
     loop {
         match fs::create_dir(&lock) {
             Ok(()) => {
-                touch(&lock);
+                let beat = Arc::new(Mutex::new(None));
+                beat_and_record(&lock, &beat);
                 let stop = Arc::new(AtomicBool::new(false));
                 let beat_stop = Arc::clone(&stop);
+                let beat_record = Arc::clone(&beat);
                 let beat_path = lock.clone();
                 let handle = std::thread::spawn(move || {
                     while !beat_stop.load(Ordering::Relaxed) {
@@ -114,14 +153,22 @@ pub fn acquire(target: &Path, timeout: Duration) -> crate::Result<DirLock> {
                         if beat_stop.load(Ordering::Relaxed) {
                             break;
                         }
-                        if age_of(&beat_path).is_some_and(|a| a >= HEARTBEAT) {
-                            touch(&beat_path);
+                        if age_of(&beat_path).is_none_or(|a| a < HEARTBEAT) {
+                            continue;
                         }
+                        let last = beat_record.lock().ok().and_then(|slot| *slot);
+                        if ownership(&beat_path, last) == Ownership::Lost {
+                            // Keeping someone else's lock alive would stop it
+                            // ever being reclaimed if they crash.
+                            break;
+                        }
+                        beat_and_record(&beat_path, &beat_record);
                     }
                 });
                 return Ok(DirLock {
                     path: lock,
                     stop,
+                    beat,
                     handle: Some(handle),
                 });
             }
@@ -242,6 +289,57 @@ mod tests {
         touch(&lock);
         let after = fs::metadata(&lock).unwrap().modified().unwrap();
         assert!(after > before, "heartbeat did not advance the dir mtime");
+    }
+
+    /// Stand in for another process reclaiming our lock: its directory, at
+    /// our path, made at a different moment.
+    fn taken_over(lock: &Path, age: Duration) {
+        fs::remove_dir(lock).unwrap();
+        fs::create_dir(lock).unwrap();
+        let then = std::time::SystemTime::now() - age;
+        filetime::set_file_mtime(lock, filetime::FileTime::from_system_time(then)).unwrap();
+    }
+
+    #[test]
+    fn a_lock_taken_over_while_stalled_is_not_removed() {
+        let dir = tempdir().unwrap();
+        let target = dir.path().join(".storage-write");
+        let lock = acquire(&target, Duration::from_millis(500)).unwrap();
+        let path = lock.path().to_path_buf();
+
+        taken_over(&path, Duration::from_secs(1));
+        drop(lock);
+        assert!(
+            path.is_dir(),
+            "dropping a lost lock deleted the new holder's lock"
+        );
+    }
+
+    #[test]
+    fn a_lock_taken_over_is_not_kept_alive() {
+        let dir = tempdir().unwrap();
+        let target = dir.path().join(".storage-write");
+        let lock = acquire(&target, Duration::from_millis(500)).unwrap();
+        let path = lock.path().to_path_buf();
+
+        // Old enough that a heartbeat is due, so only the ownership check
+        // stands between the thread and a touch.
+        taken_over(&path, HEARTBEAT + Duration::from_secs(1));
+        let before = fs::metadata(&path).unwrap().modified().unwrap();
+        std::thread::sleep(Duration::from_millis(600));
+        let after = fs::metadata(&path).unwrap().modified().unwrap();
+        assert_eq!(before, after, "the heartbeat refreshed a lock it had lost");
+        drop(lock);
+    }
+
+    #[test]
+    fn a_held_lock_is_still_recognised_as_ours() {
+        let dir = tempdir().unwrap();
+        let target = dir.path().join(".storage-write");
+        let lock = acquire(&target, Duration::from_millis(500)).unwrap();
+        let last = lock.beat.lock().unwrap().unwrap();
+        assert_eq!(ownership(lock.path(), Some(last)), Ownership::Ours);
+        assert_eq!(ownership(lock.path(), None), Ownership::Lost);
     }
 
     /// A reclaim that cannot succeed must not become a spin.
