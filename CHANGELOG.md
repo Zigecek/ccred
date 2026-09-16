@@ -2,8 +2,10 @@
 
 ## 0.2.20
 
-**Upgrade. Roughly half of all token renewals were not saved into their
-profile, which then held a refresh token the server had already retired.**
+**Upgrade. A token renewal was not saved into its profile whenever its
+refresh deadline came back a fraction of a second earlier -- which a real
+renewal was measured doing -- and the profile then held a refresh token the
+server had already retired.**
 
 ### Renewed tokens that were thrown away
 
