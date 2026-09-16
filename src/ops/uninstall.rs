@@ -381,9 +381,17 @@ pub fn execute(plan: &Plan) -> Outcome {
     };
 
     if plan.schedule {
-        match super::schedule::backend().uninstall() {
+        match crate::schedule::uninstall_checked(super::schedule::backend().as_ref()) {
             Ok(()) => out.schedule_removed = true,
-            Err(e) => out.problems.push(format!("schedule: {e}")),
+            Err(e) => {
+                // Stop here. Removing the binary would leave the job firing
+                // at nothing, and deleting the data is not what someone who
+                // has to rerun this after fixing the scheduler expects to
+                // have already happened.
+                out.problems
+                    .push(format!("schedule: {e}; nothing else was removed"));
+                return out;
+            }
         }
     }
 

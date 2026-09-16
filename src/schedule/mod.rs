@@ -334,6 +334,27 @@ pub fn install_checked(sched: &dyn Scheduler, spec: &ScheduleSpec) -> crate::Res
     }
 }
 
+/// Remove the job, then prove it is gone.
+///
+/// The backends discard the results of the commands they run -- a missing
+/// job is not an error when removing one -- so their `Ok` means only that
+/// nothing crashed. A removal Windows refused (a task registered from an
+/// elevated shell, say) looked exactly like success, and whatever the caller
+/// did next assumed the job was gone.
+pub fn uninstall_checked(sched: &dyn Scheduler) -> crate::Result<()> {
+    sched.uninstall()?;
+    match sched.status()? {
+        State::Installed(_) => Err(CcredError::Schedule(
+            concat!(
+                "the refresh job is still registered after removing it; ",
+                "the scheduler may need an elevated shell to delete it"
+            )
+            .into(),
+        )),
+        State::NotInstalled | State::Unsupported { .. } => Ok(()),
+    }
+}
+
 /// The backend for this platform.
 pub fn detect() -> Box<dyn Scheduler> {
     #[cfg(target_os = "macos")]
@@ -353,6 +374,43 @@ pub fn detect() -> Box<dyn Scheduler> {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    /// A scheduler whose removal does nothing, the way a refused
+    /// `schtasks /Delete` does -- and says nothing about it.
+    struct Stubborn;
+
+    impl Scheduler for Stubborn {
+        fn backend(&self) -> Backend {
+            Backend::TaskScheduler
+        }
+        fn render(&self, _: &ScheduleSpec) -> crate::Result<Vec<RenderedFile>> {
+            Ok(Vec::new())
+        }
+        fn probe(&self) -> crate::Result<()> {
+            Ok(())
+        }
+        fn install(&self, _: &ScheduleSpec) -> crate::Result<()> {
+            Ok(())
+        }
+        fn uninstall(&self) -> crate::Result<()> {
+            Ok(())
+        }
+        fn status(&self) -> crate::Result<State> {
+            Ok(State::Installed(Health {
+                enabled: true,
+                next_run: Some("Mon 09:17".into()),
+                last_run: None,
+                command: None,
+                warnings: Vec::new(),
+            }))
+        }
+    }
+
+    #[test]
+    fn a_removal_that_left_the_job_in_place_is_an_error() {
+        let err = uninstall_checked(&Stubborn).unwrap_err();
+        assert!(err.to_string().contains("still registered"), "{err}");
+    }
 
     pub(crate) fn spec() -> ScheduleSpec {
         ScheduleSpec::new(

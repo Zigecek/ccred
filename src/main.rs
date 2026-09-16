@@ -142,7 +142,7 @@ fn run(cli: &Cli, theme: &Theme) -> ccred::Result<ExitCode> {
                     Ok(ExitCode::Ok)
                 }
                 ScheduleAction::Uninstall => {
-                    backend.uninstall()?;
+                    ccred::schedule::uninstall_checked(backend.as_ref())?;
                     if !cli.json {
                         render::schedule_removed(theme);
                     }
