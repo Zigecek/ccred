@@ -259,7 +259,7 @@ $ ccred list
   ● work   ada@example.com    Max 20x  ███████████░░░   23d     3 h ago  ok
     home   grace@example.com  Max 5x   ██░░░░░░░░░░░░    4d  9 days ago  expiring
 
-  2 profiles,  1 needs attention
+  2 profiles, 1 needs attention
 ```
 
 ```
