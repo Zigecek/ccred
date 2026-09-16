@@ -98,8 +98,9 @@ pub fn current(ctx: &Ctx) -> crate::Result<CurrentReport> {
     };
     // Days are kept alongside the milliseconds so the JSON shape does not
     // change under anyone who is already parsing it.
-    let access_days_left = access_ms_left.map(|ms| ms / 86_400_000);
-    let refresh_days_left = refresh_ms_left.map(|ms| ms / 86_400_000);
+    // Floored, so a deadline an hour gone reads as -1 rather than 0.
+    let access_days_left = access_ms_left.map(|ms| ms.div_euclid(86_400_000));
+    let refresh_days_left = refresh_ms_left.map(|ms| ms.div_euclid(86_400_000));
 
     // Does the pointer agree with who is actually logged in?
     let mut pointer_mismatch = None;

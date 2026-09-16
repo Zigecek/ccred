@@ -94,8 +94,12 @@ impl Ctx {
 }
 
 /// Days remaining until an epoch-ms deadline, floored. Negative when past.
+///
+/// Floored, not truncated: plain division rounds toward zero, so a deadline
+/// an hour in the past came out as `0` and the list read `0d` -- "expires
+/// today" rather than "expired".
 pub fn days_until(deadline_ms: i64, now_ms: i64) -> i64 {
-    (deadline_ms - now_ms) / 86_400_000
+    (deadline_ms - now_ms).div_euclid(86_400_000)
 }
 
 #[cfg(test)]
@@ -108,5 +112,9 @@ mod tests {
         assert_eq!(days_until(now + 86_400_000 * 3, now), 3);
         assert_eq!(days_until(now, now), 0);
         assert_eq!(days_until(now - 86_400_000 * 2, now), -2);
+        // An hour past the deadline is expired, not "0 days left".
+        assert_eq!(days_until(now - 3_600_000, now), -1);
+        // And an hour before it is still today.
+        assert_eq!(days_until(now + 3_600_000, now), 0);
     }
 }
