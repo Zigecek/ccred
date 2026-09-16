@@ -198,7 +198,7 @@ fn token_meter(theme: &Theme, ms_left: i64, nominal_ms: i64) -> String {
 
 // --- list -----------------------------------------------------------------
 
-pub fn list(theme: &Theme, rows: &[ProfileRow]) {
+pub fn list(theme: &Theme, rows: &[ProfileRow], dangling: Option<&str>) {
     let g = theme.glyphs;
     if rows.is_empty() {
         println!();
@@ -208,6 +208,7 @@ pub fn list(theme: &Theme, rows: &[ProfileRow]) {
             "no profiles yet",
             &["run `ccred save <name>` while logged in to create the first one"],
         );
+        dangling_note(theme, dangling);
         println!();
         return;
     }
@@ -288,8 +289,11 @@ pub fn list(theme: &Theme, rows: &[ProfileRow]) {
             &format!("{}, all healthy", plural(rows.len(), "profile", "profiles")),
         )
     } else {
+        // One space after the comma. Two of them read as a typo here, where
+        // the comma already does the separating; the refresh summary uses two
+        // because its clauses carry no punctuation between them.
         format!(
-            "{}  {}",
+            "{} {}",
             paint(
                 MUTED,
                 &format!("{},", plural(rows.len(), "profile", "profiles"))
@@ -301,7 +305,22 @@ pub fn list(theme: &Theme, rows: &[ProfileRow]) {
         )
     };
     println!("{PAD}{summary}");
+    dangling_note(theme, dangling);
     println!();
+}
+
+/// A pointer naming a profile that is not there. The table alone shows it
+/// only as an absent marker, which reads as "none active" rather than "the
+/// one you were using is gone".
+fn dangling_note(theme: &Theme, dangling: Option<&str>) {
+    let Some(name) = dangling else { return };
+    println!();
+    callout(
+        ERR,
+        theme.glyphs.err,
+        &format!("the active profile '{name}' does not exist"),
+        &["`ccred switch <name>` to point at one that does"],
+    );
 }
 
 // --- save, switch, rm -----------------------------------------------------

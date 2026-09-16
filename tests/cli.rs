@@ -567,8 +567,11 @@ fn switching_away_from_an_unsaved_account_keeps_a_copy_of_it() {
         "the copy must hold the account that was about to be overwritten"
     );
 
-    // And the user has to be told where it went, or the copy is useless.
-    assert!(out.contains(".orphaned"), "{out}");
+    // And the user has to be told where it went, or the copy is useless --
+    // spelled the way the platform spells a path, since the label is joined
+    // on by hand and used to carry its own separator onto Windows.
+    let want = format!(".orphaned{}uuid-c", std::path::MAIN_SEPARATOR);
+    assert!(out.contains(&want), "expected {want} in: {out}");
 }
 
 /// The counter-case: a logged-out live store has nothing worth keeping, and a
@@ -968,6 +971,36 @@ fn list_shows_a_profile_whose_metadata_will_not_parse() {
     assert!(out.contains("work"), "the broken one must appear: {out}");
     assert!(out.contains("personal"), "and so must the rest: {out}");
     assert!(out.contains("unreadable"), "{out}");
+    // The count and the warning are two styled runs joined by hand, and the
+    // join once put two spaces after a comma.
+    assert!(
+        out.contains("2 profiles, 1 needs attention"),
+        "the summary spacing: {out}"
+    );
+}
+
+/// A pointer left naming a profile that was removed behind ccred's back. The
+/// table shows an absent marker, which reads as "nothing is active" rather
+/// than "the one you were using is gone", so the summary says it outright.
+#[test]
+fn list_says_so_when_the_active_profile_is_not_there() {
+    let sb = Sandbox::new();
+    sb.run(&["save", "work"]);
+    std::fs::write(sb.path().join(".ccred/state/current"), "ghost").unwrap();
+
+    let (out, err, code) = sb.run(&["list"]);
+    assert_eq!(code, 0, "{err}{out}");
+    assert!(
+        out.contains("the active profile 'ghost' does not exist"),
+        "{out}"
+    );
+
+    // The JSON shape is an array of profiles and stays one: a script reading
+    // it predates the note, and `current --json` already reports the pointer.
+    let (out, _, code) = sb.run(&["list", "--json"]);
+    assert_eq!(code, 0, "{out}");
+    let parsed: serde_json::Value = serde_json::from_str(&out).expect("valid JSON");
+    assert!(parsed.is_array(), "{parsed}");
 }
 
 /// `current` is the first thing anyone runs. A live credential file that will

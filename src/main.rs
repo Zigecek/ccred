@@ -46,9 +46,12 @@ fn run(cli: &Cli, theme: &Theme) -> ccred::Result<ExitCode> {
         Some(Command::List) => {
             let rows = simple::list(&ctx)?;
             if cli.json {
+                // The shape stays an array of profiles: a script that reads
+                // `ccred list --json` predates the note below, and `current
+                // --json` already reports a pointer that matches nothing.
                 print_json(&rows);
             } else {
-                render::list(theme, &rows);
+                render::list(theme, &rows, simple::dangling_pointer(&ctx).as_deref());
             }
             Ok(ExitCode::Ok)
         }

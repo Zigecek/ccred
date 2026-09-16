@@ -560,7 +560,14 @@ impl ProfileRepo {
 
     fn backup_raw(&self, label: &str, raw: &[u8]) -> crate::Result<PathBuf> {
         debug_assert!(!label.split('/').any(|part| part.is_empty() || part == ".."));
-        let dir = self.paths.backups_dir().join(label);
+        // Pushed one component at a time. Joining the whole label at once
+        // leaves the `/` inside it verbatim on Windows, so the path came
+        // out with a lone forward slash among the backslashes -- and it is
+        // a path someone has to read and copy after a switch went sideways.
+        let mut dir = self.paths.backups_dir();
+        for part in label.split('/') {
+            dir.push(part);
+        }
         let stamp = now_ms();
         let path = dir.join(format!("credentials.{stamp}.json"));
         write_atomic(&path, raw, true)?;

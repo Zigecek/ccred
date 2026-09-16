@@ -176,6 +176,17 @@ pub fn tokens_belong_elsewhere(
     ))
 }
 
+/// The active profile's name, when the pointer names one that is not there.
+///
+/// `current` and `doctor` both report this; `list` used to show a table with
+/// no active row and call it "all healthy", which is the one place someone
+/// checks after a profile goes missing.
+pub fn dangling_pointer(ctx: &Ctx) -> Option<String> {
+    let active = ctx.repo().active().ok().flatten()?;
+    let known = ctx.repo().list().unwrap_or_default();
+    (!known.contains(&active)).then(|| active.as_str().to_string())
+}
+
 pub fn list(ctx: &Ctx) -> crate::Result<Vec<ProfileRow>> {
     let now = now_ms();
     let active = ctx.repo().active()?;
