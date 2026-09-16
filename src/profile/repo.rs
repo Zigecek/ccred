@@ -564,6 +564,40 @@ impl ProfileRepo {
         self.backup_raw(&label, &loaded.raw).map(Some)
     }
 
+    /// Every directory of copies this profile's credentials are in, deleted.
+    ///
+    /// Two of them: the rotation `rm` writes under the profile's own name,
+    /// and the one keyed by account that a switch writes when the live
+    /// credentials belong to nobody. Both hold the account being removed, and
+    /// "removed" that leaves credentials on disk is not what the word means.
+    ///
+    /// The account is read before the profile goes, so this is called first.
+    pub fn purge_copies(&self, name: &ProfileName) -> Vec<PathBuf> {
+        let mut gone = Vec::new();
+        let mut remove = |dir: PathBuf| {
+            if dir.is_dir() && fs::remove_dir_all(&dir).is_ok() {
+                gone.push(dir);
+            }
+        };
+
+        let account = self
+            .meta(name)
+            .ok()
+            .flatten()
+            .map(|m| m.account)
+            .unwrap_or_default();
+        if account != AccountIdentity::default() {
+            remove(
+                self.paths
+                    .backups_dir()
+                    .join(".orphaned")
+                    .join(orphan_key(&account)),
+            );
+        }
+        remove(self.paths.backups_dir().join(name.as_str()));
+        gone
+    }
+
     fn backup_raw(&self, label: &str, raw: &[u8]) -> crate::Result<PathBuf> {
         debug_assert!(!label.split('/').any(|part| part.is_empty() || part == ".."));
         // Pushed one component at a time. Joining the whole label at once

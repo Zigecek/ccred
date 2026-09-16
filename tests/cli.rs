@@ -1007,6 +1007,53 @@ fn list_shows_a_profile_whose_metadata_will_not_parse() {
     );
 }
 
+/// `rm` keeps a copy, which is right for a mistyped name and wrong for the
+/// person whose point was to remove the account. `--purge` is for the second
+/// one, and it has to mean it: the rotation under the profile's name and the
+/// one keyed by its account both go.
+#[test]
+fn rm_purge_leaves_none_of_that_account_behind() {
+    let sb = Sandbox::new();
+    sb.run(&["save", "work"]); // alice
+    sb.login_b();
+    sb.run(&["save", "personal"]); // bob, active
+
+    // An ordinary `rm` first, which leaves a copy of alice behind.
+    sb.run(&["rm", "work"]);
+    let copies = sb.path().join(".ccred").join("backups").join("work");
+    assert!(copies.is_dir(), "the safety copy is the default");
+
+    // Save alice again so there is a profile to purge, then leave it.
+    sb.login_a();
+    sb.run(&["save", "work"]);
+    sb.login_b();
+    sb.run(&["switch", "personal"]);
+
+    let (out, err, code) = sb.run(&["rm", "work", "--purge"]);
+    assert_eq!(code, 0, "{err}{out}");
+    assert!(out.contains("deleted the copies"), "{out}");
+    assert!(!copies.exists(), "the copies outlived the purge: {out}");
+    assert!(
+        !sb.path().join(".ccred/profiles/work").exists(),
+        "the profile is gone too"
+    );
+
+    // The account that was not asked about is untouched.
+    assert!(
+        sb.path().join(".ccred/profiles/personal").is_dir(),
+        "another profile was caught in it"
+    );
+
+    // And with nothing to delete, it says so rather than implying otherwise.
+    sb.login_a();
+    sb.run(&["save", "spare"]);
+    sb.login_b();
+    sb.run(&["switch", "personal"]);
+    let (out, _, code) = sb.run(&["rm", "spare", "--purge"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("no earlier copies"), "{out}");
+}
+
 /// The account blob is a cached copy of something Claude Code refetches. The
 /// credentials are not. So a blob that cannot be read costs a warning, not
 /// the switch -- which by then has already replaced the live credentials.

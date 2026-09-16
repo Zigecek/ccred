@@ -78,9 +78,9 @@ fn run(cli: &Cli, theme: &Theme) -> ccred::Result<ExitCode> {
             Ok(ExitCode::Ok)
         }
 
-        Some(Command::Rm { name }) => {
+        Some(Command::Rm { name, purge }) => {
             let name = validate_profile_name(name)?;
-            let report = simple::remove(&ctx, &name)?;
+            let report = simple::remove(&ctx, &name, *purge)?;
             if cli.json {
                 print_json(&report);
             } else {

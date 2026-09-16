@@ -392,15 +392,32 @@ pub fn removed(theme: &Theme, r: &crate::ops::simple::RemoveReport) {
     let g = theme.glyphs;
     println!();
     println!("{PAD}{} removed {}", paint(OK, g.ok), paint(NAME, &r.name));
-    match &r.backup_dir {
-        Some(dir) => println!(
-            "{PAD}  {}",
-            paint(MUTED, &format!("a copy of its credentials is in {dir}"))
-        ),
-        None => println!(
-            "{PAD}  {}",
-            paint(WARN, "there was nothing left to copy aside first")
-        ),
+    if r.purged_asked {
+        // `--purge` with nothing to purge says so, rather than leaving the
+        // impression that copies were found and kept.
+        if r.purged.is_empty() {
+            println!(
+                "{PAD}  {}",
+                paint(MUTED, "there were no earlier copies to delete")
+            );
+        }
+        for dir in &r.purged {
+            println!(
+                "{PAD}  {}",
+                paint(MUTED, &format!("deleted the copies in {dir}"))
+            );
+        }
+    } else {
+        match &r.backup_dir {
+            Some(dir) => println!(
+                "{PAD}  {}",
+                paint(MUTED, &format!("a copy of its credentials is in {dir}"))
+            ),
+            None => println!(
+                "{PAD}  {}",
+                paint(WARN, "there was nothing left to copy aside first")
+            ),
+        }
     }
     println!();
 }

@@ -504,7 +504,7 @@ pub fn restore(ctx: &Ctx, name: &ProfileName) -> crate::Result<RestoreReport> {
     })
 }
 
-pub fn remove(ctx: &Ctx, name: &ProfileName) -> crate::Result<RemoveReport> {
+pub fn remove(ctx: &Ctx, name: &ProfileName, purge: bool) -> crate::Result<RemoveReport> {
     // A refresh may be running `claude` against this very directory.
     let _profiles = ctx.lock_profiles(SAVE_LOCK_TIMEOUT)?;
     let name = &ctx.repo().canonical_name(name);
@@ -524,16 +524,37 @@ pub fn remove(ctx: &Ctx, name: &ProfileName) -> crate::Result<RemoveReport> {
     //
     // A backup that fails does not stop the removal the user asked for. It is
     // reported instead.
-    let backup = ctx.repo().backup(name).unwrap_or(None);
+    // Unless the point is to leave nothing: the copies are the thing being
+    // got rid of, so making one more of them first would be absurd.
+    let backup = if purge {
+        None
+    } else {
+        ctx.repo().backup(name).unwrap_or(None)
+    };
+
+    // Before the profile goes: the copies are found through its account, and
+    // the account is in the metadata about to be deleted.
+    let purged: Vec<String> = if purge {
+        ctx.repo()
+            .purge_copies(name)
+            .iter()
+            .map(|p| p.display().to_string())
+            .collect()
+    } else {
+        Vec::new()
+    };
 
     let dir = ctx.paths().profile_dir(name)?;
     std::fs::remove_dir_all(&dir).map_err(|source| CcredError::Io { path: dir, source })?;
+
     Ok(RemoveReport {
         name: name.as_str().to_string(),
         // The path of the file that was actually written. Reporting a
         // directory that was never created is worse than reporting nothing:
         // it tells someone their account is recoverable when it is not.
         backup_dir: backup.map(|p| p.display().to_string()),
+        purged,
+        purged_asked: purge,
     })
 }
 
@@ -543,6 +564,14 @@ pub struct RemoveReport {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub backup_dir: Option<String>,
+    /// The directories of earlier copies that `--purge` deleted: the
+    /// rotation under this name, and the one keyed by account. Empty means
+    /// there were none to find.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub purged: Vec<String>,
+    /// Whether `--purge` was asked for at all, which is what tells "nothing
+    /// was found to delete" apart from "deleting was not the request".
+    pub purged_asked: bool,
 }
 
 /// The snapshot a save would use. Exposed for `doctor`.

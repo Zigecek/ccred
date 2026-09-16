@@ -109,8 +109,21 @@ pub enum Command {
     },
 
     /// Delete a saved profile.
+    ///
+    /// A copy of its credentials is kept in the backups directory first: a
+    /// mistyped name is the one mistake here that cannot otherwise be taken
+    /// back.
     #[command(alias = "remove", display_order = 5)]
-    Rm { name: String },
+    Rm {
+        name: String,
+        /// Delete the earlier copies too, leaving nothing of this account.
+        ///
+        /// Ordinary `rm` keeps the last copies of a profile's credentials so
+        /// a mistake can be undone. This is for when removing the account is
+        /// the point.
+        #[arg(long)]
+        purge: bool,
+    },
 
     /// Put a profile's last-known-good credentials back.
     ///

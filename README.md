@@ -134,7 +134,7 @@ ccred current             who is logged in, and which profile is active
 ccred list                saved profiles and how much refresh window each has
 ccred save <name>         store the account that is logged in, under a name
 ccred switch <name>       make a saved profile the active account
-ccred rm <name>           delete a profile
+ccred rm <name>           delete a profile (--purge deletes its copies too)
 ccred restore <name>      put a profile's last-known-good credentials back
 ccred refresh             keep stored profiles from expiring (--dry-run to just look)
 ccred schedule install    run that refresh automatically, twice a week
@@ -249,7 +249,11 @@ often:
 
 If a profile's credentials were damaged, `ccred restore <name>` puts the last
 known good copy back, and `~/.ccred/backups/<name>/` keeps the ten before
-that.
+that. `ccred rm <name>` adds one more copy before deleting the profile, since
+a mistyped name is the one mistake here that cannot otherwise be taken back --
+and `ccred rm <name> --purge` is the opposite request: delete the profile and
+every copy of that account, including the ones a switch left behind when its
+credentials belonged to no profile.
 
 ### Exit codes
 
