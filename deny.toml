@@ -28,6 +28,31 @@ deny = [
     { name = "git2" },
 ]
 
+# One entry per crate that runs code at build time. cargo-deny fails the check
+# when a dependency grows a build script that is not listed, which is the point:
+# a new one gets read before it gets shipped, rather than after.
+#
+# Most of these are the usual suspects -- a script that probes the target and
+# emits `cargo:rustc-cfg` lines, no more. `assert_cmd` is dev-only and never
+# reaches a released binary.
+[bans.build]
+include-dependencies = true
+allow-build-scripts = [
+    { name = "assert_cmd" },
+    { name = "generic-array" },
+    { name = "getrandom" },
+    { name = "libc" },
+    { name = "num-traits" },
+    { name = "proc-macro2" },
+    { name = "quote" },
+    { name = "rustix" },
+    { name = "serde" },
+    { name = "serde_core" },
+    { name = "serde_json" },
+    { name = "thiserror" },
+    { name = "zmij" },
+]
+
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
