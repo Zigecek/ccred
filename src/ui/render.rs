@@ -314,7 +314,10 @@ pub fn save(theme: &Theme, r: &SaveReport) {
             "but these credentials are already past their refresh deadline",
             &[
                 "run `claude auth login`, then save again",
-                "if Claude Code works anyway, `ccred doctor` says whether it is                  logging in some other way",
+                concat!(
+                    "if Claude Code works anyway, `ccred doctor` says whether it ",
+                    "is logging in some other way"
+                ),
             ],
         );
     }
