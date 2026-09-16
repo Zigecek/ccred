@@ -505,12 +505,19 @@ fn switching_away_from_an_unsaved_account_keeps_a_copy_of_it() {
     let (out, err, code) = sb.run(&["switch", "work"]);
     assert_eq!(code, 0, "{err}{out}");
 
-    let orphaned: Vec<_> =
-        std::fs::read_dir(sb.path().join(".ccred").join("backups").join(".orphaned"))
-            .expect("no .orphaned backup directory was created")
-            .flatten()
-            .map(|e| e.path())
-            .collect();
+    // One rotation per account, so another account's copies can never push
+    // this one out.
+    let orphaned: Vec<_> = std::fs::read_dir(
+        sb.path()
+            .join(".ccred")
+            .join("backups")
+            .join(".orphaned")
+            .join("uuid-c"),
+    )
+    .expect("no backup directory was created for the orphaned account")
+    .flatten()
+    .map(|e| e.path())
+    .collect();
     assert_eq!(orphaned.len(), 1, "expected exactly one copy: {orphaned:?}");
 
     let kept = std::fs::read_to_string(&orphaned[0]).unwrap();

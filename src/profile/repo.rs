@@ -438,9 +438,14 @@ impl ProfileRepo {
     ///
     /// The label cannot collide with a profile: profile names must start with
     /// a letter or digit.
+    ///
+    /// Each account gets its own rotation under `.orphaned/`. With one shared
+    /// rotation, ten orphaned copies of one account pushed out the only copy
+    /// of another -- and an orphaned copy is by definition the only one.
     pub fn backup_orphaned_live(
         &self,
         store: &dyn CredentialStore,
+        account: &AccountIdentity,
     ) -> crate::Result<Option<PathBuf>> {
         let Ok(Some(loaded)) = store.load() else {
             return Ok(None); // logged out; nothing to lose
@@ -450,10 +455,12 @@ impl ProfileRepo {
         if validate_credentials(&loaded.creds.oauth, now_ms()).is_err() {
             return Ok(None);
         }
-        self.backup_raw(".orphaned", &loaded.raw).map(Some)
+        let label = format!(".orphaned/{}", orphan_key(account));
+        self.backup_raw(&label, &loaded.raw).map(Some)
     }
 
     fn backup_raw(&self, label: &str, raw: &[u8]) -> crate::Result<PathBuf> {
+        debug_assert!(!label.split('/').any(|part| part.is_empty() || part == ".."));
         let dir = self.paths.backups_dir().join(label);
         let stamp = now_ms();
         let path = dir.join(format!("credentials.{stamp}.json"));
@@ -484,9 +491,57 @@ impl ProfileRepo {
     }
 }
 
+/// A directory name for an account's orphaned backups.
+///
+/// The account id where there is one, since an email can change hands. Only
+/// characters that are safe in a path on every platform survive, and a name
+/// that reduces to nothing, or to dots, becomes `unknown` -- this is joined
+/// onto a path, and `..` must not be one of the outcomes.
+fn orphan_key(account: &AccountIdentity) -> String {
+    let raw = account
+        .account_uuid
+        .as_deref()
+        .or(account.email.as_deref())
+        .unwrap_or("");
+    let key: String = raw
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '@') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if key.trim_matches('.').is_empty() {
+        "unknown".to_string()
+    } else {
+        key
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_orphaned_account_gets_a_directory_that_stays_inside() {
+        let id = |uuid: Option<&str>, email: Option<&str>| AccountIdentity {
+            account_uuid: uuid.map(str::to_string),
+            email: email.map(str::to_string),
+            ..Default::default()
+        };
+        assert_eq!(orphan_key(&id(Some("uuid-c"), Some("c@x.com"))), "uuid-c");
+        assert_eq!(orphan_key(&id(None, Some("c@x.com"))), "c@x.com");
+        assert_eq!(orphan_key(&id(None, None)), "unknown");
+        for hostile in ["..", ".", "../..", "a/../b", r"C:\x", ""] {
+            let key = orphan_key(&id(Some(hostile), None));
+            assert!(
+                !key.contains(['/', '\\', ':']) && !key.trim_matches('.').is_empty(),
+                "{hostile:?} became {key:?}"
+            );
+        }
+    }
     use crate::store::CredentialStore;
     use tempfile::TempDir;
 

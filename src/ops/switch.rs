@@ -112,7 +112,7 @@ pub fn switch(ctx: &Ctx, target: &ProfileName, force: bool) -> crate::Result<Swi
     if let OutgoingSync::Skipped { backup, .. } = &mut outgoing {
         *backup = ctx
             .repo()
-            .backup_orphaned_live(&live)?
+            .backup_orphaned_live(&live, &ctx.live_account().identity)?
             .map(|p| p.display().to_string());
     }
     journal.advance(&journal_path, SwitchPhase::OutgoingSynced)?;

@@ -315,11 +315,17 @@ fn renewed(before: Option<i64>, after: Option<i64>) -> bool {
     matches!((before, after), (Some(b), Some(a)) if a > b)
 }
 
-/// Exponential backoff with a hard ceiling.
+/// How long to leave a profile alone after it failed this many times in a
+/// row: a day, then two, then four.
+///
+/// Measured in days because `min_interval_ms` already spaces attempts a day
+/// apart. The earlier schedule started at half an hour and topped out at one
+/// day, so it never once delayed anything the interval had not -- a profile
+/// that failed every time was retried as often as a healthy one. The cap
+/// keeps a persistent failure from going quiet for good: with a twice-weekly
+/// schedule it is still tried about once a week.
 fn backoff_ms(consecutive_failures: u32) -> i64 {
-    let base = 30 * 60 * 1000i64; // 30 minutes
-    let capped = consecutive_failures.min(6);
-    (base << capped).min(DAY_MS)
+    DAY_MS << consecutive_failures.saturating_sub(1).min(2)
 }
 
 #[derive(Debug, Clone, Default)]
@@ -527,7 +533,9 @@ pub fn refresh(ctx: &Ctx, opts: &RefreshOptions) -> crate::Result<RefreshReport>
         },
         profiles: results,
     };
-    write_last_run(ctx, now, &report)?;
+    // The finish, not the `now` the run started with: a run that spawned
+    // four probes can take minutes, and the record says when it ended.
+    write_last_run(ctx, crate::store::now_ms(), &report)?;
 
     // A scheduled run is otherwise invisible on Windows, where Task Scheduler
     // discards stdout. Failing to write the record must never fail the run it
@@ -844,9 +852,9 @@ fn read_last_run(ctx: &Ctx) -> crate::Result<Option<LastRun>> {
     }
 }
 
-fn write_last_run(ctx: &Ctx, now: i64, report: &RefreshReport) -> crate::Result<()> {
+fn write_last_run(ctx: &Ctx, finished_at_ms: i64, report: &RefreshReport) -> crate::Result<()> {
     let record = LastRun {
-        finished_at_ms: now,
+        finished_at_ms,
         status: report.status.clone(),
         needed_attention: report.worth_retrying_sooner(),
     };
@@ -1039,14 +1047,6 @@ mod tests {
             &policy(),
         );
         assert_eq!(d, Decision::SkipFresh);
-    }
-
-    #[test]
-    fn backoff_grows_then_stops_growing() {
-        assert!(backoff_ms(1) < backoff_ms(2));
-        assert!(backoff_ms(2) < backoff_ms(3));
-        assert_eq!(backoff_ms(20), DAY_MS, "must not grow without bound");
-        assert!(backoff_ms(1) >= 30 * 60 * 1000);
     }
 
     #[test]
@@ -1293,6 +1293,18 @@ mod tests {
             !renewed(Some(before_window), Some(after_window)),
             "judging by the window calls this real exchange a failure"
         );
+    }
+
+    #[test]
+    fn repeated_failures_wait_longer_than_the_interval_does() {
+        let interval = policy().min_interval_ms;
+        assert_eq!(backoff_ms(1), interval, "one failure: the usual spacing");
+        assert!(backoff_ms(2) > interval, "the backoff must add something");
+        assert!(backoff_ms(3) > backoff_ms(2));
+        // Capped, so a profile that keeps failing is still tried weekly.
+        assert_eq!(backoff_ms(3), backoff_ms(50));
+        assert!(backoff_ms(u32::MAX) <= 7 * DAY_MS);
+        assert_eq!(backoff_ms(0), interval);
     }
 
     #[test]
