@@ -1,5 +1,44 @@
 # Changelog
 
+## 0.2.21
+
+**Upgrade. A refresh running while you switched could sign out the session
+you had just switched to.**
+
+### Refresh and switch no longer overlap
+
+- A refresh read which profile was active once, before a loop that can run
+  for minutes. Switching during it made a profile live that the refresh
+  still treated as idle and then refreshed through its own store, retiring
+  the token the live session held. `switch`, `save`, `rm` and `restore` now
+  share a lock with `refresh`, which takes it one profile at a time and
+  reads the active profile under it. A switch that meets a running refresh
+  says so and asks to be retried.
+- A profile whose stored refresh token is the live one is never refreshed,
+  whatever the active-profile pointer says.
+
+### Situations only a person can settle
+
+- A new `blocked` result replaces `broken` for them -- another account
+  logged in, an interrupted switch that could not be read, a profile holding
+  the live tokens. It still exits 4, but no longer makes every scheduler
+  firing a full run.
+- After an unreadable switch journal, nothing copies the live credentials
+  into a profile until you run `ccred save` or `ccred switch`; `doctor`
+  explains.
+- `current` and `doctor` now notice live tokens that are stored as a
+  different profile than the active one, which the account name in
+  `.claude.json` cannot show.
+- `doctor` reports profiles that share a refresh token -- possible before
+  0.2.20 -- since refreshing one signs the others out. Such pairs no longer
+  report every mirror as failed.
+
+### Also
+
+- A systemd install refuses a binary path with a control character.
+- The refresh summary counts a mirror that wrote nothing as unchanged, and a
+  relative `HOME` is made absolute.
+
 ## 0.2.20
 
 **Upgrade. A token renewal was not saved into its profile whenever its
