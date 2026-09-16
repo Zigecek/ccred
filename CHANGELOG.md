@@ -1,5 +1,49 @@
 # Changelog
 
+## 0.2.20
+
+**Upgrade. Roughly half of all token renewals were not saved into their
+profile, which then held a refresh token the server had already retired.**
+
+### Renewed tokens that were thrown away
+
+- **A renewal whose refresh deadline read slightly earlier was refused.**
+  The deadline is fixed at login but recomputed from whole seconds on every
+  exchange -- measured: 809 ms earlier after a real one. The write gate
+  treated that as a shrinking window, so the scheduled mirror and switching
+  away both refused to store the renewed tokens, and the profile kept a
+  rotated-away refresh token. Switching back put a dead token live. The gate
+  now allows ten minutes of jitter.
+- **A refused mirror is no longer reported as "mirrored".** It shows as
+  broken, and the run exits 4 so a scheduler flags it.
+
+### One account's tokens in another account's profile
+
+- **A profile never takes a refresh token another profile holds.** The name
+  check cannot see live tokens that belong to one account while
+  `.claude.json` names another -- what a switch killed half-way leaves -- and
+  three paths reached that state. The token itself says whose it is.
+- **The scheduled refresh settles an interrupted switch first.** Before, the
+  switch's target counted as idle and could be refreshed through its own
+  store, retiring the token the live session was using.
+- **An unreadable switch journal stops the command that finds it**, after
+  moving it aside, instead of carrying on with an identity it cannot trust.
+
+### Schedules
+
+- On systemd, a `$` in the binary's path is no longer doubled (systemd does
+  not expand variables there, so the job could never start), and a path
+  systemd refuses outright is refused at install.
+- `uninstall` finishes on Linux when the user manager does not answer, and on
+  macOS no longer reports an agent removed that launchd still has loaded.
+
+### Also
+
+- Claude Code running under a versioned Node binary (`node-22` on Fedora)
+  is recognised, so it blocks a switch.
+- Tests no longer depend on wall-clock timing, and none runs a real
+  `uninstall`.
+
 ## 0.2.19
 
 - **`doctor` checks the copies of credentials for loose permissions too.**
