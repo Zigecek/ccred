@@ -1,5 +1,59 @@
 # Changelog
 
+## 0.2.14
+
+**An independent review of everything since 0.2.0 found credential-loss paths,
+including one shipped in 0.2.13. Upgrade.**
+
+### Credentials that could be lost
+
+- **`rm` promised a backup it had never made** (introduced in 0.2.13). The
+  backup routine returned success both when it wrote a copy and when there was
+  nothing to copy, so `rm` always named a backup directory -- and deleted the
+  last-known-good file with the profile. A profile whose live credentials were
+  unreadable was destroyed while the command said it was safe. It now falls
+  back to the last-known-good copy, reports the file it actually wrote, and
+  says so when nothing survived.
+- **A read error was treated as "Claude Code cleared the profile".** The guard
+  then wrote the pre-refresh credentials over whatever was there, through a
+  path that skips the window check -- so a Windows sharing violation during
+  Claude Code's own write could replace freshly refreshed tokens with spent
+  ones. An unreadable store is now left alone.
+- **An explicit `null` made a credential file permanently unreadable.** It
+  deserialises to nothing and re-serialises to nothing, so the lossless guard
+  counted it as a dropped key on every load, for ever. Absent and null mean the
+  same thing to every reader of the file.
+- **`Some(0) > None`** made a store that vanished and came back logged out look
+  like a successful renewal.
+
+### Things that could wedge or stay stuck
+
+- The lock's stale-reclaim branch spun at full CPU and never honoured its
+  timeout when the reclaim could not succeed. A held lock is now exit 6
+  (Busy), not 7: Claude Code takes it on every refresh.
+- `save` held that lock across scheduler registration, which shells out with
+  no timeout of its own.
+- A latched `needs_login` could never be cleared -- `restore` did not clear it
+  and an unchanged `save` returned before trying.
+- The deadline warning cancelled the refresh it was meant to accompany, so a
+  profile inside five days could not be renewed even with `--force`.
+- Any persistent problem disabled the over-fire rate limit for as long as it
+  lasted; only transient trouble lifts it now. And a failed spawn recorded no
+  attempt, so there was no backoff at all.
+- `doctor` and `current` still failed outright on corrupt metadata for the
+  active profile, and `doctor` withheld the `ccred restore` hint from the one
+  case it helps most.
+
+### An account that works in Claude Code but reads as expired
+
+Reported from a real Linux install. With `CLAUDE_CODE_OAUTH_TOKEN`,
+`ANTHROPIC_API_KEY` or a Bedrock or Vertex switch set, Claude Code
+authenticates from the environment and never touches the credential file,
+which ages out while everything works. `doctor` now names such a variable --
+the name only, never the value. `save` warns at once when it stores
+credentials already past their deadline, and an expiry now says how long ago
+it was, which tells a real lapse from a misread timestamp.
+
 ## 0.2.13
 
 ### `rm` keeps a copy
