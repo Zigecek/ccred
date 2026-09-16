@@ -1740,7 +1740,7 @@ fn a_mirror_that_is_refused_is_not_reported_as_done() {
         out.contains("not mirrored"),
         "the reason must be given: {out}"
     );
-    assert!(out.contains("1 need attention"), "{out}");
+    assert!(out.contains("1 needs attention"), "{out}");
 
     // Nothing a retry can change, so it must not lift the over-fire limit:
     // every scheduler firing used to become a full run.
