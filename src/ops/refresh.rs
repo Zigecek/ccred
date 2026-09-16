@@ -753,6 +753,11 @@ fn refresh_one(
         }
 
         if outcome.needs_login() {
+            // Not a renewal, so the forced expiry goes back like on every
+            // other such path. The message can be transient, and a profile
+            // left believing its token expired a minute ago would be
+            // misreported until someone refreshed it for real.
+            undo_backdate(&store, pre.as_ref(), backdated_to);
             ctx.repo().update_meta(name, |m| {
                 m.refresh.needs_login = true;
                 m.refresh.last_attempt_ms = Some(now);

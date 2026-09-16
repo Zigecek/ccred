@@ -1499,3 +1499,17 @@ fn a_save_after_a_killed_switch_never_stores_the_wrong_account() {
     let (out, _, _) = sb.run(&["current"]);
     assert!(out.contains("bob@example.com"), "{out}");
 }
+
+/// `--force` backdates a live access token to make an exchange happen. A
+/// probe that answers "signed out" is not a renewal, so the real expiry has
+/// to be put back -- as on every other path that renews nothing.
+#[test]
+fn a_forced_run_that_meets_a_signed_out_account_leaves_the_real_expiry() {
+    let (sb, creds) = sandbox_with_work_access_expiring_in(3_600_000);
+    let before = stored_oauth(&creds);
+    let probe = Probe::new();
+
+    let out = probe.refresh(&sb, "signed_out", &["--force"]);
+    assert_eq!(out.status.code(), Some(4));
+    assert_eq!(stored_oauth(&creds), before);
+}
