@@ -22,11 +22,12 @@ stored profile on a schedule so its tokens keep rotating.
 
 **What that does and does not buy you.** Measured against a live account: a
 refresh rotates both tokens and renews the access token by eight hours, and
-leaves `refreshTokenExpiresAt` where it was, to the millisecond. That deadline
-is a ceiling fixed when you logged in, and every rotated token inherits it --
-so refreshing cannot postpone it, and when it arrives only a new login will
-do. What refreshing keeps is the token in active use, which is the part a
-schedule can actually influence.
+leaves `refreshTokenExpiresAt` where it was, give or take under a second: it
+is recomputed from whole seconds on each exchange, and one measured exchange
+moved it 809 ms *earlier*. That deadline is a ceiling fixed when you logged
+in, and every rotated token inherits it -- so refreshing cannot postpone it,
+and when it arrives only a new login will do. What refreshing keeps is the
+token in active use, which is the part a schedule can actually influence.
 
 ## Install
 
