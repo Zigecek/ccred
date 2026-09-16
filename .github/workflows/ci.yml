@@ -42,6 +42,53 @@ jobs:
       # checked here even though the install path itself is not exercised.
       - run: cargo test --workspace --all-features
 
+  # The one platform where a schedule can be registered on a disposable
+  # machine. Everything else about the systemd backend is unit-tested against
+  # rendered text; this asks systemd itself what it made of it.
+  #
+  # Deliberately not part of `cargo test`: the suite must never touch the
+  # scheduler of the machine it runs on. A runner is thrown away afterwards.
+  systemd:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - run: cargo build --workspace --all-features --locked
+      - name: Register a timer, read it back, remove it
+        run: |
+          set -euo pipefail
+          export CCRED_NO_AUTO_SCHEDULE=1
+          home="$(mktemp -d)"
+          conf="$(mktemp -d)"
+          bin="target/debug/ccred"
+          run() { "$bin" --ccred-home "$home" --claude-config-dir "$conf" "$@"; }
+
+          # A container without a user bus is a supported answer, not a
+          # failure: it must be exit 8 with a reason, never a crash or a hang.
+          set +e
+          out="$(run schedule install --json 2>&1)"
+          code=$?
+          set -e
+          echo "$out"
+          if [ "$code" = "8" ]; then
+            echo "no user manager here; ccred said so and stopped"
+            exit 0
+          fi
+          test "$code" = "0"
+          echo "$out" | jq -e '.next_run != null' >/dev/null
+
+          # systemd's own view of what was written.
+          systemctl --user list-timers --all | grep -q ccred
+          systemctl --user cat ccred-refresh.timer >/dev/null
+          test "$(systemctl --user is-enabled ccred-refresh.timer)" = "enabled"
+
+          run schedule status --json | jq -e '.state == "installed"' >/dev/null
+          run schedule status --json | jq -e '.enabled == true' >/dev/null
+          run schedule uninstall
+          ! systemctl --user list-timers --all | grep -q ccred
+          test -z "$(ls -A "$HOME/.config/systemd/user" 2>/dev/null | grep ccred || true)"
+          echo "registered, read back and removed"
+
   msrv:
     runs-on: ubuntu-24.04
     steps:
