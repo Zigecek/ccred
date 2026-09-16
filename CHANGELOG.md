@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.2.24
+
+An audit of the documentation against the program found seven mismatches.
+
+- **`--json` now works everywhere it is promised.** `restore --json` and
+  `schedule uninstall --json` printed nothing, and `schedule install
+  --dry-run --json` printed the human block: a script piping any of them
+  into a parser got an error. A test runs every documented command with
+  `--json` and parses what comes back.
+- The refresh summary says "1 needs attention", not "1 need attention".
+- The README credited a bare `ccred refresh` with the over-fire rate limit.
+  That needs `--if-older-than`, which only the scheduled job passes; a
+  refresh you type does the work, as it should.
+- The exit-code table said Claude Code running gives 6. It gives 7: a switch
+  under a live session is refused, not postponed.
+- `log` shows every refresh, not only the scheduled ones.
+
 ## 0.2.23
 
 **Upgrade, especially on Windows and macOS.**
