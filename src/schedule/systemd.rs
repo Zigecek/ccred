@@ -51,10 +51,7 @@ pub fn render_service(spec: &ScheduleSpec, hardened: bool) -> String {
     });
     s.push_str("\n[Service]\n");
     s.push_str("Type=oneshot\n");
-    s.push_str(&format!(
-        "ExecStart={}\n",
-        unit_escape(&spec.command_line())
-    ));
+    s.push_str(&format!("ExecStart={}\n", exec_line(spec)));
     s.push_str("TimeoutStartSec=600\n");
     s.push_str("Nice=10\n");
     s.push_str("UMask=0077\n");
@@ -62,13 +59,9 @@ pub fn render_service(spec: &ScheduleSpec, hardened: bool) -> String {
     s.push_str("ReadWritePaths=-%h/.claude\n");
     s.push_str("ReadWritePaths=-%h/.claude.json\n");
     s.push_str("ReadWritePaths=-%h/.ccred\n");
-    // Relocated directories. Quoted whole, prefix included: systemd unquotes
-    // the word first and only then looks for the `-`.
+    // Relocated directories.
     for dir in &spec.writable {
-        s.push_str(&format!(
-            "ReadWritePaths=\"-{}\"\n",
-            unit_escape(&dir.to_string_lossy())
-        ));
+        s.push_str(&format!("ReadWritePaths={}\n", writable_path(dir)));
     }
     if hardened {
         s.push_str("\n# Namespace hardening (needs unprivileged user namespaces)\n");
@@ -257,23 +250,80 @@ impl Scheduler for Systemd {
     }
 }
 
-/// `%` starts a specifier in a unit file, so a literal one is doubled.
-fn unit_escape(text: &str) -> String {
-    text.replace('%', "%%")
+/// One word of a unit file line, exactly as systemd will read it back.
+///
+/// systemd splits on whitespace, honours `"` and `'` quoting and C escapes,
+/// expands `%` specifiers everywhere and, in `ExecStart=`, `$VAR`. Escaping
+/// only `%` let a path such as `/data/o'neil` produce "unbalanced quoting":
+/// the service then had no `ExecStart` at all, while the timer still showed
+/// a next run and the install was reported as working.
+fn unit_word(word: &str, dollars: bool) -> String {
+    let mut escaped = String::new();
+    for c in word.chars() {
+        match c {
+            '\\' => escaped.push_str("\\\\"),
+            '"' => escaped.push_str("\\\""),
+            '%' => escaped.push_str("%%"),
+            '$' if dollars => escaped.push_str("$$"),
+            c => escaped.push(c),
+        }
+    }
+    let plain = !word.is_empty()
+        && word != ";"
+        && !word
+            .chars()
+            .any(|c| c.is_whitespace() || matches!(c, '"' | '\'' | '\\'));
+    if plain {
+        escaped
+    } else {
+        format!("\"{escaped}\"")
+    }
 }
 
-/// The program a unit starts: the first word of `ExecStart=`, which
-/// `command_line` quotes when it holds a space.
+/// An `ExecStart=` value.
+fn exec_line(spec: &ScheduleSpec) -> String {
+    std::iter::once(spec.exe.to_string_lossy().into_owned())
+        .chain(spec.args.iter().cloned())
+        .map(|w| unit_word(&w, true))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// A `ReadWritePaths=` value that tolerates absence. The `-` goes inside the
+/// quotes: systemd unquotes the word first and looks for it afterwards.
+fn writable_path(dir: &std::path::Path) -> String {
+    let word = unit_word(&format!("-{}", dir.to_string_lossy()), false);
+    if word.starts_with('"') {
+        word
+    } else {
+        format!("\"{word}\"")
+    }
+}
+
+/// The program a unit starts: the first word of `ExecStart=`, read the way
+/// `unit_word` wrote it.
 pub fn registered_command(unit: &str) -> Option<PathBuf> {
     let value = unit
         .lines()
         .find_map(|line| line.trim().strip_prefix("ExecStart="))?
         .trim();
-    let path = match value.strip_prefix('"') {
-        Some(rest) => rest.split('"').next()?,
-        None => value.split_whitespace().next()?,
-    };
-    (!path.is_empty()).then(|| PathBuf::from(path.replace("%%", "%")))
+
+    let mut word = String::new();
+    let mut chars = value.chars();
+    let quoted = value.starts_with('"');
+    if quoted {
+        chars.next();
+    }
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => word.push(chars.next()?),
+            '"' if quoted => break,
+            c if !quoted && c.is_whitespace() => break,
+            c => word.push(c),
+        }
+    }
+    let word = word.replace("%%", "%").replace("$$", "$");
+    (!word.is_empty()).then(|| PathBuf::from(word))
 }
 
 /// `key=value` lines, as `systemctl show` emits them.
@@ -350,6 +400,89 @@ mod tests {
         assert!(unit.contains("ExecStart=/opt/100%%/ccred "), "{unit}");
         assert_eq!(registered_command(&unit), Some(s.exe));
     }
+
+    /// Split a unit file value the way systemd does, for the characters
+    /// `unit_word` has to handle -- and refuse anything systemd would expand.
+    fn systemd_words(value: &str, dollars_expand: bool) -> Vec<String> {
+        let mut words = Vec::new();
+        let mut chars = value.chars().peekable();
+        loop {
+            while chars.peek().is_some_and(|c| c.is_whitespace()) {
+                chars.next();
+            }
+            let Some(&first) = chars.peek() else {
+                return words;
+            };
+            let quoted = first == '"';
+            if quoted {
+                chars.next();
+            }
+            let mut raw = String::new();
+            while let Some(c) = chars.next() {
+                match c {
+                    '\\' => raw.push(chars.next().expect("dangling escape")),
+                    '"' if quoted => break,
+                    '"' | '\'' if !quoted => panic!("unbalanced quoting in {value:?}"),
+                    c if !quoted && c.is_whitespace() => break,
+                    c => raw.push(c),
+                }
+            }
+            let mut word = String::new();
+            let mut it = raw.chars().peekable();
+            while let Some(c) = it.next() {
+                match c {
+                    '%' => match it.next() {
+                        Some('%') => word.push('%'),
+                        other => panic!("specifier %{other:?} would expand in {value:?}"),
+                    },
+                    '$' if dollars_expand => match it.peek() {
+                        Some('$') => {
+                            it.next();
+                            word.push('$');
+                        }
+                        Some(n) if n.is_alphanumeric() || *n == '_' || *n == '{' => {
+                            panic!("a variable would expand in {value:?}")
+                        }
+                        _ => word.push('$'),
+                    },
+                    c => word.push(c),
+                }
+            }
+            words.push(word);
+        }
+    }
+
+    /// Any of these once meant a unit with no usable command, or a different
+    /// one: `'` and `"` unbalance the quoting, `\` escapes the next
+    /// character, `$` expands a variable and `%` a specifier.
+    #[test]
+    fn hostile_characters_reach_the_command_intact() {
+        let mut s = crate::schedule::tests::spec().with_locations(&crate::paths::Locations {
+            ccred_home: Some("/data/o'neil/$HOME/100%".into()),
+            claude_config_dir: Some(r#"/data/say"hi"\there x"#.into()),
+        });
+        s.exe = PathBuf::from("/opt/it's/$x/ccred");
+        let unit = render_service(&s, true);
+        let line = unit
+            .lines()
+            .find_map(|l| l.strip_prefix("ExecStart="))
+            .unwrap();
+
+        let mut expected = vec![s.exe.to_string_lossy().into_owned()];
+        expected.extend(s.args.iter().cloned());
+        assert_eq!(systemd_words(line, true), expected, "{line}");
+        assert_eq!(registered_command(&unit), Some(s.exe.clone()));
+
+        for dir in &s.writable {
+            let value = writable_path(dir);
+            assert_eq!(
+                systemd_words(&value, false),
+                [format!("-{}", dir.display())],
+                "{value}"
+            );
+        }
+    }
+
     use crate::schedule::tests::spec;
 
     #[test]
