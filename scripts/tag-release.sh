@@ -55,7 +55,7 @@ echo "tagging $tag at $(git rev-parse --short HEAD)"
 git tag -a "$tag" -m "ccred $version"
 git push origin "$tag"
 
-cat <<EOF
+cat <<'EOF'
 
 Pushed. Now do nothing to main until the run finishes:
 
