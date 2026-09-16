@@ -42,8 +42,10 @@ These are enforced in code and in CI, not merely intended.
   is called outside the modules whose job is handling one.
 - **Error kinds are persisted, never rendered messages**, because a message can
   echo its input and its input can be a token.
-- **A test runs every command down every failure path** and asserts that
-  nothing token-shaped reaches stdout, stderr or on-disk metadata.
+- **A test runs every command, including the ways each one fails,** and
+  asserts that nothing token-shaped reaches stdout or stderr -- nor any file
+  written beside the credentials: profile metadata, the account blob, the
+  active pointer, the switch journal or the run log.
 - **No write replaces valid credentials with invalid ones**, and no write moves
   a refresh window backwards.
 - **Account identity is checked separately from validity.** Two different

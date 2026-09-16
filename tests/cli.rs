@@ -220,6 +220,14 @@ fn no_command_ever_prints_a_token() {
         &["switch", "work"],
         &["switch", "nope"],      // fails: not found
         &["switch", "../../etc"], // fails: invalid name
+        &["restore", "work"],
+        &["restore", "nope"], // fails: not found
+        &["refresh"],         // leaves a run log and a last-run record
+        &["log"],
+        &["log", "--json"],
+        &["uninstall", "--dry-run"],
+        &["uninstall", "--purge", "--dry-run", "--json"],
+        &["uninstall", "--purge"], // fails: nobody to confirm it
         &["rm", "personal"],
         &["stray-argument"], // fails: unknown command
     ];
@@ -244,6 +252,32 @@ fn no_command_ever_prints_a_token() {
             args.join(" ")
         );
     }
+
+    // And nothing written beside the credentials holds one: metadata, the
+    // account blob, the pointer, the journal, the run log. Only files that
+    // are credentials by design -- the store, its last-known-good copy and
+    // the backups of both -- may.
+    let mut checked = 0;
+    for path in walk(&sb.path().join(".ccred")) {
+        if !path.is_file() {
+            continue;
+        }
+        let name = path.file_name().unwrap().to_string_lossy().to_string();
+        if name.starts_with(".credentials.json") || name.starts_with("credentials.") {
+            continue;
+        }
+        checked += 1;
+        let bytes = std::fs::read(&path).unwrap();
+        let text = String::from_utf8_lossy(&bytes);
+        assert!(
+            !text.contains("sk-ant-"),
+            "{} holds something token-shaped",
+            path.display()
+        );
+    }
+    // Profile metadata, the account blob, the pointer, the run log and the
+    // last-run record, at least.
+    assert!(checked >= 5, "only {checked} files were checked");
 }
 
 #[test]
