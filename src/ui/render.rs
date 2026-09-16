@@ -747,6 +747,7 @@ pub fn log(theme: &Theme, entries: &[crate::logbook::Entry], path: &std::path::P
     let now = crate::store::now_ms();
     let mut t = Table::new(&[
         ("WHEN", Align::Left),
+        ("FROM", Align::Left),
         ("STATUS", Align::Left),
         ("PROFILES", Align::Left),
     ]);
@@ -765,8 +766,16 @@ pub fn log(theme: &Theme, entries: &[crate::logbook::Entry], path: &std::path::P
         } else {
             VALUE
         };
+        // Records written before the field existed say nothing rather than
+        // guessing, which is why this is three-valued.
+        let from = match e.scheduled {
+            Some(true) => "timer",
+            Some(false) => "you",
+            None => "-",
+        };
         t.row(vec![
             Cell::new(ago(e.at_ms, now), MUTED),
+            Cell::new(from, MUTED),
             Cell::new(&e.status, style),
             Cell::new(summary, VALUE),
         ]);

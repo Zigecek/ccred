@@ -1548,6 +1548,30 @@ fn a_due_profile_is_renewed_through_the_first_rung_that_works() {
     assert!(out.contains("work refresh"), "{out}");
 }
 
+/// "The timer has not fired since Tuesday and you have been refreshing by
+/// hand" is a thing the log could not say: every run looked alike. Only the
+/// registered job passes `--if-older-than`, so that is what tells them apart.
+#[test]
+fn the_log_says_which_runs_the_schedule_started() {
+    let (sb, _creds) = sandbox_with_a_due_profile();
+    let probe = Probe::new();
+
+    probe.refresh(&sb, "", &[]); // typed
+    probe.refresh(&sb, "", &["--if-older-than", "0"]); // the job
+
+    let (out, _, code) = sb.run(&["log", "--json"]);
+    assert_eq!(code, 0, "{out}");
+    let entries: Vec<serde_json::Value> = serde_json::from_str(&out).expect("valid JSON");
+    assert_eq!(entries.len(), 2, "{entries:#?}");
+    assert_eq!(entries[0]["scheduled"], serde_json::json!(false), "typed");
+    assert_eq!(entries[1]["scheduled"], serde_json::json!(true), "the job");
+
+    let (out, _, _) = sb.run(&["log"]);
+    assert!(out.contains("FROM"), "{out}");
+    assert!(out.contains("timer"), "{out}");
+    assert!(out.contains("you"), "{out}");
+}
+
 /// The incident this path was hardened for: the spawned binary decided the
 /// profile was signed out and wrote empty tokens over it.
 #[test]

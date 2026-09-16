@@ -33,6 +33,16 @@ pub struct Entry {
     pub command: String,
     /// `"ran"`, or `"skipped: ..."` -- our own words, never an error's.
     pub status: String,
+    /// Did a scheduler start this, or did someone type it?
+    ///
+    /// Read off `--if-older-than`, which only the registered job passes. It
+    /// is the difference between "the timer is working" and "the timer has
+    /// not fired since Tuesday and you have been refreshing by hand" --
+    /// which, without this, the log cannot tell anyone.
+    ///
+    /// Optional for the records written before it existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scheduled: Option<bool>,
     pub profiles: Vec<ProfileLine>,
 }
 
@@ -144,6 +154,7 @@ mod tests {
             at_ms: 1_788_000_000_000,
             command: "refresh".to_string(),
             status: status.to_string(),
+            scheduled: Some(true),
             profiles: vec![ProfileLine {
                 name: "work".into(),
                 decision: "skip_fresh".into(),

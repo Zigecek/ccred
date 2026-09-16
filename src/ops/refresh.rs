@@ -657,7 +657,10 @@ pub fn refresh(ctx: &Ctx, opts: &RefreshOptions) -> crate::Result<RefreshReport>
     // A scheduled run is otherwise invisible on Windows, where Task Scheduler
     // discards stdout. Failing to write the record must never fail the run it
     // was recording.
-    let _ = crate::logbook::append(&ctx.paths().log_dir(), &log_entry(now, &report));
+    // Only the registered job passes `--if-older-than`; a person who types
+    // `ccred refresh` asked for the work and gets it unconditionally.
+    let scheduled = opts.if_older_than_ms.is_some();
+    let _ = crate::logbook::append(&ctx.paths().log_dir(), &log_entry(now, &report, scheduled));
 
     Ok(report)
 }
@@ -959,11 +962,12 @@ fn refresh_one(
 /// Decisions and numbers only. `detail` is deliberately left out: it is built
 /// from rendered error messages, and the project rule is to persist error
 /// kinds, because a message can echo its input and that input can be a token.
-fn log_entry(now: i64, report: &RefreshReport) -> crate::logbook::Entry {
+fn log_entry(now: i64, report: &RefreshReport, scheduled: bool) -> crate::logbook::Entry {
     crate::logbook::Entry {
         at_ms: now,
         command: "refresh".to_string(),
         status: report.status.clone(),
+        scheduled: Some(scheduled),
         profiles: report
             .profiles
             .iter()

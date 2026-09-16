@@ -140,7 +140,7 @@ ccred refresh             keep stored profiles from expiring
 ccred schedule install    run that refresh automatically, twice a week
 ccred schedule status     is it registered, and when does it next run
 ccred doctor              check for anything quietly wrong
-ccred log                 what past refreshes decided
+ccred log                 what past refreshes decided, and which ones the timer started
 ccred uninstall           remove ccred from this machine
 ```
 
