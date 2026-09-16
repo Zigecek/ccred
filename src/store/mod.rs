@@ -140,13 +140,11 @@ mod tests {
         assert!(matches!(err, crate::CcredError::Json { .. }), "got {err:?}");
     }
 
-    /// A field this model cannot carry must stop the load, not be dropped on
-    /// the next write. The check runs at load time so the failure is attached
-    /// to reading someone else's file, not to our own write.
+    /// Claude Code adds keys over time, and a rewrite that dropped one would
+    /// delete state that belongs to it. Both levels keep a flattened
+    /// catch-all, so an unknown key is carried through a load and back out.
     #[test]
-    fn a_field_the_model_cannot_carry_fails_at_load_time() {
-        // `claudeAiOauth` is modelled with a flattened catch-all, so an
-        // unknown key there survives. A non-object in its place does not.
+    fn unknown_fields_are_carried_through_a_load() {
         let raw = br#"{"claudeAiOauth":{"accessToken":"sk-ant-oat01-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
                        "refreshToken":"sk-ant-ort01-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
                        "expiresAt":1,"somethingNew":{"a":1}},"topLevelNovelty":[1,2]}"#;
@@ -158,6 +156,18 @@ mod tests {
             back["claudeAiOauth"]["somethingNew"]["a"],
             serde_json::json!(1)
         );
+    }
+
+    /// A known field of the wrong type stops the load. Coercing it, or
+    /// skipping it, would mean writing back something other than what was
+    /// read -- and this is someone else's file.
+    #[test]
+    fn a_known_field_of_the_wrong_type_fails_at_load_time() {
+        let raw = br#"{"claudeAiOauth":{"accessToken":"sk-ant-oat01-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+                       "refreshToken":"sk-ant-ort01-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+                       "expiresAt":"soon"}}"#;
+        let err = parse_loaded(raw.to_vec(), Path::new("/tmp/x")).unwrap_err();
+        assert!(matches!(err, crate::CcredError::Json { .. }), "got {err:?}");
     }
 
     /// `now_ms` is used as a monotonic-ish clock for the refresh window, so a

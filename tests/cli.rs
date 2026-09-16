@@ -93,9 +93,14 @@ impl Sandbox {
     }
 
     fn cmd(&self, args: &[&str]) -> std::process::Output {
+        self.cmd_env(args, &[])
+    }
+
+    fn cmd_env(&self, args: &[&str], env: &[(&str, &str)]) -> std::process::Output {
         Command::cargo_bin("ccred")
             .unwrap()
             .args(args)
+            .envs(env.iter().copied())
             .env("HOME", self.path())
             .env("USERPROFILE", self.path())
             .env_remove("CCRED_HOME")
@@ -1072,4 +1077,222 @@ fn a_switch_in_progress_is_not_healed_from_outside() {
         journal.exists(),
         "a journal was healed while its switch still held the lock"
     );
+}
+
+// --- refresh against a stand-in `claude` -----------------------------------
+
+const RENEWED_ACCESS: &str = "sk-ant-oat01-SENTINELRENEWEDACCESSRRRRRRRRRRRRRRRRRRRRRRRRRRR";
+const DAY_MS: i64 = 86_400_000;
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64
+}
+
+/// A stand-in `claude`, built once per test binary with plain `rustc`.
+///
+/// A compiled program rather than a script, because the same stand-in has to
+/// run on all three platforms and a `.cmd` file cannot rewrite JSON sanely.
+fn fake_claude() -> &'static Path {
+    static EXE: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+    EXE.get_or_init(|| {
+        let dir = Box::leak(Box::new(TempDir::new().unwrap())).path();
+        let src = dir.join("fake_claude.rs");
+        std::fs::write(&src, include_str!("support/fake_claude.rs")).unwrap();
+        let exe = dir.join(format!("fake_claude{}", std::env::consts::EXE_SUFFIX));
+        let rustc = std::env::var("RUSTC").unwrap_or_else(|_| "rustc".into());
+        let out = Command::new(rustc)
+            .args(["--edition", "2021", "-o"])
+            .arg(&exe)
+            .arg(&src)
+            .output()
+            .expect("rustc must be available wherever the tests are");
+        assert!(
+            out.status.success(),
+            "fake claude did not build:
+{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        exe
+    })
+}
+
+/// One sandbox's calls to the stand-in.
+struct Probe {
+    log: TempDir,
+}
+
+impl Probe {
+    fn new() -> Self {
+        Probe {
+            log: TempDir::new().unwrap(),
+        }
+    }
+
+    fn refresh(&self, sb: &Sandbox, mode: &str, extra: &[&str]) -> std::process::Output {
+        let exe = fake_claude().to_string_lossy().to_string();
+        let log = self.log.path().join("calls.log");
+        let log = log.to_string_lossy().to_string();
+        let mut args = vec!["refresh"];
+        args.extend_from_slice(extra);
+        args.extend_from_slice(&["--claude-path", exe.as_str()]);
+        sb.cmd_env(
+            &args,
+            &[
+                ("FAKE_CLAUDE_LOG", log.as_str()),
+                ("FAKE_CLAUDE_MODE", mode),
+                // Set in the caller, so that the probe not seeing it proves
+                // it was scrubbed.
+                (
+                    "CLAUDE_CODE_OAUTH_TOKEN",
+                    "sk-ant-oat01-SENTINELMUSTNOTREACHTHEPROBEXXXXXXXXXXXXXXXX",
+                ),
+            ],
+        )
+    }
+
+    fn calls(&self) -> Vec<String> {
+        std::fs::read_to_string(self.log.path().join("calls.log"))
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_string)
+            .collect()
+    }
+}
+
+/// Two profiles, `personal` active and `work` idle, with `work` inside the
+/// ten-day window and its access token expired: the state a refresh is for.
+fn sandbox_with_a_due_profile() -> (Sandbox, std::path::PathBuf) {
+    sandbox_with_work_access_expiring_in(-3_600_000)
+}
+
+fn sandbox_with_work_access_expiring_in(ms: i64) -> (Sandbox, std::path::PathBuf) {
+    let sb = Sandbox::new();
+    sb.run(&["save", "work"]);
+    sb.login_b();
+    sb.run(&["save", "personal"]);
+
+    let creds = sb.path().join(".ccred/profiles/work/.credentials.json");
+    let mut doc: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&creds).unwrap()).unwrap();
+    let oauth = &mut doc["claudeAiOauth"];
+    oauth["expiresAt"] = (now_ms() + ms).into();
+    oauth["refreshTokenExpiresAt"] = (now_ms() + 7 * DAY_MS).into();
+    std::fs::write(&creds, serde_json::to_vec(&doc).unwrap()).unwrap();
+    Sandbox::make_private(&creds);
+    (sb, creds)
+}
+
+fn stored_oauth(creds: &Path) -> serde_json::Value {
+    let doc: serde_json::Value = serde_json::from_slice(&std::fs::read(creds).unwrap()).unwrap();
+    doc["claudeAiOauth"].clone()
+}
+
+/// The whole refresh path, end to end: decide, spawn, judge by the access
+/// token, remember the rung, and never hand the probe a way to authenticate
+/// as anything but the profile.
+#[test]
+fn a_due_profile_is_renewed_through_the_first_rung_that_works() {
+    let (sb, creds) = sandbox_with_a_due_profile();
+    let probe = Probe::new();
+
+    let out = probe.refresh(&sb, "", &[]);
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(text.contains("refreshed"), "{text}");
+    assert!(
+        !text.contains("sk-ant-"),
+        "a token reached the output:
+{text}"
+    );
+
+    let oauth = stored_oauth(&creds);
+    assert_eq!(
+        oauth["accessToken"], RENEWED_ACCESS,
+        "the renewal was not kept"
+    );
+    assert!(oauth["expiresAt"].as_i64().unwrap() > now_ms());
+
+    // `auth status` does not exchange anything, so the ladder went on to
+    // `mcp list` -- and stopped there, spending no quota on a prompt.
+    let calls = probe.calls();
+    assert_eq!(calls.len(), 2, "{calls:?}");
+    assert!(calls[0].starts_with("auth status --json|"), "{calls:?}");
+    assert!(calls[1].starts_with("mcp list|"), "{calls:?}");
+    for call in &calls {
+        assert!(call.contains("oauth_token_set=false"), "{calls:?}");
+        assert!(call.contains("config_dir_set=false"), "{calls:?}");
+    }
+
+    // The rung that worked is tried first next time. `--force` makes the
+    // run exchange again although the renewed access token is live.
+    let out = probe.refresh(&sb, "", &["--force"]);
+    assert_eq!(out.status.code(), Some(0));
+    let calls = probe.calls();
+    assert_eq!(calls.len(), 3, "{calls:?}");
+    assert!(calls[2].starts_with("mcp list|"), "{calls:?}");
+
+    let (out, _, _) = sb.run(&["log"]);
+    assert!(out.contains("work refresh"), "{out}");
+}
+
+/// The incident this path was hardened for: the spawned binary decided the
+/// profile was signed out and wrote empty tokens over it.
+#[test]
+fn a_probe_that_clears_the_profile_is_undone() {
+    let (sb, creds) = sandbox_with_a_due_profile();
+    let before = stored_oauth(&creds);
+    let probe = Probe::new();
+
+    let out = probe.refresh(&sb, "clear", &[]);
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
+    assert_eq!(
+        out.status.code(),
+        Some(4),
+        "a person is needed:
+{text}"
+    );
+    assert!(text.contains("needs login"), "{text}");
+    assert_eq!(
+        stored_oauth(&creds),
+        before,
+        "the cleared credentials were left in place"
+    );
+}
+
+#[test]
+fn a_probe_that_renews_nothing_backs_off_and_changes_nothing() {
+    // A live access token, so `--force` has to backdate it to get an
+    // exchange -- and has to put it back when none happens.
+    let (sb, creds) = sandbox_with_work_access_expiring_in(3_600_000);
+    let before = stored_oauth(&creds);
+    let probe = Probe::new();
+
+    let out = probe.refresh(&sb, "inert", &["--force"]);
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(text.contains("backing off"), "{text}");
+    // Every rung was tried, and none of them helped.
+    assert_eq!(probe.calls().len(), 3, "{:?}", probe.calls());
+    // That includes the forced run's backdated expiry: nothing was renewed,
+    // so the real one is back.
+    assert_eq!(stored_oauth(&creds), before);
+}
+
+#[test]
+fn a_signed_out_profile_is_reported_not_retried() {
+    let (sb, creds) = sandbox_with_a_due_profile();
+    let before = stored_oauth(&creds);
+    let probe = Probe::new();
+
+    let out = probe.refresh(&sb, "signed_out", &[]);
+    assert_eq!(out.status.code(), Some(4));
+    assert_eq!(probe.calls().len(), 1, "{:?}", probe.calls());
+    assert_eq!(stored_oauth(&creds), before);
 }

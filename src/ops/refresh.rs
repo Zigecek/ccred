@@ -274,6 +274,47 @@ pub fn decide(
     }
 }
 
+/// What `--force` changes before a profile is decided.
+///
+/// Only the timing gates: the backoff, the minimum interval, the window
+/// threshold, and the skip for a live access token -- a forced run backdates
+/// that token so an exchange happens. `needs_login` stays: a person is
+/// genuinely required there, and pretending otherwise would spawn a process
+/// that cannot succeed.
+fn forced(
+    mut state: crate::profile::RefreshState,
+    tokens: TokenState,
+    policy: &RefreshPolicy,
+) -> (crate::profile::RefreshState, TokenState, RefreshPolicy) {
+    state.next_attempt_after_ms = None;
+    state.last_attempt_ms = None;
+    (
+        state,
+        TokenState {
+            access_expired: true,
+            ..tokens
+        },
+        RefreshPolicy {
+            // Everything below this is "refresh now"; i64::MAX would overflow
+            // the comparison, so use a century.
+            window_below_ms: i64::MAX / 4,
+            min_interval_ms: 0,
+            ..policy.clone()
+        },
+    )
+}
+
+/// Did a probe renew the access token?
+///
+/// Judged by the access token's expiry, never by the refresh window: the
+/// window is a ceiling fixed at login, so it does not move on a successful
+/// exchange. Both readings must exist -- `Some(0) > None` is true, so a store
+/// that vanished and came back holding a logged-out blob would otherwise
+/// count as a renewal.
+fn renewed(before: Option<i64>, after: Option<i64>) -> bool {
+    matches!((before, after), (Some(b), Some(a)) if a > b)
+}
+
 /// Exponential backoff with a hard ceiling.
 fn backoff_ms(consecutive_failures: u32) -> i64 {
     let base = 30 * 60 * 1000i64; // 30 minutes
@@ -340,34 +381,11 @@ pub fn refresh(ctx: &Ctx, opts: &RefreshOptions) -> crate::Result<RefreshReport>
         let window_before = tokens.window_left_ms;
 
         let meta = ctx.repo().meta(&name)?;
-        let mut state = meta.map(|m| m.refresh).unwrap_or_default();
-        if opts.force {
-            // Clear only the timing gates. `needs_login` stays: a person is
-            // genuinely required there, and pretending otherwise would spawn
-            // a process that cannot succeed.
-            state.next_attempt_after_ms = None;
-            state.last_attempt_ms = None;
-        }
-        // A forced run backdates the access token so an exchange happens, so
-        // the gate that skips a profile with a live one does not apply.
-        let tokens = if opts.force {
-            TokenState {
-                access_expired: true,
-                ..tokens
-            }
+        let state = meta.map(|m| m.refresh).unwrap_or_default();
+        let (state, tokens, effective_policy) = if opts.force {
+            forced(state, tokens, &opts.policy)
         } else {
-            tokens
-        };
-        let effective_policy = if opts.force {
-            RefreshPolicy {
-                // Everything below this is "refresh now"; i64::MAX would
-                // overflow the comparison, so use a century.
-                window_below_ms: i64::MAX / 4,
-                min_interval_ms: 0,
-                ..opts.policy.clone()
-            }
-        } else {
-            opts.policy.clone()
+            (state, tokens, opts.policy.clone())
         };
         let mut decision = decide(is_active, tokens, &state, now, &effective_policy);
 
@@ -754,12 +772,7 @@ fn refresh_one(
         let reloaded = store.load().ok().flatten();
         let access_after = reloaded.as_ref().map(|l| l.creds.oauth.expires_at);
 
-        // Both sides must exist. `Some(0) > None` is true, so a store that
-        // vanished and came back holding a logged-out blob -- `expiresAt: 0`
-        // -- would read as a renewal, with `last_success_ms` set and the
-        // failure count cleared.
-        let renewed = matches!((access_after, access_before), (Some(a), Some(b)) if a > b);
-        if renewed {
+        if renewed(access_before, access_after) {
             ctx.repo().update_meta(name, |m| {
                 m.refresh.last_attempt_ms = Some(now);
                 m.refresh.last_success_ms = Some(now);
@@ -1164,53 +1177,29 @@ mod tests {
             ),
             Decision::SkipBackoff
         );
-        // With force, the caller has already cleared the timing state and
-        // widened the window, which is what `refresh` does for --force.
-        let cleared = RefreshState {
-            next_attempt_after_ms: None,
-            last_attempt_ms: None,
-            ..backed_off.clone()
+        // With force, through the same function `refresh` uses. The access
+        // token is live here too: a forced run backdates it.
+        let live = TokenState {
+            window_left_ms: Some(20 * DAY_MS),
+            refresh_expired: false,
+            access_expired: false,
+            usable: true,
         };
-        let wide = RefreshPolicy {
-            window_below_ms: i64::MAX / 4,
-            min_interval_ms: 0,
-            ..policy()
-        };
+        let (cleared, tokens, wide) = forced(backed_off.clone(), live, &policy());
         assert_eq!(
-            decide(
-                false,
-                TokenState {
-                    window_left_ms: Some(20 * DAY_MS),
-                    refresh_expired: false,
-                    access_expired: true,
-                    usable: true,
-                },
-                &cleared,
-                NOW,
-                &wide,
-            ),
+            decide(false, tokens, &cleared, NOW, &wide),
             Decision::Refresh
         );
 
-        // But a latched needs_login still wins: forcing a spawn there would
+        // But a latched needs_login survives `forced`: spawning there would
         // start a process that cannot possibly succeed.
         let logged_out = RefreshState {
             needs_login: true,
-            ..cleared
+            ..backed_off
         };
+        let (state, tokens, wide) = forced(logged_out, live, &policy());
         assert_eq!(
-            decide(
-                false,
-                TokenState {
-                    window_left_ms: Some(20 * DAY_MS),
-                    refresh_expired: false,
-                    access_expired: true,
-                    usable: true,
-                },
-                &logged_out,
-                NOW,
-                &wide,
-            ),
+            decide(false, tokens, &state, NOW, &wide),
             Decision::NeedsLogin
         );
     }
@@ -1292,25 +1281,26 @@ mod tests {
     /// back.
     #[test]
     fn a_renewed_access_token_is_success_even_though_the_window_stands_still() {
-        let before_access = 1_789_152_740_824i64;
-        let after_access = 1_789_188_962_015i64;
-        let before_window = 1_790_964_987_824i64;
-        let after_window = 1_790_964_987_015i64;
+        // Before and after one real exchange, measured.
+        let (before_access, after_access) = (1_789_152_740_824i64, 1_789_188_962_015i64);
+        let (before_window, after_window) = (1_790_964_987_824i64, 1_790_964_987_015i64);
 
         assert!(
-            after_access > before_access,
-            "the access token is what actually moves"
+            renewed(Some(before_access), Some(after_access)),
+            "the access token is what moves, and it moved"
         );
         assert!(
-            after_window <= before_window,
-            "the window does not extend, and can even read microscopically lower"
+            !renewed(Some(before_window), Some(after_window)),
+            "judging by the window calls this real exchange a failure"
         );
-        // The old rule, for the record: `after > before` on the window is what
-        // used to decide it, and on these numbers it is false.
-        assert!(
-            after_window <= before_window,
-            "judging by the window would have called this exchange a failure"
-        );
+    }
+
+    #[test]
+    fn a_store_that_vanished_is_not_a_renewal() {
+        assert!(!renewed(None, Some(0)));
+        assert!(!renewed(Some(5), None));
+        assert!(!renewed(None, None));
+        assert!(!renewed(Some(5), Some(5)), "unchanged is not renewed");
     }
 
     /// The deadline cannot be postponed, so saying so in time is the only
