@@ -419,7 +419,17 @@ pub fn switch(theme: &Theme, r: &SwitchReport) {
     let g = theme.glyphs;
     println!();
 
-    if let Some(from) = &r.from {
+    if r.from.as_deref() == Some(r.to.as_str()) {
+        // Switching to the profile already active is a resync, not a move:
+        // the live credentials are mirrored into it and written back out.
+        // Printed as `work -> work` it reads like something went wrong.
+        println!(
+            "{PAD}{} {} {}",
+            paint(OK, g.ok),
+            paint(NAME, &r.to),
+            paint(MUTED, "was already active; re-synced")
+        );
+    } else if let Some(from) = &r.from {
         println!(
             "{PAD}{} {} {} {}",
             paint(OK, g.ok),

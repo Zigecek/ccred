@@ -101,12 +101,18 @@ impl CredentialStore for FileStore {
 }
 
 impl FileStore {
+    /// Written the way Claude Code writes it: one compact line, no trailing
+    /// newline. Measured against a live install of 2.1.x -- `.claude.json`
+    /// next to it is pretty-printed, this file is not. Both shapes parse, so
+    /// the only thing at stake is whether someone looking at their own
+    /// credential file finds it as they left it. `.claude.json` is patched
+    /// rather than regenerated for the same reason.
     fn write_value(&self, creds: &CredentialsFile) -> crate::Result<()> {
         let value = serde_json::to_value(creds).map_err(|source| CcredError::Json {
             path: self.path(),
             source,
         })?;
-        let bytes = serde_json::to_vec_pretty(&value).map_err(|source| CcredError::Json {
+        let bytes = serde_json::to_vec(&value).map_err(|source| CcredError::Json {
             path: self.path(),
             source,
         })?;
@@ -120,7 +126,18 @@ mod tests {
     use crate::redact::Secret;
     use tempfile::tempdir;
 
-    const REAL_SHAPE: &str = r#"{
+    /// One line, no trailing newline: what a live install actually holds.
+    const REAL_SHAPE: &str = concat!(
+        r#"{"claudeAiOauth":{"accessToken":"sk-ant-oat01-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","#,
+        r#""refreshToken":"sk-ant-ort01-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB","#,
+        r#""expiresAt":4102444800000,"refreshTokenExpiresAt":4102444800000,"#,
+        r#""scopes":["user:inference"],"subscriptionType":"max","#,
+        r#""rateLimitTier":"default_claude_max_5x"},"#,
+        r#""organizationUuid":"b5c1c992-726a-4dab-9d8e-d225ba8ee6d4"}"#,
+    );
+
+    /// The same content, reformatted. Whatever shape a file is in, it loads.
+    const PRETTY_SHAPE: &str = r#"{
       "claudeAiOauth": {
         "accessToken": "sk-ant-oat01-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
         "refreshToken": "sk-ant-ort01-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
@@ -227,12 +244,34 @@ mod tests {
         assert_eq!(fs::read(store.path()).unwrap(), REAL_SHAPE.as_bytes());
     }
 
+    /// ccred hands this file back to Claude Code, which writes it on one
+    /// line. A rewrite that pretty-printed it left someone's credential file
+    /// looking nothing like the one they had.
+    #[test]
+    fn a_write_keeps_the_shape_claude_code_uses() {
+        let (_d, store) = store_with(Some(REAL_SHAPE));
+        let loaded = store.load().unwrap().unwrap();
+        store.store(&loaded.creds).unwrap();
+
+        let written = fs::read_to_string(store.path()).unwrap();
+        assert!(!written.contains('\n'), "one line, no newline: {written:?}");
+        assert_eq!(written, REAL_SHAPE, "byte for byte, round-tripped");
+    }
+
+    /// The counter-case: a file somebody reformatted is still read.
+    #[test]
+    fn a_reformatted_file_still_loads() {
+        let (_d, store) = store_with(Some(PRETTY_SHAPE));
+        let loaded = store.load().unwrap().unwrap();
+        assert!(loaded.creds.extra.contains_key("organizationUuid"));
+    }
+
     #[test]
     fn revision_changes_after_a_write() {
         let (_d, store) = store_with(Some(REAL_SHAPE));
         let before = store.revision().unwrap();
         let loaded = store.load().unwrap().unwrap();
-        // to_vec_pretty reformats, so length alone already differs.
+        // Same bytes as before, so only the timestamp can tell them apart.
         store.store(&loaded.creds).unwrap();
         let after = store.revision().unwrap();
         assert_ne!(before, after);

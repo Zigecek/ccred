@@ -63,6 +63,11 @@ We read and write files that belong to Claude Code, so:
 - **Round-trips are checked at runtime**, not just in tests: `assert_lossless`
   compares a rewrite against the bytes read and refuses the write if any key
   would disappear.
+- **Write each file in its own shape.** `.claude.json` is pretty-printed with
+  two spaces; `.credentials.json` is one compact line with no trailing
+  newline. Both were measured on a live install, and both are what ccred
+  writes back. Either shape parses, so this is about leaving someone's files
+  looking the way they found them.
 - **Take the same lock Claude Code takes** (`<storageDir>/.storage-write`,
   `proper-lockfile` semantics, 15s stale) so the two mutually exclude.
 - **Never set `CLAUDE_CODE_OAUTH_TOKEN`** in the environment of a spawned

@@ -292,6 +292,33 @@ fn a_bare_profile_name_suggests_switch_instead_of_guessing() {
     assert!(err.contains("ccred switch work"), "{err}");
 }
 
+/// Switching to the profile that is already active is a resync: the live
+/// credentials go into it and come back out. Reported as `work -> work` it
+/// reads like the command misfired.
+#[test]
+fn switching_to_the_active_profile_says_it_was_already_active() {
+    let sb = Sandbox::new();
+    sb.run(&["save", "work"]);
+    let live = sb.path().join(".claude/.credentials.json");
+    let read = |p: &std::path::Path| -> serde_json::Value {
+        serde_json::from_str(&std::fs::read_to_string(p).unwrap()).unwrap()
+    };
+    let before = read(&live);
+
+    let (out, err, code) = sb.run(&["switch", "work"]);
+    assert_eq!(code, 0, "{err}{out}");
+    assert!(out.contains("already active"), "{out}");
+    assert!(!out.contains("work -> work"), "{out}");
+    // Compared as JSON, not as bytes: the fixture is written pretty and ccred
+    // writes the one-line shape Claude Code uses, so the file is reformatted
+    // on the way through. What must not change is what it says.
+    assert_eq!(
+        read(&live),
+        before,
+        "a resync must leave the live credentials as they were"
+    );
+}
+
 #[test]
 fn switching_preserves_unrelated_config_state() {
     let sb = Sandbox::new();
