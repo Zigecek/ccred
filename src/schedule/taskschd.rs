@@ -30,6 +30,43 @@ impl TaskScheduler {
             .output()
     }
 
+    /// The registered task's XML definition, as UTF-8.
+    ///
+    /// schtasks writes in the console's code page and maps any character that
+    /// page lacks to a look-alike, so a binary under a profile folder such as
+    /// `Jiri` spelled with its diacritics read back as a different path that
+    /// does not exist, and `doctor` reported a healthy schedule's binary as
+    /// missing. Measured under code page 437: a curly quote in a task
+    /// description arrived as a straight one. The query therefore runs in a
+    /// console of its own -- no window, switched to UTF-8 first -- which
+    /// leaves the console the user is typing in untouched.
+    #[cfg(windows)]
+    fn task_xml(&self) -> Option<String> {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let out = Command::new("cmd")
+            // `/d` skips the user's AutoRun commands. cmd strips the outer
+            // quotes itself, because the line holds `>` and `&`.
+            .raw_arg(format!(
+                "/d /c \"chcp 65001 >nul & schtasks /Query /TN {TASK_PATH} /XML ONE\""
+            ))
+            .creation_flags(CREATE_NO_WINDOW)
+            .stdin(std::process::Stdio::null())
+            .output()
+            .ok()?;
+        out.status
+            .success()
+            .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
+    }
+
+    #[cfg(not(windows))]
+    fn task_xml(&self) -> Option<String> {
+        let out = self
+            .schtasks(&["/Query", "/TN", TASK_PATH, "/XML", "ONE"])
+            .ok()?;
+        Some(String::from_utf8_lossy(&out.stdout).into_owned())
+    }
+
     /// One registration attempt at a given privilege level.
     fn create(&self, spec: &ScheduleSpec, privilege: Privilege) -> crate::Result<()> {
         let xml = self.xml_path();
@@ -290,10 +327,7 @@ impl Scheduler for TaskScheduler {
         // `Idle Time` and `Delete Task If Not Rescheduled` both read
         // `Disabled` on a perfectly healthy task. The XML says each thing
         // once, in one place, in English.
-        let xml = self
-            .schtasks(&["/Query", "/TN", TASK_PATH, "/XML", "ONE"])
-            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
-            .unwrap_or_default();
+        let xml = self.task_xml().unwrap_or_default();
         if xml.contains("InteractiveToken") {
             warnings.push(Warning::RunsOnlyWhenSignedIn);
         }
