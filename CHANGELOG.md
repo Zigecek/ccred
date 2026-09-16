@@ -21,9 +21,10 @@
   It was scrubbed, so for anyone with a relocated configuration the refresh
   probe read a different `.claude.json`, and for the default scope a different
   credential file.
-- `doctor` reports a schedule whose binary no longer exists; a per-account
-  rotation keeps orphaned credentials from pushing each other out; the backoff
-  now actually delays a failing profile beyond the daily interval.
+- **Orphaned credentials get a rotation per account.** Ten copies of one
+  account could push out the only copy of another.
+- **The backoff now delays a failing profile** -- one, two, then four days.
+  It used to top out at the daily interval, so it never delayed anything.
 
 ### Distribution
 
