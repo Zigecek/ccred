@@ -1006,6 +1006,53 @@ fn list_shows_a_profile_whose_metadata_will_not_parse() {
     );
 }
 
+/// A profile from an older ccred, written by hand with only the keys that
+/// have always been required. Every field added since carries `#[serde(
+/// default)]` and unknown ones are kept in `extra`, and this is what says so
+/// -- checked against a real 0.2.24 binary once, and pinned here so no
+/// network is needed to keep checking.
+#[test]
+fn a_profile_from_an_older_version_is_read_as_it_is() {
+    let sb = Sandbox::new();
+    sb.run(&["save", "current"]); // so there is something to switch back to
+
+    let old = sb.path().join(".ccred").join("profiles").join("ancient");
+    std::fs::create_dir_all(&old).unwrap();
+    // No `account`, no `refresh`, no `last_synced_at_ms`: the shape before
+    // any of them existed, plus a key from a version that is not this one.
+    std::fs::write(
+        old.join("ccred.json"),
+        r#"{"schema":1,"name":"ancient","created_at_ms":1780000000000,
+            "somethingFromTheFuture":{"keep":"me"}}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        old.join(".credentials.json"),
+        format!(
+            r#"{{"claudeAiOauth":{{"accessToken":"{TOKEN_B}","refreshToken":"{REFRESH_B}",
+               "expiresAt":{FAR_FUTURE},"refreshTokenExpiresAt":{FAR_FUTURE},
+               "scopes":["user:inference"]}}}}"#
+        ),
+    )
+    .unwrap();
+
+    let (out, err, code) = sb.run(&["list"]);
+    assert_eq!(code, 0, "{err}{out}");
+    assert!(out.contains("ancient"), "{out}");
+
+    let (out, err, code) = sb.run(&["switch", "ancient"]);
+    assert_eq!(code, 0, "{err}{out}");
+
+    // And what this version did not understand is still there afterwards.
+    let meta: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(old.join("ccred.json")).unwrap()).unwrap();
+    assert_eq!(
+        meta["somethingFromTheFuture"]["keep"],
+        serde_json::json!("me"),
+        "an unknown key was dropped: {meta}"
+    );
+}
+
 /// A scheduled run reads no shell profile, so a `claude` that reaches PATH
 /// from one has to be named at install time. A path that is not there is
 /// refused while a person is present to fix it, rather than twice a week into
