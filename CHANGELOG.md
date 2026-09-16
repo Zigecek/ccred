@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.2.29
+
+Both of these come from reading a real log and a real `doctor` report and
+finding the answer was not in either.
+
+- **`doctor` says whether the schedule is actually running.** A registered
+  timer firing into a failure looks, from a terminal, exactly like one that
+  works: the job prints into a log nobody opens, and on Windows Task
+  Scheduler discards even that. It now reads the last-run record ccred has
+  been writing all along -- how long ago, and whether anything needed
+  attention. A week without a run is a warning, since the longest gap
+  between scheduled ones is four days.
+- **`ccred log` says which runs the schedule started.** Every line read the
+  same, so "the timer has not fired since Tuesday and you have been
+  refreshing by hand" was not something the log could tell anyone. Only the
+  registered job passes `--if-older-than`, so that is the tell: a FROM
+  column reads `timer` or `you`, and older records say nothing rather than
+  guessing.
+
 ## 0.2.28
 
 **Linux installs, read this one.** A scheduled refresh inherits the user
