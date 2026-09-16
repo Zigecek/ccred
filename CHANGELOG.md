@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.2.35
+
+Two things that made ccred refuse to work on a file, or a machine, that was
+perfectly usable.
+
+- **A byte-order mark is no longer a malformed file.** Notepad writes one
+  into every UTF-8 file it saves, and so does PowerShell 5.1 redirection --
+  so someone who opened `.credentials.json` or `.claude.json` to look at
+  something, which is what a person does when they suspect trouble, came back
+  to ccred calling their file malformed and refusing to save, switch or
+  report. RFC 8259 allows ignoring the mark; it is dropped before anything
+  reads the bytes and never written back.
+- **A machine with no HOME works when both directories are named.** In a
+  container with a scrubbed environment ccred refused everything, and advised
+  the very thing that did not help: passing `--ccred-home` and
+  `--claude-config-dir` failed identically, because the home was resolved
+  before anything looked at what was passed. It is resolved last now, and
+  only for a directory left to the default.
+- A refused symlink says why it is refused and that the way out is a real
+  file.
+
 ## 0.2.34
 
 **A wrong clock no longer switches the schedule off.** Three decisions read
