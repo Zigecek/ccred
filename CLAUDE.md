@@ -63,6 +63,12 @@ We read and write files that belong to Claude Code, so:
 - **Round-trips are checked at runtime**, not just in tests: `assert_lossless`
   compares a rewrite against the bytes read and refuses the write if any key
   would disappear.
+- **`float_roundtrip` on serde_json is load-bearing.** Without it the parser
+  is a unit in the last place off for some inputs, so patching
+  `.claude.json` moved `lastCost` from `248.06863250000006` to
+  `248.0686325000001` -- a different double, in a running total we never
+  touched. Do not drop the feature to save the parse cost; there is nothing
+  here where that cost is measurable.
 - **Write each file in its own shape.** `.claude.json` is pretty-printed with
   two spaces; `.credentials.json` is one compact line with no trailing
   newline. Both were measured on a live install, and both are what ccred

@@ -37,7 +37,7 @@ anstream = "0.6"
 anstyle = "1"
 # preserve_order keeps unknown keys in their original order so the
 # round-trip is byte-stable
-serde_json = { version = "1", features = ["preserve_order"] }
+serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }
 serde = { version = "1", features = ["derive"] }
 thiserror = "2"
 zeroize = "1"
@@ -47,7 +47,7 @@ hex = "0.4"
 [dev-dependencies]
 tempfile = "3"
 assert_cmd = "2"
-serde_json = { version = "1", features = ["preserve_order"] }
+serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }
 predicates = "3"
 # lock tests only: setting a directory's mtime
 filetime = "0.2"

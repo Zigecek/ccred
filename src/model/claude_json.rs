@@ -293,6 +293,46 @@ mod tests {
         );
     }
 
+    /// A patch must not move a number it never touched.
+    ///
+    /// `.claude.json` carries running totals -- `lastCost` is a dollar figure
+    /// accumulated over months. Read from the real file on a live machine,
+    /// `248.06863250000006` came back out of a switch as `248.0686325000001`,
+    /// which is a *different* double: serde_json's parser is a unit in the
+    /// last place off for some inputs unless `float_roundtrip` is on. Nothing
+    /// anyone would notice in a cost, and exactly the kind of drift the rule
+    /// "patch, never regenerate" exists to prevent.
+    #[test]
+    fn a_patch_leaves_a_float_it_never_touched_bit_for_bit() {
+        const AWKWARD: &str = "248.06863250000006";
+        let dir = tempdir().unwrap();
+        let path = dir.path().join(".claude.json");
+        std::fs::write(
+            &path,
+            format!(
+                r#"{{"projects":{{"/code":{{"lastCost":{AWKWARD}}}}},"oauthAccount":{{"emailAddress":"a@example.com"}}}}"#
+            ),
+        )
+        .unwrap();
+
+        let mut doc = ClaudeJsonDoc::load(&path).unwrap();
+        doc.set_oauth_account(json!({"emailAddress": "b@example.com"}))
+            .unwrap();
+        doc.save_atomic(&path).unwrap();
+
+        let written = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            written.contains(AWKWARD),
+            "the cost was rewritten as something else: {written}"
+        );
+        let parsed: Value = serde_json::from_str(&written).unwrap();
+        assert_eq!(
+            parsed["projects"]["/code"]["lastCost"].as_f64().unwrap(),
+            AWKWARD.parse::<f64>().unwrap(),
+            "and it is not even the same number"
+        );
+    }
+
     #[test]
     fn refuses_to_write_a_document_that_lost_keys() {
         let (_d, path) = doc_with(realistic());
