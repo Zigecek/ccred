@@ -83,6 +83,20 @@ for (const t of TARGETS) {
 
 if (built === 0) throw new Error(`no artifacts found under ${from}`);
 
+// A release missing one target would otherwise publish quietly, and everyone
+// on that platform would install the wrapper and be told there is no binary
+// for them -- with the version already taken, so the fix is a new one. Pass
+// --allow-partial when that is genuinely what you want.
+if (built < TARGETS.length && !process.argv.includes("--allow-partial")) {
+  const missing = TARGETS.filter((t) => !(`@ccred/${t.pkg}` in optional)).map(
+    (t) => t.pkg
+  );
+  throw new Error(
+    `only ${built} of ${TARGETS.length} platforms built; missing: ${missing.join(", ")}. ` +
+      `Pass --allow-partial to publish anyway.`
+  );
+}
+
 // Root wrapper: the committed template with versions stamped in.
 const rootDir = join(out, "ccred");
 cpSync(join(root, "npm", "ccred"), rootDir, { recursive: true });
