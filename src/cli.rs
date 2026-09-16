@@ -183,7 +183,7 @@ pub enum Command {
         dry_run: bool,
     },
 
-    /// Show what the scheduled runs did.
+    /// Show what past refreshes did, scheduled or not.
     ///
     /// A scheduled run is otherwise invisible on Windows, where Task
     /// Scheduler discards its output entirely. Decisions and numbers only --

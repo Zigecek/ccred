@@ -194,7 +194,7 @@ pub(crate) fn quote_if_needed(s: &str) -> String {
 }
 
 /// A file a backend would write.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct RenderedFile {
     pub path: PathBuf,
     pub contents: String,

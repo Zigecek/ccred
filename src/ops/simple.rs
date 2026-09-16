@@ -431,7 +431,15 @@ pub fn save(ctx: &Ctx, name: &ProfileName) -> crate::Result<SaveReport> {
 }
 
 /// Put a profile's last-known-good credentials back.
-pub fn restore(ctx: &Ctx, name: &ProfileName) -> crate::Result<()> {
+/// What `restore` put back.
+#[derive(Debug, Clone, Serialize)]
+pub struct RestoreReport {
+    pub name: String,
+    /// The file the credentials came from.
+    pub from: String,
+}
+
+pub fn restore(ctx: &Ctx, name: &ProfileName) -> crate::Result<RestoreReport> {
     let _profiles = ctx.lock_profiles(SAVE_LOCK_TIMEOUT)?;
     let name = &ctx.repo().canonical_name(name);
     if !ctx.repo().exists(name)? {
@@ -446,7 +454,14 @@ pub fn restore(ctx: &Ctx, name: &ProfileName) -> crate::Result<()> {
             name
         )));
     }
-    Ok(())
+    Ok(RestoreReport {
+        name: name.as_str().to_string(),
+        from: ctx
+            .paths()
+            .profile_lkg(name)
+            .map(|p| p.display().to_string())
+            .unwrap_or_default(),
+    })
 }
 
 pub fn remove(ctx: &Ctx, name: &ProfileName) -> crate::Result<RemoveReport> {

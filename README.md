@@ -130,7 +130,7 @@ ccred refresh             keep stored profiles from expiring
 ccred schedule install    run that refresh automatically, twice a week
 ccred schedule status     is it registered, and when does it next run
 ccred doctor              check for anything quietly wrong
-ccred log                 what the scheduled refreshes decided
+ccred log                 what past refreshes decided
 ccred uninstall           remove ccred from this machine
 ```
 
@@ -146,11 +146,13 @@ refresh the default directories -- empty -- and report success.
 A bare `ccred <name>` is deliberately not a switch alias -- a profile called
 `list` would then be unreachable -- so it prints a hint instead of guessing.
 
-`refresh` is safe to run more often than needed. It records when it last ran
-and exits successfully without doing anything if that was recent, so a
-scheduler that double-fires -- systemd catching up, launchd coalescing, a
-Windows task with both a boot trigger and a schedule -- costs nothing. The
-real rate limit lives in the command, not the schedule.
+A scheduled `refresh` is safe to fire more often than asked. The job runs
+`refresh --if-older-than 48`, and with that flag the command records when it
+last ran and exits successfully without doing anything if that was recent --
+so systemd catching up, launchd coalescing, or a Windows task with both a
+boot trigger and a schedule all cost nothing. The rate limit lives in the
+command rather than in three schedulers' settings. A bare `ccred refresh`
+you type has no such limit: you asked, so it works.
 
 The save that creates your **second** profile registers that schedule for you,
 because that is the moment an idle account starts expiring unattended and the
@@ -231,7 +233,7 @@ For scripts and schedulers, each code means one thing to do:
 | 2 | Usage error, or a confirmation was declined | fix the command |
 | 3 | No such profile, or a name that cannot be one | check `ccred list` |
 | 4 | `refresh` found something a person must handle: a login, a blocked or broken profile, no `claude` to refresh with, a deadline within five days | read the output; retrying soon will not help |
-| 6 | Busy: Claude Code or another `ccred` holds a lock | retry shortly |
+| 6 | Busy: another process holds the credential store's lock, or another `ccred` is working on the profiles | retry shortly |
 | 7 | A write was refused as unsafe, or `doctor` found an error | stop and read the message |
 | 8 | Misconfigured: the scheduler cannot be used here | fix the setup |
 
@@ -248,7 +250,7 @@ $ ccred list
   ● work   ada@example.com    Max 20x  ███████████░░░   23d     3 h ago  ok
     home   grace@example.com  Max 5x   ██░░░░░░░░░░░░    4d  9 days ago  expiring
 
-  2 profiles, 1 needs attention
+  2 profiles,  1 needs attention
 ```
 
 ```

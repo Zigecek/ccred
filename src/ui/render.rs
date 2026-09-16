@@ -294,7 +294,10 @@ pub fn list(theme: &Theme, rows: &[ProfileRow]) {
                 MUTED,
                 &format!("{},", plural(rows.len(), "profile", "profiles"))
             ),
-            paint(WARN, &format!("{attention} need attention"))
+            paint(
+                WARN,
+                &plural(attention, "needs attention", "need attention")
+            )
         )
     };
     println!("{PAD}{summary}");
@@ -557,13 +560,13 @@ pub fn refresh(theme: &Theme, r: &RefreshReport) {
     if logins > 0 {
         summary.push_str(&format!(
             "  {}",
-            paint(ERR, &format!("{logins} need a login"))
+            paint(ERR, &plural(logins, "needs a login", "need a login"))
         ));
     }
     if broken > 0 {
         summary.push_str(&format!(
             "  {}",
-            paint(ERR, &format!("{broken} need attention"))
+            paint(ERR, &plural(broken, "needs attention", "need attention"))
         ));
     }
     println!("{PAD}{summary}");

@@ -88,9 +88,11 @@ fn run(cli: &Cli, theme: &Theme) -> ccred::Result<ExitCode> {
 
         Some(Command::Restore { name }) => {
             let name = validate_profile_name(name)?;
-            simple::restore(&ctx, &name)?;
-            if !cli.json {
-                render::restored(theme, name.as_str());
+            let report = simple::restore(&ctx, &name)?;
+            if cli.json {
+                print_json(&report);
+            } else {
+                render::restored(theme, &report.name);
             }
             Ok(ExitCode::Ok)
         }
@@ -130,7 +132,12 @@ fn run(cli: &Cli, theme: &Theme) -> ccred::Result<ExitCode> {
                 ScheduleAction::Install { dry_run } => {
                     let spec = sched_ops::spec_for(&ctx)?;
                     if *dry_run {
-                        render::dry_run(theme, &backend.render(&spec)?);
+                        let files = backend.render(&spec)?;
+                        if cli.json {
+                            print_json(&files);
+                        } else {
+                            render::dry_run(theme, &files);
+                        }
                         return Ok(ExitCode::Ok);
                     }
                     let health = ccred::schedule::install_checked(backend.as_ref(), &spec)?;
@@ -143,7 +150,11 @@ fn run(cli: &Cli, theme: &Theme) -> ccred::Result<ExitCode> {
                 }
                 ScheduleAction::Uninstall => {
                     ccred::schedule::uninstall_checked(backend.as_ref())?;
-                    if !cli.json {
+                    if cli.json {
+                        // The state afterwards, in the shape `schedule status`
+                        // reports, so a script reads one thing either way.
+                        print_json(&ccred::schedule::State::NotInstalled);
+                    } else {
                         render::schedule_removed(theme);
                     }
                     Ok(ExitCode::Ok)

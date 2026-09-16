@@ -112,7 +112,10 @@ pub enum ExitCode {
     /// Reserved. Transient trouble deliberately exits 0 -- see `refresh` in
     /// `main.rs` -- and the per-profile backoff does the retrying.
     Transient = 5,
-    /// Locked, or `claude` is running. Retry soon.
+    /// Another process holds the credential store's lock, or another `ccred`
+    /// holds the profiles. Retry soon. (Claude Code merely *running* is
+    /// `Unsafe`, not this: a switch under a live session is refused, not
+    /// postponed.)
     Busy = 6,
     /// Unsafe or corrupt state, write refused. Stop and report loudly.
     Unsafe = 7,

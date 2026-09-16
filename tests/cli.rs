@@ -1999,3 +1999,55 @@ fn a_profile_whose_file_is_corrupt_can_be_saved_over() {
         .collect();
     assert!(!backups.is_empty(), "no copy of the damaged file was kept");
 }
+
+/// "Add `--json` to any of them" is a promise the README, the help text and
+/// the examples all make. `restore` printed nothing at all, and
+/// `schedule install --dry-run` printed the human block; a script piping
+/// either into a parser got an error.
+#[test]
+fn every_documented_command_speaks_json() {
+    let sb = Sandbox::new();
+    sb.run(&["save", "work"]);
+    sb.login_b();
+    sb.run(&["save", "personal"]);
+
+    // Read-only or sandboxed, in an order where each has something to say.
+    let invocations: &[&[&str]] = &[
+        &["current"],
+        &["list"],
+        &["save", "personal"],
+        &["switch", "work"],
+        &["restore", "work"],
+        &["refresh"],
+        &["log"],
+        &["rm", "personal"],
+        &["schedule", "status"],
+        &["schedule", "install", "--dry-run"],
+        &["uninstall", "--dry-run"],
+    ];
+
+    for args in invocations {
+        let mut with_json = args.to_vec();
+        with_json.push("--json");
+        let out = sb.cmd(&with_json);
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "`ccred {}` failed:\n{stdout}{}",
+            with_json.join(" "),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            !stdout.trim().is_empty(),
+            "`ccred {}` printed nothing",
+            with_json.join(" ")
+        );
+        serde_json::from_str::<serde_json::Value>(&stdout).unwrap_or_else(|e| {
+            panic!(
+                "`ccred {}` did not print JSON: {e}\n{stdout}",
+                with_json.join(" ")
+            )
+        });
+    }
+}
