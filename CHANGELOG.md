@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.2.30
+
+Both found by pointing ccred at the real files on a live machine rather than
+at fixtures.
+
+- **A patch of `.claude.json` no longer moves a number it never touched.**
+  `lastCost` -- a dollar total accumulated over months -- came back out of a
+  switch as `248.0686325000001` where it went in as `248.06863250000006`.
+  Not a rounding of the same value: a different double, one unit in the last
+  place away, because serde_json's parser is not correctly rounded for some
+  inputs unless `float_roundtrip` is on. It is on now. A copy of a real 68 KB
+  document -- 72 keys, 17 projects -- now survives a save and a switch with
+  nothing changed at all.
+- **A Claude Code session that has written its key and not yet its session
+  file now counts as running.** A live session leaves both `<pid>.json` and
+  `<pid>.<hash>.key`; only the first was read, so between the two writes a
+  session was invisible to the guard that refuses to switch under one --
+  the single situation where switching corrupts a profile.
+
+2.1.x also keeps a daemon, which writes no session file at all. Why it is
+deliberately not counted -- it is permanently resident, so counting it would
+mean `--force` on every switch on every machine -- is written down beside the
+code, with what would have to change to start counting it.
+
 ## 0.2.29
 
 Both of these come from reading a real log and a real `doctor` report and
