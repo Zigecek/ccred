@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.2.27
+
+A fuzz run over ccred's own state files and 80 commands racing each other in
+one directory. No panic and no corrupted profile came out of either; what
+follows is what did.
+
+- **A pointer file that has turned to nonsense no longer ends the command.**
+  Six bytes in `state/current` name the active profile, and when they stopped
+  being readable text, `list`, `current`, `switch` and `rm` all exited with
+  "I/O error" -- the commands someone runs *because* something is wrong.
+  `list` and `current` now report it and carry on, and `switch` treats the
+  pointer as unknown and writes a new one, which is the repair.
+- **A switch with no active profile copies the live credentials aside**
+  when no profile holds them. The same loss a *wrong* pointer has been
+  guarded against since 0.2.19, reached by a pointer that was missing rather
+  than wrong.
+- **The battery warning could only fire in English.** `schedule status` read
+  `DisallowStartIfOnBatteries` out of the localised `schtasks` listing, so on
+  a Czech or German Windows the one warning that explains a laptop which
+  never refreshes on battery never appeared. It reads the task XML now.
+- Exit 6 says what to do about itself: Claude Code takes the credential lock
+  whenever it refreshes, so the answer is to try again in a few seconds. A
+  malformed JSON file points at `doctor` and `restore`.
+- `linger` detection falls back to `LOGNAME`, since a service or a container
+  may set only one of the two.
+- The `.deb` is installed on a runner and made to answer two commands before
+  it is published. It was built, signed and attached without anyone ever
+  running what was inside it.
+
 ## 0.2.26
 
 Nothing here was found by a user; a smoke run of the released binary turned
