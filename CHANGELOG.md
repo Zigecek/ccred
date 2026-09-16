@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.37
+
+**`ccred rm <name> --purge`.** Ordinary `rm` copies the credentials aside
+before deleting the profile, because a mistyped name is the one mistake here
+that cannot be taken back. That is the right default, and the wrong answer to
+the other request -- "remove this account from this machine" -- which had no
+command at all short of uninstalling ccred entirely.
+
+`--purge` deletes the profile and every copy of that account: the rotation
+under its name, and the one keyed by account that a switch writes when the
+live credentials belong to nobody. It names the directories that went, or
+says there were none, and it touches no other account.
+
 ## 0.2.36
 
 **A file that is not UTF-8 says so.** PowerShell writes UTF-16 whenever it
