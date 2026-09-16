@@ -177,6 +177,23 @@ impl Scheduler for Launchd {
     fn uninstall(&self) -> crate::Result<()> {
         let target = format!("{}/{LABEL}", self.domain());
         let _ = self.launchctl(&["bootout", &target]);
+        // `status` goes by the plist, so deleting it after a failed bootout
+        // would report a job gone that is still loaded until logout, still
+        // firing at a binary the caller is about to delete. Keep the plist,
+        // and say so, while launchd still has the job.
+        let still_loaded = self
+            .launchctl(&["print", &target])
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        if still_loaded {
+            return Err(CcredError::Schedule(format!(
+                concat!(
+                    "launchd still has {} loaded after `launchctl bootout`; ",
+                    "log out and back in, then run this again"
+                ),
+                LABEL
+            )));
+        }
         let _ = self.launchctl(&["enable", &target]); // clear any sticky disable
         let _ = std::fs::remove_file(self.plist_path());
         Ok(())
