@@ -184,7 +184,11 @@ pub fn acquire(target: &Path, timeout: Duration) -> crate::Result<DirLock> {
                 // slot indefinitely.
                 if start.elapsed() > timeout {
                     return Err(CcredError::Busy(format!(
-                        "credential store is locked by another process ({})",
+                        concat!(
+                            "credential store is locked by another process -- Claude Code ",
+                            "takes this lock whenever it refreshes, so try again in a few ",
+                            "seconds ({})"
+                        ),
                         lock.display()
                     )));
                 }
@@ -197,7 +201,11 @@ pub fn acquire(target: &Path, timeout: Duration) -> crate::Result<DirLock> {
                     // response is to come back shortly, which is what exit 6
                     // tells a scheduler.
                     return Err(CcredError::Busy(format!(
-                        "credential store is locked by another process ({})",
+                        concat!(
+                            "credential store is locked by another process -- Claude Code ",
+                            "takes this lock whenever it refreshes, so try again in a few ",
+                            "seconds ({})"
+                        ),
                         lock.display()
                     )));
                 }
@@ -248,6 +256,14 @@ mod tests {
         // tell "come back shortly" apart from "stop, something is wrong".
         assert!(matches!(err, CcredError::Busy(_)), "{err}");
         assert_eq!(err.exit_code(), crate::error::ExitCode::Busy);
+        // And it says what to do about it. The message is the whole report
+        // for this error -- there is no hint line behind it.
+        let said = err.to_string();
+        assert!(said.contains("try again"), "{said}");
+        assert!(
+            said.contains(&lock_path_for(&target).display().to_string()),
+            "{said}"
+        );
     }
 
     #[test]

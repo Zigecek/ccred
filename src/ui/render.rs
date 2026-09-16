@@ -1054,6 +1054,9 @@ fn hint_for(e: &crate::CcredError) -> Option<&'static str> {
         E::InvalidProfileName { .. } | E::PathEscape { .. } => {
             Some("names may hold letters, digits, dot, underscore and hyphen")
         }
+        E::Json { .. } => Some(
+            "`ccred doctor` names the file; `ccred restore <name>` puts back the last good copy",
+        ),
         _ => None,
     }
 }
