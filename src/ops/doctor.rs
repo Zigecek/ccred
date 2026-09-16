@@ -74,14 +74,14 @@ pub fn doctor(ctx: &Ctx) -> crate::Result<Vec<Finding>> {
         Ok(Some(j)) => findings.push(Finding::warn(
             "an earlier switch did not finish",
             format!(
-                "it stopped at {:?} while moving to '{}'; the next command will heal it",
+                "it stopped at {:?} while moving to '{}'; the next `ccred save` or `ccred switch` heals it",
                 j.phase, j.to
             ),
         )),
         Ok(None) => {}
         Err(e) => findings.push(Finding::error(
             "switch journal is unreadable",
-            e.to_string(),
+            format!("{e}; the next `ccred save` or `ccred switch` moves it aside"),
         )),
     }
 

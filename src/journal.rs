@@ -5,9 +5,9 @@
 //! killed between any two of them would leave the machine in a state nobody
 //! can reason about afterwards.
 //!
-//! The journal records how far we got. Every command replays it before doing
-//! anything else, so an interrupted switch heals on the next invocation rather
-//! than needing a human. Because credentials are *copied* and both a backup
+//! The journal records how far we got. The next `save` or `switch` replays it
+//! before doing anything else, so an interrupted switch heals without needing
+//! a human. Because credentials are *copied* and both a backup
 //! and a last-known-good copy exist, no phase can lose a token -- the worst
 //! case is a divergence that `doctor` reconciles.
 
@@ -84,6 +84,24 @@ impl SwitchJournal {
         self.save(path)
     }
 
+    /// Move a journal that cannot be read out of the way, and say where.
+    ///
+    /// Leaving it would fail every later `save` and `switch` on the same
+    /// parse error, for good. Setting it aside loses nothing that cannot be
+    /// seen another way: the one thing a journal repairs is the active
+    /// pointer, and a pointer that disagrees with the live account is
+    /// reported by `current` and `doctor`.
+    pub fn set_aside(path: &Path, now_ms: i64) -> crate::Result<std::path::PathBuf> {
+        let mut name = path.as_os_str().to_os_string();
+        name.push(format!(".unreadable-{now_ms}"));
+        let aside = std::path::PathBuf::from(name);
+        std::fs::rename(path, &aside).map_err(|source| CcredError::Io {
+            path: path.to_path_buf(),
+            source,
+        })?;
+        Ok(aside)
+    }
+
     pub fn clear(path: &Path) -> crate::Result<()> {
         match std::fs::remove_file(path) {
             Ok(()) => Ok(()),
@@ -126,6 +144,24 @@ pub enum Recovery {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_unreadable_journal_is_set_aside_not_lost() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("switch.journal");
+        std::fs::write(&path, b"{ not a journal").unwrap();
+        assert!(SwitchJournal::load(&path).is_err());
+
+        let aside = SwitchJournal::set_aside(&path, 42).unwrap();
+        assert!(!path.exists());
+        assert_eq!(std::fs::read(&aside).unwrap(), b"{ not a journal");
+        assert!(
+            aside
+                .to_string_lossy()
+                .ends_with("switch.journal.unreadable-42")
+        );
+        assert!(SwitchJournal::load(&path).unwrap().is_none());
+    }
     use tempfile::tempdir;
 
     fn journal(phase: SwitchPhase) -> SwitchJournal {

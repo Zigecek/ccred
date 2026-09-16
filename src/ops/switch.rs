@@ -219,7 +219,8 @@ fn restore_identity(
 /// the pointer naming one account and the live credentials another. When the
 /// lock is busy, some writer is active; the journal is left for later.
 pub fn recover_pending(ctx: &Ctx, warnings: &mut Vec<String>) -> crate::Result<Option<String>> {
-    if SwitchJournal::load(&ctx.paths().switch_journal())?.is_none() {
+    // An unreadable journal still needs the lock: setting it aside is a write.
+    if matches!(SwitchJournal::load(&ctx.paths().switch_journal()), Ok(None)) {
         return Ok(None);
     }
     let live = ctx.live_store();
@@ -236,8 +237,21 @@ fn recover_locked(ctx: &Ctx, warnings: &mut Vec<String>) -> crate::Result<Option
     let path = ctx.paths().switch_journal();
     // Read under the lock: the switch that held it may have finished and
     // cleared its journal while we waited.
-    let Some(journal) = SwitchJournal::load(&path)? else {
-        return Ok(None);
+    let journal = match SwitchJournal::load(&path) {
+        Ok(Some(journal)) => journal,
+        Ok(None) => return Ok(None),
+        Err(CcredError::Json { .. }) => {
+            let aside = SwitchJournal::set_aside(&path, now_ms())?;
+            warnings.push(format!(
+                concat!(
+                    "an unreadable switch journal was moved to {}; ",
+                    "if the active profile looks wrong, `ccred doctor` says why"
+                ),
+                aside.display()
+            ));
+            return Ok(Some("set aside an unreadable switch journal".to_string()));
+        }
+        Err(e) => return Err(e),
     };
 
     let summary = match journal.recovery() {

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **An unreadable switch journal no longer wedges `save` and `switch`.** Both
+  replay the journal first, so one that failed to parse failed them for good.
+  It is now moved aside, with a warning saying where.
+- `ccred log` shows the history from before a log rotation.
 - **A write no longer fails because a file was briefly held open on
   Windows.** An antivirus scan of a freshly written credential file blocks the
   rename that replaces it; the save or switch failed outright. The rename is

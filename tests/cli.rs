@@ -1422,3 +1422,31 @@ fn switching_is_refused_while_claude_code_runs() {
         "the session file outlived its process:\n{out}{err}"
     );
 }
+
+/// A journal nobody can read used to fail every later save and switch on the
+/// same parse error, for good.
+#[test]
+fn an_unreadable_journal_does_not_wedge_saving_or_switching() {
+    let sb = Sandbox::new();
+    sb.run(&["save", "work"]);
+    let journal = sb.path().join(".ccred/state/switch.journal");
+    std::fs::write(&journal, b"{ this is not a journal").unwrap();
+
+    let (out, err, code) = sb.run(&["save", "work"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(!journal.exists(), "the journal is still in the way");
+    let aside: Vec<_> = std::fs::read_dir(journal.parent().unwrap())
+        .unwrap()
+        .flatten()
+        .filter(|e| {
+            e.file_name()
+                .to_string_lossy()
+                .starts_with("switch.journal.unreadable-")
+        })
+        .collect();
+    assert_eq!(
+        aside.len(),
+        1,
+        "the unreadable journal must be kept, not deleted"
+    );
+}
