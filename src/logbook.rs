@@ -97,14 +97,26 @@ pub fn log_path(log_dir: &Path) -> PathBuf {
 /// Unparseable lines are skipped rather than reported: a truncated last line
 /// after a crash is exactly the situation someone is reading the log to
 /// understand, and refusing to show them the rest would be perverse.
+///
+/// The newest rotated file is read too when the current one is short, so the
+/// run straight after a rotation does not make the history look empty.
 pub fn tail(log_dir: &Path, count: usize) -> Vec<Entry> {
-    let Ok(text) = fs::read_to_string(log_path(log_dir)) else {
-        return Vec::new();
+    let path = log_path(log_dir);
+    let parse = |p: &Path| -> Vec<Entry> {
+        fs::read_to_string(p)
+            .map(|text| {
+                text.lines()
+                    .filter_map(|l| serde_json::from_str(l).ok())
+                    .collect()
+            })
+            .unwrap_or_default()
     };
-    let mut entries: Vec<Entry> = text
-        .lines()
-        .filter_map(|l| serde_json::from_str(l).ok())
-        .collect();
+    let mut entries = parse(&path);
+    if entries.len() < count {
+        let mut older = parse(&path.with_extension("jsonl.1"));
+        older.append(&mut entries);
+        entries = older;
+    }
     if entries.len() > count {
         entries.drain(..entries.len() - count);
     }
@@ -196,6 +208,24 @@ mod tests {
             "the live file starts again"
         );
         assert_eq!(tail(d.path(), 10).len(), 1);
+    }
+
+    #[test]
+    fn history_survives_a_rotation() {
+        let d = tempfile::TempDir::new().unwrap();
+        let path = log_path(d.path());
+        append(d.path(), &entry("older")).unwrap();
+        append(d.path(), &entry("old")).unwrap();
+        // Force the next append to rotate, keeping the real entries.
+        let mut padded = fs::read(&path).unwrap();
+        padded.resize(MAX_BYTES as usize + 1, b'\n');
+        fs::write(&path, padded).unwrap();
+
+        append(d.path(), &entry("new")).unwrap();
+
+        let statuses: Vec<String> = tail(d.path(), 10).into_iter().map(|e| e.status).collect();
+        assert_eq!(statuses, ["older", "old", "new"]);
+        assert_eq!(tail(d.path(), 1)[0].status, "new");
     }
 
     #[cfg(unix)]
