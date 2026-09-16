@@ -44,7 +44,8 @@ pub fn running_claude_pids(claude_config_dir: &Path) -> Vec<u32> {
         .into_iter()
         .filter(|p| match alive(*p) {
             Liveness::Gone => false,
-            Liveness::Running(Some(name)) => could_be_claude(&name),
+            // One candidate per line: any of them may identify it.
+            Liveness::Running(Some(names)) => names.lines().any(could_be_claude),
             // Alive, but the name could not be read: assume the worst.
             Liveness::Running(None) => true,
         })
@@ -80,9 +81,23 @@ fn could_be_claude(name: &str) -> bool {
     let base = base.strip_suffix(".exe").unwrap_or(base);
     let versioned = base.contains('.') && base.chars().all(|c| c.is_ascii_digit() || c == '.');
     base.starts_with("claude")
-        || matches!(base, "node" | "nodejs" | "bun")
+        || is_js_runtime(base)
         || versioned
         || parts.any(|dir| dir == "claude")
+}
+
+/// `node`, `nodejs` or `bun`, alone or with a version: Fedora installs the
+/// real binary as `/usr/bin/node-22`, and `/proc/<pid>/exe` names that
+/// rather than the `node` link, so an npm install of Claude Code there read
+/// as "not running" and a switch went ahead under it.
+fn is_js_runtime(base: &str) -> bool {
+    ["nodejs", "node", "bun"].iter().any(|name| {
+        base.strip_prefix(name).is_some_and(|rest| {
+            rest.trim_start_matches(['-', '_'])
+                .chars()
+                .all(|c| c.is_ascii_digit() || c == '.')
+        })
+    })
 }
 
 /// Build a predicate answering "is this PID alive, and as what?".
@@ -102,11 +117,24 @@ fn live_pids(candidates: &[u32]) -> Box<dyn Fn(u32) -> Liveness> {
             }
             // The executable's path says the most; `comm` is the fallback, and
             // either can be unreadable under `hidepid`, which is "unknown".
-            let name = std::fs::read_link(dir.join("exe"))
-                .map(|p| p.to_string_lossy().into_owned())
-                .or_else(|_| std::fs::read_to_string(dir.join("comm")))
-                .ok();
-            Liveness::Running(name)
+            //
+            // Both are read, and either may identify it: an interpreter's
+            // path can be a name this check does not know while `comm` is
+            // plain `node`, and the other way round.
+            let names: Vec<String> = [
+                std::fs::read_link(dir.join("exe"))
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .ok(),
+                std::fs::read_to_string(dir.join("comm")).ok(),
+            ]
+            .into_iter()
+            .flatten()
+            .collect();
+            if names.is_empty() {
+                Liveness::Running(None)
+            } else {
+                Liveness::Running(Some(names.join("\n")))
+            }
         })
     }
 
@@ -228,7 +256,24 @@ mod tests {
         ] {
             assert!(could_be_claude(name), "{name:?}");
         }
-        for name in ["chrome.exe", "svchost.exe", "bash", "ccred", "nodemon"] {
+        for name in [
+            "node-22",
+            "/usr/bin/node-22",
+            "node18",
+            "nodejs-20.1",
+            "bun-1.1",
+        ] {
+            assert!(could_be_claude(name), "{name:?}");
+        }
+        for name in [
+            "chrome.exe",
+            "svchost.exe",
+            "bash",
+            "ccred",
+            "nodemon",
+            "node-red",
+            "bunzip2",
+        ] {
             assert!(!could_be_claude(name), "{name:?}");
         }
     }
