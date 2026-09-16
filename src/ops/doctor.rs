@@ -268,7 +268,12 @@ pub fn doctor(ctx: &Ctx) -> crate::Result<Vec<Finding>> {
 
     findings.push(env_auth_finding());
     findings.push(permissions_finding(ctx));
-    findings.push(schedule_finding(detect().status(), profile_count));
+    let this_exe = std::env::current_exe().ok();
+    findings.push(schedule_finding(
+        detect().status(),
+        profile_count,
+        this_exe.as_deref(),
+    ));
 
     Ok(findings)
 }
@@ -401,7 +406,11 @@ fn broken_profile(ctx: &Ctx, name: &ProfileName, why: &str) -> Finding {
 /// The probe is a parameter rather than a call, so the policy can be tested
 /// without a scheduler. Reading the host's real one from a test would make
 /// the assertion depend on the machine running it.
-fn schedule_finding(status: crate::Result<State>, profile_count: usize) -> Finding {
+fn schedule_finding(
+    status: crate::Result<State>,
+    profile_count: usize,
+    this_exe: Option<&std::path::Path>,
+) -> Finding {
     let state = match status {
         Ok(state) => state,
         // Not being able to ask is itself worth reporting: it leaves the same
@@ -434,6 +443,22 @@ fn schedule_finding(status: crate::Result<State>, profile_count: usize) -> Findi
         State::Installed(h) if !h.enabled => Finding::warn(
             "the refresh schedule is installed but disabled",
             "profiles will go stale until it is enabled again".to_string(),
+        ),
+        // Found on a real machine: the schedule still ran a copy installed
+        // months earlier, from before the fixes for losing credentials, while
+        // every command typed by hand ran the new one. Nothing looked wrong.
+        State::Installed(Health {
+            command: Some(command),
+            ..
+        }) if this_exe.is_some_and(|me| !crate::paths::same_file(&command, me)) => Finding::warn(
+            "the refresh schedule runs a different copy of ccred",
+            format!(
+                concat!(
+                    "{} runs on schedule, not this one; ",
+                    "run `ccred schedule install` from the copy you use"
+                ),
+                command.display()
+            ),
         ),
         State::Installed(h) => {
             // Running only while signed in is the normal outcome of a
@@ -515,7 +540,7 @@ mod tests {
     /// later. Two profiles and no schedule must not be reported as healthy.
     #[test]
     fn an_idle_profile_with_nothing_refreshing_it_is_a_warning() {
-        let f = schedule_finding(Ok(State::NotInstalled), 2);
+        let f = schedule_finding(Ok(State::NotInstalled), 2, None);
         assert_eq!(f.severity, Severity::Warn, "{f:?}");
         assert!(f.detail.unwrap().contains("ccred schedule install"));
     }
@@ -525,7 +550,7 @@ mod tests {
         // Claude Code refreshes the credentials it is actually using, so a
         // single profile cannot go stale and a warning would be noise.
         assert_eq!(
-            schedule_finding(Ok(State::NotInstalled), 1).severity,
+            schedule_finding(Ok(State::NotInstalled), 1, None).severity,
             Severity::Ok
         );
     }
@@ -534,13 +559,17 @@ mod tests {
     /// but one can stop firing later -- a disabled timer, a deleted binary.
     #[test]
     fn registered_but_never_firing_is_an_error_not_a_warning() {
-        let f = schedule_finding(Ok(State::Installed(health(true, None))), 2);
+        let f = schedule_finding(Ok(State::Installed(health(true, None))), 2, None);
         assert_eq!(f.severity, Severity::Error, "{f:?}");
     }
 
     #[test]
     fn a_working_schedule_reports_when_it_next_runs() {
-        let f = schedule_finding(Ok(State::Installed(health(true, Some("Fri 03:00")))), 2);
+        let f = schedule_finding(
+            Ok(State::Installed(health(true, Some("Fri 03:00")))),
+            2,
+            None,
+        );
         assert_eq!(f.severity, Severity::Ok);
         assert!(f.title.contains("Fri 03:00"), "{f:?}");
     }
@@ -553,7 +582,7 @@ mod tests {
             command: Some("/nonexistent/ccred".into()),
             ..health(true, Some("Fri 03:00"))
         };
-        let f = schedule_finding(Ok(State::Installed(gone)), 2);
+        let f = schedule_finding(Ok(State::Installed(gone)), 2, None);
         assert_eq!(f.severity, Severity::Error, "{f:?}");
         assert!(f.detail.unwrap().contains("/nonexistent/ccred"));
 
@@ -561,20 +590,39 @@ mod tests {
             command: Some(std::env::current_exe().unwrap()),
             ..health(true, Some("Fri 03:00"))
         };
-        let f = schedule_finding(Ok(State::Installed(present)), 2);
+        let here = std::env::current_exe().unwrap();
+        let f = schedule_finding(Ok(State::Installed(present)), 2, Some(&here));
         assert_eq!(f.severity, Severity::Ok, "{f:?}");
     }
 
     #[test]
+    fn a_schedule_that_runs_another_copy_is_a_warning() {
+        let here = std::env::current_exe().unwrap();
+        // Exists, and is not this binary.
+        let other = here.parent().unwrap().to_path_buf();
+        let elsewhere = Health {
+            command: Some(other.clone()),
+            ..health(true, Some("Fri 03:00"))
+        };
+        let f = schedule_finding(Ok(State::Installed(elsewhere)), 2, Some(&here));
+        assert_eq!(f.severity, Severity::Warn, "{f:?}");
+        assert!(f.detail.unwrap().contains(&other.display().to_string()));
+    }
+
+    #[test]
     fn a_disabled_schedule_is_not_reported_as_working() {
-        let f = schedule_finding(Ok(State::Installed(health(false, Some("Fri 03:00")))), 2);
+        let f = schedule_finding(
+            Ok(State::Installed(health(false, Some("Fri 03:00")))),
+            2,
+            None,
+        );
         assert_eq!(f.severity, Severity::Warn, "{f:?}");
     }
 
     /// Failing to ask must not read as "nothing is wrong".
     #[test]
     fn an_unanswerable_probe_is_reported_rather_than_swallowed() {
-        let f = schedule_finding(Err(CcredError::Schedule("no session bus".into())), 2);
+        let f = schedule_finding(Err(CcredError::Schedule("no session bus".into())), 2, None);
         assert_eq!(f.severity, Severity::Warn, "{f:?}");
         assert!(f.detail.unwrap().contains("no session bus"));
     }

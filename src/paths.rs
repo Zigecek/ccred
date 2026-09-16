@@ -40,6 +40,15 @@ fn env_path(key: &str) -> Option<PathBuf> {
     }
 }
 
+/// Do two paths name the same file? Links and case are resolved where the
+/// file system can say; otherwise the paths are compared as written.
+pub fn same_file(a: &Path, b: &Path) -> bool {
+    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => a == b,
+    }
+}
+
 /// A relative location would be read against whatever directory the process
 /// starts in -- the user's shell today, the scheduler's choice tomorrow.
 fn absolute(path: PathBuf) -> PathBuf {

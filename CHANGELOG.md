@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **`doctor` warns when the schedule runs a different copy of ccred.** Found on
+  a real machine: the scheduled task still started a copy installed months
+  earlier, from before the fixes for losing credentials, while every command
+  typed by hand ran the new one.
+- **`uninstall` judges a linked binary by where the link leads**, so a Homebrew
+  link in `/usr/local/bin` is left to brew.
 - **A credential file caught mid-write is no longer reported as damaged.**
   `current`, `list` and `doctor` read without the lock Claude Code writes
   under; a half-written file made `doctor` recommend `ccred restore` over a

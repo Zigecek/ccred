@@ -269,7 +269,7 @@ pub fn schedule_decision(
 ) -> (bool, Option<PathBuf>) {
     match registered {
         None => (false, None),
-        Some(Some(command)) if command.exists() && !same_file(&command, exe) => {
+        Some(Some(command)) if command.exists() && !crate::paths::same_file(&command, exe) => {
             (false, Some(command))
         }
         Some(_) => (true, None),
@@ -290,13 +290,6 @@ fn entry_names(dir: &Path) -> (Vec<String>, bool) {
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => (Vec::new(), false),
         Err(_) => (Vec::new(), true),
-    }
-}
-
-fn same_file(a: &Path, b: &Path) -> bool {
-    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
-        (Ok(a), Ok(b)) => a == b,
-        _ => a == b,
     }
 }
 
