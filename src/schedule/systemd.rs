@@ -111,6 +111,9 @@ impl Scheduler for Systemd {
     }
 
     fn render(&self, spec: &ScheduleSpec) -> crate::Result<Vec<RenderedFile>> {
+        if let Some(why) = unusable_binary_path(&spec.exe) {
+            return Err(CcredError::Schedule(why));
+        }
         let dir = self.unit_dir();
         Ok(vec![
             RenderedFile {
@@ -217,8 +220,14 @@ impl Scheduler for Systemd {
         let text = String::from_utf8_lossy(&out.stdout);
         let props = parse_properties(&text);
 
-        if props.get("LoadState").map(String::as_str) == Some("not-found") {
-            return Ok(State::NotInstalled);
+        let timer_file = self.unit_dir().join(format!("{UNIT_NAME}.timer"));
+        if let Some(state) = unanswered(
+            out.status.success(),
+            &props,
+            timer_file.exists(),
+            &String::from_utf8_lossy(&out.stderr),
+        ) {
+            return Ok(state);
         }
 
         let mut warnings = Vec::new();
@@ -281,12 +290,34 @@ fn unit_word(word: &str, dollars: bool) -> String {
 }
 
 /// An `ExecStart=` value.
+///
+/// The program path follows different rules from the arguments: systemd
+/// expands no variables in it, so a `$` stays single, and it refuses a path
+/// holding a quote or a backslash however it is written -- see
+/// [`unusable_binary_path`].
 fn exec_line(spec: &ScheduleSpec) -> String {
-    std::iter::once(spec.exe.to_string_lossy().into_owned())
-        .chain(spec.args.iter().cloned())
-        .map(|w| unit_word(&w, true))
+    std::iter::once(unit_word(&spec.exe.to_string_lossy(), false))
+        .chain(spec.args.iter().map(|w| unit_word(w, true)))
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+/// Why systemd would refuse this binary path, if it would.
+///
+/// Its `ExecStart=` parser rejects a program path containing a quote or a
+/// backslash, quoted or not. Registering one anyway produced a unit with no
+/// usable command; refusing up front says why, and what to do.
+fn unusable_binary_path(exe: &std::path::Path) -> Option<String> {
+    let text = exe.to_string_lossy();
+    text.contains(['\'', '"', '\\']).then(|| {
+        format!(
+            concat!(
+                "systemd will not start a program whose path contains a quote or a ",
+                "backslash ({}); install ccred somewhere else and run this again"
+            ),
+            text
+        )
+    })
 }
 
 /// A `ReadWritePaths=` value that tolerates absence. The `-` goes inside the
@@ -322,8 +353,36 @@ pub fn registered_command(unit: &str) -> Option<PathBuf> {
             c => word.push(c),
         }
     }
-    let word = word.replace("%%", "%").replace("$$", "$");
+    // The program path gets no `$` doubling; see `exec_line`.
+    let word = word.replace("%%", "%");
     (!word.is_empty()).then(|| PathBuf::from(word))
+}
+
+/// The states `systemctl show` settles before any health check: the timer
+/// is unknown to systemd, or systemd did not answer at all.
+///
+/// Without the second case a user manager that cannot be reached -- WSL
+/// without systemd, `sudo -u` -- printed nothing, no `LoadState` was found,
+/// and the job counted as installed. A removal could then never be confirmed,
+/// so `ccred uninstall` stopped on a timer that had never existed.
+fn unanswered(
+    answered: bool,
+    props: &std::collections::HashMap<String, String>,
+    timer_file_exists: bool,
+    stderr: &str,
+) -> Option<State> {
+    match props.get("LoadState").map(String::as_str) {
+        Some("not-found") => Some(State::NotInstalled),
+        Some(_) if answered => None,
+        _ if !timer_file_exists => Some(State::NotInstalled),
+        _ => Some(State::Unsupported {
+            reason: format!(
+                "the timer's unit files exist, but `systemctl --user` did not answer: {}",
+                stderr.trim()
+            ),
+            remedy: Some("run this from a normal login session".into()),
+        }),
+    }
 }
 
 /// `key=value` lines, as `systemctl show` emits them.
@@ -401,6 +460,46 @@ mod tests {
         assert_eq!(registered_command(&unit), Some(s.exe));
     }
 
+    #[test]
+    fn a_user_manager_that_does_not_answer_is_not_a_timer() {
+        let none = std::collections::HashMap::new();
+        assert!(matches!(
+            unanswered(false, &none, false, "Failed to connect to bus"),
+            Some(State::NotInstalled)
+        ));
+        assert!(matches!(
+            unanswered(false, &none, true, "Failed to connect to bus"),
+            Some(State::Unsupported { .. })
+        ));
+
+        let props = |state: &str| parse_properties(&format!("LoadState={state}\n"));
+        assert!(matches!(
+            unanswered(true, &props("not-found"), true, ""),
+            Some(State::NotInstalled)
+        ));
+        assert!(unanswered(true, &props("loaded"), true, "").is_none());
+    }
+
+    #[test]
+    fn a_binary_path_systemd_would_refuse_is_refused_first() {
+        for exe in [
+            "/opt/it's/ccred",
+            "/opt/say\"hi\"/ccred",
+            "/opt/back\\slash/ccred",
+        ] {
+            let mut s = crate::schedule::tests::spec();
+            s.exe = PathBuf::from(exe);
+            let err = Systemd.render(&s).unwrap_err();
+            assert!(
+                err.to_string().contains("install ccred somewhere else"),
+                "{err}"
+            );
+        }
+        let mut s = crate::schedule::tests::spec();
+        s.exe = PathBuf::from("/opt/100% $HOME/ccred");
+        assert!(Systemd.render(&s).is_ok());
+    }
+
     /// Split a unit file value the way systemd does, for the characters
     /// `unit_word` has to handle -- and refuse anything systemd would expand.
     fn systemd_words(value: &str, dollars_expand: bool) -> Vec<String> {
@@ -461,16 +560,28 @@ mod tests {
             ccred_home: Some("/data/o'neil/$HOME/100%".into()),
             claude_config_dir: Some(r#"/data/say"hi"\there x"#.into()),
         });
-        s.exe = PathBuf::from("/opt/it's/$x/ccred");
+        s.exe = PathBuf::from("/opt/my $x tools/ccred");
         let unit = render_service(&s, true);
         let line = unit
             .lines()
             .find_map(|l| l.strip_prefix("ExecStart="))
             .unwrap();
 
-        let mut expected = vec![s.exe.to_string_lossy().into_owned()];
-        expected.extend(s.args.iter().cloned());
-        assert_eq!(systemd_words(line, true), expected, "{line}");
+        // The program path first, with no variable expansion; the arguments
+        // after it, with.
+        let (program, args) = match line.strip_prefix('"') {
+            Some(rest) => {
+                let end = rest.find('"').unwrap();
+                (&line[..end + 2], &line[end + 2..])
+            }
+            None => line.split_at(line.find(' ').unwrap()),
+        };
+        assert_eq!(
+            systemd_words(program, false),
+            [s.exe.to_string_lossy().into_owned()],
+            "{line}"
+        );
+        assert_eq!(systemd_words(args, true), s.args, "{line}");
         assert_eq!(registered_command(&unit), Some(s.exe.clone()));
 
         for dir in &s.writable {
