@@ -63,9 +63,16 @@ fn plan_label(raw: &str) -> String {
         "default_claude_max_20x" => "Max 20x".to_string(),
         "default_claude_max_5x" => "Max 5x".to_string(),
         "default_claude_pro" => "Pro".to_string(),
-        "default_claude_free" | "free" => "Free".to_string(),
+        "default_claude_free" | "free" | "claude_free" => "Free".to_string(),
+        "claude_pro" => "Pro".to_string(),
+        "claude_max" => "Max".to_string(),
+        "claude_team" => "Team".to_string(),
+        "claude_enterprise" => "Enterprise".to_string(),
+        // The generic tier with no organization type to go on.
+        "default_claude_ai" => "claude.ai".to_string(),
         other => other
             .trim_start_matches("default_claude_")
+            .trim_start_matches("claude_")
             .replace('_', " "),
     }
 }
@@ -1059,6 +1066,13 @@ mod tests {
         assert_eq!(plan_label("default_claude_pro"), "Pro");
         assert_eq!(plan_label("default_claude_team_premium"), "team premium");
         assert_eq!(plan_label("something_new"), "something new");
+        assert_eq!(plan_label("claude_pro"), "Pro");
+        assert_eq!(plan_label("claude_education"), "education");
+        assert_ne!(
+            plan_label("default_claude_ai"),
+            "ai",
+            "the label a user saw"
+        );
     }
 
     #[test]

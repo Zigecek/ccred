@@ -143,7 +143,26 @@ impl AccountIdentity {
             .or_else(|| self.account_uuid.clone())
             .unwrap_or_else(|| "<unknown account>".to_string())
     }
+
+    /// The most specific plan name on record, raw.
+    ///
+    /// The rate-limit tier says `default_claude_max_20x` for a Max account,
+    /// but a Pro account reports the generic `default_claude_ai`, which
+    /// rendered as the plan "ai". The organization type is the better
+    /// source there.
+    pub fn plan(&self) -> Option<String> {
+        match self.rate_limit_tier.as_deref() {
+            None | Some(GENERIC_TIER) => self
+                .subscription_type
+                .clone()
+                .or_else(|| self.rate_limit_tier.clone()),
+            Some(tier) => Some(tier.to_string()),
+        }
+    }
 }
+
+/// The tier a plan without its own limits reports.
+const GENERIC_TIER: &str = "default_claude_ai";
 
 /// An account identity plus the opaque blob it came from.
 ///
@@ -190,6 +209,32 @@ pub fn describe_path(path: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A Pro account's tier is the generic one; its organization type says
+    /// what the plan is. A Max account's tier is already specific.
+    #[test]
+    fn the_plan_comes_from_the_most_specific_field() {
+        let pro = AccountIdentity {
+            subscription_type: Some("claude_pro".into()),
+            rate_limit_tier: Some("default_claude_ai".into()),
+            ..Default::default()
+        };
+        assert_eq!(pro.plan().as_deref(), Some("claude_pro"));
+
+        let max = AccountIdentity {
+            subscription_type: Some("claude_max".into()),
+            rate_limit_tier: Some("default_claude_max_20x".into()),
+            ..Default::default()
+        };
+        assert_eq!(max.plan().as_deref(), Some("default_claude_max_20x"));
+
+        let bare = AccountIdentity {
+            rate_limit_tier: Some("default_claude_ai".into()),
+            ..Default::default()
+        };
+        assert_eq!(bare.plan().as_deref(), Some("default_claude_ai"));
+        assert_eq!(AccountIdentity::default().plan(), None);
+    }
     use serde_json::json;
     use tempfile::tempdir;
 
