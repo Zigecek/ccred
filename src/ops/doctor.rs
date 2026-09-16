@@ -273,17 +273,6 @@ pub fn doctor(ctx: &Ctx) -> crate::Result<Vec<Finding>> {
     Ok(findings)
 }
 
-/// Can anyone but the owner read the stored credentials?
-///
-/// The writer asks for 0600, but a mode is only what was requested: an
-/// umask cannot loosen it, yet a file restored from a backup, copied with
-/// `cp -p`, or synced from another machine can arrive wide open. Checking the
-/// result costs a stat and turns an assumption into a fact.
-///
-/// On Windows there is no mode to read. The inherited DACL under a default
-/// profile is already owner-plus-SYSTEM-plus-Administrators -- measured, see
-/// `atomic::write_atomic` -- but this cannot confirm it without an ACL API,
-/// so it says so rather than implying the check passed.
 /// Variables that make Claude Code authenticate from the environment and
 /// ignore the credential file entirely.
 const ENV_AUTH: &[&str] = &[
@@ -323,6 +312,17 @@ fn env_auth_finding_from(is_set: impl Fn(&str) -> bool) -> Finding {
     }
 }
 
+/// Can anyone but the owner read the stored credentials?
+///
+/// The writer asks for 0600, but a mode is only what was requested: an
+/// umask cannot loosen it, yet a file restored from a backup, copied with
+/// `cp -p`, or synced from another machine can arrive wide open. Checking the
+/// result costs a stat and turns an assumption into a fact.
+///
+/// On Windows there is no mode to read. The inherited DACL under a default
+/// profile is already owner-plus-SYSTEM-plus-Administrators -- measured, see
+/// `atomic::write_atomic` -- but this cannot confirm it without an ACL API,
+/// so it says so rather than implying the check passed.
 fn permissions_finding(ctx: &Ctx) -> Finding {
     #[cfg(not(unix))]
     {
