@@ -139,6 +139,32 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "$TAG" dist/*.deb --clobber
 
+  # cargo-dist prints the shell's name on the same line as the command that
+  # puts ccred on PATH, and the first person to install this copied the line
+  # whole -- parentheses and all -- and got an error. The generated scripts
+  # cannot be edited in the repository, since dist rewrites them every
+  # release, so the published ones are rewritten here.
+  installers:
+    needs: resolve
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve.outputs.tag }}
+          persist-credentials: false
+
+      - name: Make the PATH advice copy-pasteable
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.resolve.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh release download "$TAG" --dir installers             --pattern 'ccred-installer.sh' --pattern 'ccred-installer.ps1'
+          python3 scripts/clarify-installer.py             installers/ccred-installer.sh installers/ccred-installer.ps1
+          # Still a script after being edited.
+          sh -n installers/ccred-installer.sh
+          gh release upload "$TAG" --clobber             installers/ccred-installer.sh installers/ccred-installer.ps1
+
   aur:
     needs: [resolve, deb]
     runs-on: ubuntu-24.04
