@@ -3,6 +3,12 @@
 The release pipeline is wired and runs on a `v*` tag. Four things still need a
 human with account access, because none of them can be created through an API.
 
+The crates.io and npm jobs stay switched off until then, so that a release run
+is green when everything that *can* work did. Each is switched on by a
+repository variable once its account side is done -- a job that is merely
+skipped would otherwise hide a broken setup for ever, so turn it on in the same
+sitting and watch the next release.
+
 ## 1. Homebrew tap token
 
 The release workflow pushes a formula into `Zigecek/homebrew-ccred`, which the
@@ -34,6 +40,12 @@ exists. If crates.io refuses because `ccred` is unpublished, do one manual
 `cargo publish` with a scoped API token, revoke that token immediately, then
 configure trusted publishing for every release after it.
 
+Then switch the job on:
+
+```sh
+gh variable set PUBLISH_CRATES --body true --repo Zigecek/ccred
+```
+
 ## 3. npm trusted publishing
 
 Eight packages are published: `ccred` and seven `@ccred/<platform>` ones. Each
@@ -50,6 +62,12 @@ Reserve the `@ccred` organisation on npm first, so the scope cannot be taken.
 
 The same bootstrap applies: a package must exist before a trusted publisher can
 be attached to it. Plan one token-based publish per package, then switch.
+
+Then switch the job on:
+
+```sh
+gh variable set PUBLISH_NPM --body true --repo Zigecek/ccred
+```
 
 ## 4. AUR (optional)
 

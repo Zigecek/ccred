@@ -13,6 +13,8 @@ on:
 
 jobs:
   publish-npm:
+    # Off until the scope and trusted publishers exist; see publish-crates.yml.
+    if: ${{ vars.PUBLISH_NPM == 'true' }}
     runs-on: ubuntu-24.04
     # See publish-crates.yml: the caller's grant is the ceiling, so this
     # workflow declares no permissions of its own. OIDC comes from the

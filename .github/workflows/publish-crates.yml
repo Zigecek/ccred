@@ -10,6 +10,11 @@ on:
 
 jobs:
   publish-crates:
+    # Off until trusted publishing is configured (docs/publishing.md). Before
+    # that the token exchange fails by design, and every release run went red
+    # and skipped its announcement for a step that could not have worked.
+    # `vars` is allowed in a job-level condition; `secrets` is not.
+    if: ${{ vars.PUBLISH_CRATES == 'true' }}
     runs-on: ubuntu-24.04
     # No permissions block on purpose. A called workflow may not request more
     # than its caller granted, and dist's caller grants id-token and packages
