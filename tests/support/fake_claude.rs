@@ -24,6 +24,12 @@ const RENEWED_REFRESH: &str = "sk-ant-ort01-SENTINELRENEWEDREFRESHRRRRRRRRRRRRRR
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
+
+    // Stand in for an open Claude Code session: stay alive until killed.
+    if args.first().map(String::as_str) == Some("--sleep") {
+        std::thread::sleep(std::time::Duration::from_secs(120));
+        return;
+    }
     let mode = std::env::var("FAKE_CLAUDE_MODE").unwrap_or_default();
 
     let line = format!(

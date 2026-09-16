@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **A stale session file no longer blocks switching once its PID is reused.**
+  A running Claude Code is now recognised by what the process is -- `claude`,
+  a versioned native binary, or `node`/`bun` -- rather than by the PID alone,
+  which Windows hands out again quickly. The Windows process list is also
+  parsed by its quotes, so a locale that writes `1,024 K` cannot shift the
+  columns. A new end-to-end test starts a stand-in session and checks both
+  that it blocks a switch and that its leftover file does not.
 - **A schedule registered from a Homebrew or Scoop install survives upgrades.**
   On Linux the binary's path came back with links resolved, so the job named
   a versioned directory that a later `brew upgrade` deletes. The stable

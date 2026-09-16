@@ -8,7 +8,11 @@
 //!
 //! Claude Code writes one session file per process, named by PID, so the
 //! primary signal is exact rather than a guess at a process name. Stale files
-//! from crashed processes do accumulate, hence the liveness check.
+//! from crashed processes do accumulate, hence the liveness check -- and
+//! because a PID is reused, especially on Windows, "alive" also means "a
+//! process that could be Claude Code". A stale file whose number now belongs
+//! to a browser would otherwise block switching until the file was deleted by
+//! hand.
 
 use std::path::Path;
 
@@ -36,80 +40,148 @@ pub fn running_claude_pids(claude_config_dir: &Path) -> Vec<u32> {
         return Vec::new();
     }
     let alive = live_pids(&candidates);
-    let mut out: Vec<u32> = candidates.into_iter().filter(|p| alive(*p)).collect();
+    let mut out: Vec<u32> = candidates
+        .into_iter()
+        .filter(|p| match alive(*p) {
+            Liveness::Gone => false,
+            Liveness::Running(Some(name)) => could_be_claude(&name),
+            // Alive, but the name could not be read: assume the worst.
+            Liveness::Running(None) => true,
+        })
+        .collect();
     out.sort_unstable();
     out
 }
 
-/// Build a predicate answering "is this PID alive?".
+/// What is known about one PID.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Liveness {
+    Gone,
+    /// Running, with its executable name when that could be read.
+    Running(Option<String>),
+}
+
+/// Could a process of this name be Claude Code?
+///
+/// The native build runs as `claude`; an npm install runs under `node` (or
+/// `bun`). Anything else holding the PID is a different program that
+/// inherited the number.
+///
+/// The native installer on Linux and macOS runs a file named after its
+/// version, `~/.local/share/claude/versions/2.1.236`, so a path with a
+/// `claude` directory in it counts, and so does a bare version number -- all
+/// that `comm` shows for such a process.
+fn could_be_claude(name: &str) -> bool {
+    let name = name.trim().to_ascii_lowercase();
+    // A replaced executable reads back as "<path> (deleted)".
+    let name = name.strip_suffix(" (deleted)").unwrap_or(&name);
+    let mut parts = name.rsplit(['/', '\\']);
+    let base = parts.next().unwrap_or(name);
+    let base = base.strip_suffix(".exe").unwrap_or(base);
+    let versioned = base.contains('.') && base.chars().all(|c| c.is_ascii_digit() || c == '.');
+    base.starts_with("claude")
+        || matches!(base, "node" | "nodejs" | "bun")
+        || versioned
+        || parts.any(|dir| dir == "claude")
+}
+
+/// Build a predicate answering "is this PID alive, and as what?".
 ///
 /// Deliberately at most one process spawn per call: the naive version spawns
 /// once per PID, which on a machine with a pile of stale session files turns a
 /// cheap check into a visible stall.
-fn live_pids(candidates: &[u32]) -> Box<dyn Fn(u32) -> bool> {
+fn live_pids(candidates: &[u32]) -> Box<dyn Fn(u32) -> Liveness> {
     #[cfg(target_os = "linux")]
     {
         let _ = candidates;
         // No spawn needed at all: procfs answers directly.
-        Box::new(|pid: u32| Path::new(&format!("/proc/{pid}")).exists())
+        Box::new(|pid: u32| {
+            let dir = std::path::PathBuf::from(format!("/proc/{pid}"));
+            if !dir.exists() {
+                return Liveness::Gone;
+            }
+            // The executable's path says the most; `comm` is the fallback, and
+            // either can be unreadable under `hidepid`, which is "unknown".
+            let name = std::fs::read_link(dir.join("exe"))
+                .map(|p| p.to_string_lossy().into_owned())
+                .or_else(|_| std::fs::read_to_string(dir.join("comm")))
+                .ok();
+            Liveness::Running(name)
+        })
     }
 
-    #[cfg(target_os = "windows")]
+    #[cfg(not(target_os = "linux"))]
     {
-        let _ = candidates;
-        let listed = windows_pids();
-        Box::new(move |pid: u32| listed.contains(&pid))
-    }
-
-    #[cfg(all(unix, not(target_os = "linux")))]
-    {
+        #[cfg(target_os = "windows")]
+        let listed = {
+            let _ = candidates;
+            windows_pids()
+        };
+        #[cfg(not(target_os = "windows"))]
         let listed = unix_ps_pids(candidates);
-        Box::new(move |pid: u32| listed.contains(&pid))
+        Box::new(move |pid: u32| match listed.get(&pid) {
+            Some(name) if name.trim().is_empty() => Liveness::Running(None),
+            Some(name) => Liveness::Running(Some(name.clone())),
+            None => Liveness::Gone,
+        })
     }
 }
 
+/// The quoted fields of one `tasklist /FO CSV` line.
+///
+/// Split on the quotes, not the commas: the memory column is written with
+/// the locale's thousands separator, which is a comma in many of them.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn csv_fields(line: &str) -> Vec<&str> {
+    line.split('"').skip(1).step_by(2).collect()
+}
+
 #[cfg(target_os = "windows")]
-fn windows_pids() -> std::collections::HashSet<u32> {
+fn windows_pids() -> std::collections::HashMap<u32, String> {
     use std::process::Command;
-    let mut set = std::collections::HashSet::new();
+    let mut map = std::collections::HashMap::new();
     let Ok(out) = Command::new("tasklist")
         .args(["/NH", "/FO", "CSV"])
         .output()
     else {
-        return set;
+        return map;
     };
     for line in String::from_utf8_lossy(&out.stdout).lines() {
         // "name","pid","session","#","mem"
-        if let Some(field) = line.split(',').nth(1)
-            && let Ok(pid) = field.trim_matches('"').trim().parse::<u32>()
+        let fields = csv_fields(line);
+        if let (Some(name), Some(pid)) = (fields.first(), fields.get(1))
+            && let Ok(pid) = pid.trim().parse::<u32>()
         {
-            set.insert(pid);
+            map.insert(pid, name.to_string());
         }
     }
-    set
+    map
 }
 
 #[cfg(all(unix, not(target_os = "linux")))]
-fn unix_ps_pids(candidates: &[u32]) -> std::collections::HashSet<u32> {
+fn unix_ps_pids(candidates: &[u32]) -> std::collections::HashMap<u32, String> {
     use std::process::Command;
-    let mut set = std::collections::HashSet::new();
+    let mut map = std::collections::HashMap::new();
     let list = candidates
         .iter()
         .map(|p| p.to_string())
         .collect::<Vec<_>>()
         .join(",");
     let Ok(out) = Command::new("/bin/ps")
-        .args(["-p", &list, "-o", "pid="])
+        .args(["-p", &list, "-o", "pid=,comm="])
         .output()
     else {
-        return set;
+        return map;
     };
     for line in String::from_utf8_lossy(&out.stdout).lines() {
-        if let Ok(pid) = line.trim().parse::<u32>() {
-            set.insert(pid);
+        // `comm` can be a path with spaces in it; everything after the pid.
+        let line = line.trim_start();
+        let (pid, name) = line.split_once(' ').unwrap_or((line, ""));
+        if let Ok(pid) = pid.parse::<u32>() {
+            map.insert(pid, name.trim().to_string());
         }
     }
-    set
+    map
 }
 
 #[cfg(test)]
@@ -129,12 +201,47 @@ mod tests {
         assert!(running_claude_pids(dir.path()).is_empty());
     }
 
+    /// The test binary is alive but is not Claude Code: the shape of a stale
+    /// session file whose PID was handed to another program.
     #[test]
-    fn our_own_pid_counts_as_alive() {
+    fn a_reused_pid_held_by_another_program_is_ignored() {
         let dir = tempdir().unwrap();
-        let me = std::process::id();
-        session(dir.path(), me);
-        assert_eq!(running_claude_pids(dir.path()), vec![me]);
+        session(dir.path(), std::process::id());
+        assert!(running_claude_pids(dir.path()).is_empty());
+    }
+
+    #[test]
+    fn the_names_claude_code_runs_under_are_recognised() {
+        for name in [
+            "claude",
+            "claude.exe",
+            "Claude.EXE",
+            "node",
+            "node.exe",
+            "bun",
+            "/opt/homebrew/bin/node",
+            r"C:\Program Files\nodejs\node.exe",
+            "claude\n",
+            "/home/x/.local/share/claude/versions/2.1.236",
+            "/home/x/.local/share/claude/versions/2.1.236 (deleted)",
+            "2.1.236",
+        ] {
+            assert!(could_be_claude(name), "{name:?}");
+        }
+        for name in ["chrome.exe", "svchost.exe", "bash", "ccred", "nodemon"] {
+            assert!(!could_be_claude(name), "{name:?}");
+        }
+    }
+
+    #[test]
+    fn a_localised_tasklist_line_still_yields_its_pid() {
+        let line = r#""claude.exe","13512","Console","1","118,708 K""#;
+        assert_eq!(
+            csv_fields(line),
+            ["claude.exe", "13512", "Console", "1", "118,708 K"]
+        );
+        let odd = r#""a,b.exe","7","Services","0","1,024 K""#;
+        assert_eq!(csv_fields(odd)[..2], ["a,b.exe", "7"]);
     }
 
     #[test]

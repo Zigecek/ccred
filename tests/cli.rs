@@ -1108,7 +1108,8 @@ fn fake_claude() -> &'static Path {
         let dir = Box::leak(Box::new(TempDir::new().unwrap())).path();
         let src = dir.join("fake_claude.rs");
         std::fs::write(&src, include_str!("support/fake_claude.rs")).unwrap();
-        let exe = dir.join(format!("fake_claude{}", std::env::consts::EXE_SUFFIX));
+        // Named `claude`, because running-session detection checks the name.
+        let exe = dir.join(format!("claude{}", std::env::consts::EXE_SUFFIX));
         let rustc = std::env::var("RUSTC").unwrap_or_else(|_| "rustc".into());
         let out = Command::new(rustc)
             .args(["--edition", "2021", "-o"])
@@ -1370,5 +1371,54 @@ fn a_chosen_home_is_used_and_carried_into_the_schedule() {
     assert!(
         out.contains("--ccred-home"),
         "the job would run against the default home:\n{out}"
+    );
+}
+
+/// Kills the stand-in session however the test ends.
+struct Session(std::process::Child);
+
+impl Drop for Session {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+/// A live session holds the old account in memory and writes its next
+/// refreshed token into whatever file is live by then -- which a switch has
+/// made another profile's. So a running Claude Code refuses the switch, and a
+/// session file left behind by one that has exited does not.
+#[test]
+fn switching_is_refused_while_claude_code_runs() {
+    let sb = Sandbox::new();
+    sb.run(&["save", "work"]);
+    sb.login_b();
+    sb.run(&["save", "personal"]);
+
+    let session = Session(
+        Command::new(fake_claude())
+            .arg("--sleep")
+            .spawn()
+            .expect("start the stand-in session"),
+    );
+    let pid = session.0.id();
+    let sessions = sb.path().join(".claude").join("sessions");
+    std::fs::create_dir_all(&sessions).unwrap();
+    std::fs::write(sessions.join(format!("{pid}.json")), b"{}").unwrap();
+
+    let (out, err, code) = sb.run(&["switch", "work"]);
+    assert_eq!(code, 7, "a live session must block the switch:\n{out}{err}");
+    assert!(err.contains("Claude Code is running"), "{err}");
+    let (out, _, _) = sb.run(&["current"]);
+    assert!(
+        out.contains("bob@example.com"),
+        "nothing may have changed:\n{out}"
+    );
+
+    drop(session);
+    let (out, err, code) = sb.run(&["switch", "work"]);
+    assert_eq!(
+        code, 0,
+        "the session file outlived its process:\n{out}{err}"
     );
 }
