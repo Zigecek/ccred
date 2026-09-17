@@ -1125,6 +1125,60 @@ fn a_packaged_desktop_on_windows_is_found_and_read() {
     assert!(out.contains("work-desktop"), "{out}");
 }
 
+/// A chat the account already has on the other side is left where it is --
+/// that copy is its own and newer -- and saying it was restored would be a
+/// claim about somebody's chats that is not true. The count is of what
+/// moved.
+#[test]
+fn a_restored_sidebar_counts_what_actually_went_in() {
+    let sb = Sandbox::new();
+    sb.desktop_login("uuid-a", "A");
+    sb.run(&["save", "work"]);
+    sb.login_b();
+    sb.run(&["save", "personal", "--only-code"]);
+
+    // Two chats waiting for work-desktop, one of which the live directory
+    // already has under the same name.
+    let carry = sb
+        .parked_desktop("work")
+        .join("carry")
+        .join("sessions")
+        .join("uuid-a")
+        .join("org-a");
+    std::fs::create_dir_all(&carry).unwrap();
+    for id in ["1", "2"] {
+        std::fs::write(
+            carry.join(format!("local_{id}.json")),
+            format!(r#"{{"sessionId":"local_{id}"}}"#),
+        )
+        .unwrap();
+    }
+
+    let (out, err, code) = sb.run(&["switch", "personal-desktop"]);
+    assert_eq!(code, 0, "{err}{out}");
+    sb.desktop_login("uuid-a", "A");
+    let live = sb
+        .desktop_dir()
+        .join("claude-code-sessions")
+        .join("uuid-a")
+        .join("org-a");
+    std::fs::create_dir_all(&live).unwrap();
+    std::fs::write(
+        live.join("local_1.json"),
+        br#"{"sessionId":"local_1","keep":true}"#,
+    )
+    .unwrap();
+
+    let (out, err, code) = sb.run(&["switch", "work-desktop"]);
+    assert_eq!(code, 0, "{err}{out}");
+    assert!(out.contains("1 session"), "one of the two moved: {out}");
+    assert!(!out.contains("2 sessions"), "{out}");
+
+    // And the one that was already there is untouched.
+    let kept = std::fs::read_to_string(live.join("local_1.json")).unwrap();
+    assert!(kept.contains("keep"), "{kept}");
+}
+
 /// A Desktop with no `claude_desktop_config.json` -- a fresh install that
 /// has never been configured -- meeting a carry with groups in it. The
 /// directories have already moved by then, so raising there reported a

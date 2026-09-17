@@ -750,6 +750,8 @@ pub struct CarriedIn {
     /// Why the sidebar groups stayed in the carry. They are kept for the
     /// next switch rather than dropped, and this says so.
     pub groups_kept_back: Option<String>,
+    /// The same for the session lists.
+    pub sessions_kept_back: Option<String>,
 }
 
 impl Carried {
@@ -840,8 +842,15 @@ impl<'a> DesktopRepo<'a> {
         let mut out = CarriedIn::default();
         let list = carry.join("sessions").join(uuid);
         if list.is_dir() {
-            out.carried.sessions = count_sessions(&list);
-            move_merge(&list, &live.join(SESSIONS_DIR).join(uuid))?;
+            // Not a `?`, for the reason the groups below are not: the
+            // directories have already moved. A carry on another file
+            // system is the likeliest way this fails, since a rename cannot
+            // cross one, and the chats are better left waiting than lost to
+            // an error nobody can act on mid-switch.
+            match move_merge(&list, &live.join(SESSIONS_DIR).join(uuid)) {
+                Ok(moved) => out.carried.sessions = moved,
+                Err(e) => out.sessions_kept_back = Some(e.to_string()),
+            }
         }
         let groups = carry.join(CARRY_GROUPS);
         if groups.is_file() {
@@ -856,7 +865,7 @@ impl<'a> DesktopRepo<'a> {
                 Err(e) => out.groups_kept_back = Some(e.to_string()),
             }
         }
-        if out.groups_kept_back.is_some() {
+        if out.groups_kept_back.is_some() || out.sessions_kept_back.is_some() {
             // Only what went in is cleared; the groups file is the thing
             // being kept, and dropping it would lose them for good.
             let _ = std::fs::remove_dir_all(carry.join("sessions"));
@@ -1022,7 +1031,14 @@ fn count_sessions(dir: &Path) -> usize {
 
 /// Move a tree into another, file by file, never replacing what is there.
 /// What was moved is gone from `from`; what was not fits in the report.
-fn move_merge(from: &Path, into: &Path) -> crate::Result<()> {
+/// Move a tree into another, keeping whatever is already there, and say how
+/// many sessions actually went.
+///
+/// The count is of what moved, not of what was there: a file whose name is
+/// already taken on the other side is deliberately left where it is -- the
+/// one on the other side is the account's own and newer -- and reporting it
+/// as restored would be a claim about somebody's chats that is not true.
+fn move_merge(from: &Path, into: &Path) -> crate::Result<usize> {
     std::fs::create_dir_all(into).map_err(|source| CcredError::Io {
         path: into.to_path_buf(),
         source,
@@ -1031,19 +1047,23 @@ fn move_merge(from: &Path, into: &Path) -> crate::Result<()> {
         path: from.to_path_buf(),
         source,
     })?;
+    let mut moved = 0;
     for entry in entries.flatten() {
         let src = entry.path();
         let dst = into.join(entry.file_name());
         if src.is_dir() {
-            move_merge(&src, &dst)?;
+            moved += move_merge(&src, &dst)?;
         } else if !dst.exists() {
             rename(&src, &dst)?;
+            if entry.file_name().to_string_lossy().starts_with("local_") {
+                moved += 1;
+            }
         }
     }
     // Empty now, or holding only files that already existed on the other
     // side: either way, not worth leaving.
     let _ = std::fs::remove_dir(from);
-    Ok(())
+    Ok(moved)
 }
 
 // --- one sidebar for every account -----------------------------------------

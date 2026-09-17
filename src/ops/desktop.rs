@@ -203,10 +203,15 @@ pub fn switch(ctx: &Ctx, target: &ProfileName) -> crate::Result<DesktopReport> {
     if live_is_targets {
         let put_back = repo.carry_in(target, &uuid, live)?;
         restored_to_sidebar = put_back.carried;
-        if let Some(why) = put_back.groups_kept_back {
-            warnings.push(format!(
- "the sidebar groups stayed with the profile ({why}); the next switch to it puts them in"
-            ));
+        for (what, why) in [
+            ("sidebar groups", put_back.groups_kept_back),
+            ("chat list", put_back.sessions_kept_back),
+        ] {
+            if let Some(why) = why {
+                warnings.push(format!(
+                    "the {what} stayed with the profile ({why}); the next switch to it puts it in"
+                ));
+            }
         }
         // Its own list first, so nothing it knows is older than the union;
         // then the union into it. Writing into the list needs the Desktop
