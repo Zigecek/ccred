@@ -240,6 +240,12 @@ different accounts. `--only-code` and `--only-desktop` save one half; the
 output always says which halves were saved and why the other was not.
 `-desktop` is reserved: it cannot be a Claude Code profile's name.
 
+One Desktop account goes under one name. Saving a second Claude Code
+profile while the Desktop sits on the first account saves that profile and
+says which name already holds the Desktop login: there is one login
+directory, and two names for it would both claim to be the live one with
+nothing to switch between.
+
 ```sh
 ccred save work                  # work, and work-desktop if the Desktop is logged in
 ccred switch personal-desktop    # parks work-desktop, starts Desktop fresh; log in as personal
