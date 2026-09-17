@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.3.4
+
+Names people choose and names this tool uses, which turned out to share a
+directory.
+
+- **The shared sidebar moved out of the profile name space.** It lived in
+  `~/.ccred/desktop/sidebar/`, beside the parked logins, whose names are
+  whatever anyone saves -- so `ccred save sidebar` put a profile's login and
+  every account's chat list in one directory, and `ccred rm sidebar --purge`
+  deleted both. It is `.sidebar` now: a profile name has to start with a
+  letter or a digit, so nobody can take it. An existing union is moved along
+  the first time a switch reads it.
+- **A profile called `unclaimed-something` is not a stray directory.**
+  `unclaimed-<timestamp>` is what a parking place for an account nobody
+  saved is called, and `doctor` reported anything under that prefix as
+  belonging to no profile -- advice that ends in "delete when sure", naming
+  somebody's parked login. A profile is its metadata file, and that is what
+  the check reads now.
+- **A sidebar that cannot be written no longer fails the switch.** Both
+  passes raised: one before the move, which refused to switch a login
+  because an index could not be written, and one after it, which reported a
+  switch that had already happened as a failure. The shared sidebar is built
+  out of lists the accounts keep themselves -- it says what went wrong and
+  the next switch to that profile does it.
+
 ## 0.3.3
 
 The sidebar machinery, which is the part of Desktop support that touches
