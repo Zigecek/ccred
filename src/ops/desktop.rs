@@ -300,6 +300,17 @@ impl DesktopSave {
 /// Code's side when that is the same account, or from a Claude Code
 /// profile that is.
 pub fn save(ctx: &Ctx, name: &ProfileName, live_code: &AccountIdentity) -> DesktopSave {
+    // Under the profiles lock, like `switch` and `remove`: this writes the
+    // profile's record and collects its sidebar, and the Claude Code half of
+    // the same save has already let its own lock go by the time this runs.
+    let _profiles = match ctx.lock_profiles(LOCK_TIMEOUT) {
+        Ok(guard) => guard,
+        Err(e) => {
+            return DesktopSave::Refused {
+                reason: e.to_string(),
+            };
+        }
+    };
     let inspection = desktop::inspect(ctx.paths().desktop_dir());
     if !inspection.installed {
         return DesktopSave::Nothing {

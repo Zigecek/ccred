@@ -72,7 +72,15 @@ impl Handle {
     /// login. The suffix is stripped before the name is validated, which is
     /// also what leaves the plain validator free to refuse it.
     pub fn parse(raw: &str) -> crate::Result<Handle> {
-        match raw.strip_suffix(SUFFIX) {
+        // Matched without regard to case, because the validator refuses the
+        // suffix that way: `Work-DESKTOP` parsed as a Claude Code name and
+        // was then refused for ending in `-desktop`, so it addressed
+        // nothing at all.
+        let suffix_at = raw
+            .len()
+            .checked_sub(SUFFIX.len())
+            .filter(|at| raw[*at..].eq_ignore_ascii_case(SUFFIX));
+        match suffix_at.map(|at| &raw[..at]) {
             Some(stem) => Ok(Handle::Desktop(validate_profile_name(stem)?)),
             None => Ok(Handle::ClaudeCode(validate_profile_name(raw)?)),
         }
@@ -1391,6 +1399,27 @@ mod tests {
     fn a_parked_login_is_restored_into_an_empty_slot() {
         let step = plan(&Owner::Missing, &name("work"), true, 1);
         assert_eq!(moved(&step), (None, true));
+    }
+
+    /// The validator refuses the suffix without regard to case, so parsing
+    /// it with regard to case left `Work-DESKTOP` addressing nothing: read
+    /// as a Claude Code name, then refused for ending in `-desktop`.
+    #[test]
+    fn the_desktop_suffix_is_read_whatever_its_case() {
+        assert_eq!(
+            Handle::parse("work-DESKTOP").unwrap(),
+            Handle::Desktop(validate_profile_name("work").unwrap())
+        );
+        assert_eq!(
+            Handle::parse("work-Desktop").unwrap(),
+            Handle::Desktop(validate_profile_name("work").unwrap())
+        );
+        assert_eq!(
+            Handle::parse("work").unwrap(),
+            Handle::ClaudeCode(validate_profile_name("work").unwrap())
+        );
+        // The suffix alone is not a name.
+        assert!(Handle::parse("-desktop").is_err());
     }
 
     /// The live directory belongs to somebody even when the file that says
