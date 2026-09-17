@@ -410,7 +410,7 @@ fn desktop_table(theme: &Theme, rows: &[DesktopRow]) {
         // sentence out of them, 128 columns of it, while `desktop_switch`
         // had the same phrase a few lines further down.
         if !r.waiting.is_empty() {
-            t.note(&format!(
+            t.note(format!(
                 "{} and {} from a sign-out are waiting; `ccred switch {}` puts them back",
                 plural(r.waiting.sessions, "session", "sessions"),
                 plural(r.waiting.groups, "sidebar group", "sidebar groups"),
