@@ -317,8 +317,16 @@ the target has a parked login to bring in -- then it is parked under an
 `unclaimed-<timestamp>` name that nothing switches back to, and `doctor`
 says where. `ccred current` shows which account the Desktop is on.
 
-**One sidebar for every account.** The Desktop lists Code sessions per
-account, but the sessions are not per account -- they are transcripts under
+**One sidebar for every account -- of Claude Code sessions.** This is about
+the Claude Code sessions the Desktop lists, the ones started from inside the
+app: it keeps that list per account, under
+`claude-code-sessions/<account>/<organization>/`, as one small JSON file per
+session. Your conversations with Claude are not in there and are not what
+this moves -- they belong to the account on Anthropic's side, the Desktop
+reads them from the server, and switching accounts shows that account's own.
+Nothing local can, or should, carry those across.
+
+The sessions, though, are not per account -- they are transcripts under
 `~/.claude/projects/`, and Claude Code opens any of them under whatever
 login it has. So every account's list feeds one shared sidebar under
 `~/.ccred/desktop/.sidebar/`, and a switch brings the target account's list
@@ -328,9 +336,15 @@ everywhere, and the sidebar groups follow. Only the part of an entry that
 is the session's travels -- which transcript, where, what it is called,
 when; what the Desktop wrote for the account (connector configuration,
 bridge ids) stays with that account and is filled in for the new one when
-the session is opened. The list is read whenever a profile is saved or
+the session is opened. What counts as a session entry is a file with a
+`sessionId` in it, read rather than assumed from the name, so a Desktop that
+renames them still works -- and `scheduled-tasks.json`, which lives in the
+same directory, is not one. The list is read whenever a profile is saved or
 parked, so a running Desktop still feeds it; writing into it needs the
-Desktop closed, and a switch says so when it could not.
+Desktop closed, and a switch says so when it could not. A switch that finds
+nothing to share says that too: someone who has never started a Claude Code
+session from inside the Desktop has an empty list, which otherwise looks
+exactly like a feature that did not run.
 
 What this does *not* do is keep the accounts apart on the server. The
 Desktop registers a session with Anthropic under the account it is logged

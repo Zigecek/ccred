@@ -4307,3 +4307,95 @@ fn no_message_runs_off_the_page() {
         }
     }
 }
+
+/// A switch that shares nothing says so. The shared sidebar is a list of
+/// Claude Code sessions, and someone who has never started one from inside
+/// the Desktop has none -- which from the outside looks exactly like a
+/// feature that did not run.
+#[test]
+fn a_switch_with_nothing_to_share_says_that_too() {
+    let sb = Sandbox::new();
+    sb.desktop_login("uuid-a", "A");
+    // What a real machine has in there before any Code session: the app's
+    // own bookkeeping, and no entries.
+    let alice = sb
+        .desktop_dir()
+        .join("claude-code-sessions")
+        .join("uuid-a")
+        .join("org-a");
+    std::fs::create_dir_all(&alice).unwrap();
+    std::fs::write(
+        alice.join("scheduled-tasks.json"),
+        br#"{"scheduledTasks":[],"recordedSkips":{}}"#,
+    )
+    .unwrap();
+    sb.run(&["save", "work"]);
+    sb.login_b();
+    sb.run(&["save", "personal", "--only-code"]);
+    sb.run(&["switch", "personal-desktop"]);
+    sb.desktop_login("uuid-b", "B");
+    sb.run(&["save", "personal"]);
+
+    let (out, err, code) = sb.run(&["switch", "work-desktop"]);
+    assert_eq!(code, 0, "{err}{out}");
+    assert!(
+        flat(&out).contains("no Claude Code sessions to share yet"),
+        "{out}"
+    );
+    assert!(
+        flat(&out).contains("chats with Claude belong to the account"),
+        "and says where the chats live instead: {out}"
+    );
+}
+
+/// What makes a file a session entry is the `sessionId` in it, not the name.
+/// The build this was written against calls them `local_<id>.json`; the same
+/// directory also holds `scheduled-tasks.json`, which is the app's own and
+/// must not travel between accounts.
+#[test]
+fn a_session_entry_is_known_by_what_is_in_it() {
+    let sb = Sandbox::new();
+    sb.desktop_login("uuid-a", "A");
+    let alice = sb
+        .desktop_dir()
+        .join("claude-code-sessions")
+        .join("uuid-a")
+        .join("org-a");
+    std::fs::create_dir_all(&alice).unwrap();
+    std::fs::write(
+        alice.join("session-9.json"),
+        br#"{"sessionId":"s9","title":"named some other way","lastActivityAt":7}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        alice.join("scheduled-tasks.json"),
+        br#"{"scheduledTasks":[],"recordedSkips":{}}"#,
+    )
+    .unwrap();
+    sb.run(&["save", "work"]);
+    sb.login_b();
+    sb.run(&["save", "personal", "--only-code"]);
+    sb.run(&["switch", "personal-desktop"]);
+    sb.desktop_login("uuid-b", "B");
+    let bob = sb
+        .desktop_dir()
+        .join("claude-code-sessions")
+        .join("uuid-b")
+        .join("org-b");
+    std::fs::create_dir_all(&bob).unwrap();
+    sb.run(&["save", "personal"]);
+    sb.run(&["switch", "work-desktop"]);
+
+    let (out, err, code) = sb.run(&["switch", "personal-desktop"]);
+    assert_eq!(code, 0, "{err}{out}");
+    assert!(
+        bob.join("session-9.json").is_file(),
+        "the entry came across under its own name: {out}"
+    );
+    assert!(
+        !bob.join("scheduled-tasks.json").exists(),
+        "and the app's own bookkeeping did not"
+    );
+    let entry = std::fs::read_to_string(bob.join("session-9.json")).unwrap();
+    assert!(entry.contains("named some other way"), "{entry}");
+}

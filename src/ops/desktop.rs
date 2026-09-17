@@ -37,6 +37,14 @@ pub struct DesktopReport {
     /// What bringing this account's sidebar up to the shared one changed.
     #[serde(skip_serializing_if = "Sidebar::is_empty")]
     pub sidebar: Sidebar,
+    /// The shared sidebar is empty, so there was nothing to bring over.
+    ///
+    /// Said out loud, because silence here reads as a switch that skipped
+    /// the sidebar -- and what is shared is the list of Claude Code
+    /// sessions the Desktop keeps, which someone who has never started one
+    /// from inside the app does not have.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub nothing_to_share: bool,
     /// Things worth knowing that did not stop the switch.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<String>,
@@ -208,6 +216,7 @@ pub fn switch(ctx: &Ctx, target: &ProfileName) -> crate::Result<DesktopReport> {
     );
     let mut restored_to_sidebar = Carried::default();
     let mut sidebar = Sidebar::default();
+    let mut nothing_to_share = false;
     if live_is_targets {
         let put_back = repo.carry_in(target, &uuid, live)?;
         restored_to_sidebar = put_back.carried;
@@ -247,6 +256,7 @@ pub fn switch(ctx: &Ctx, target: &ProfileName) -> crate::Result<DesktopReport> {
             match desktop::sidebar_spread(ctx.paths(), live, &uuid) {
                 Ok(done) => {
                     sidebar = done.done;
+                    nothing_to_share = done.shared == 0;
                     if let Some(why) = done.groups_kept_back {
                         warnings.push(format!(
                             "the sidebar groups were not written into this account's config \
@@ -268,6 +278,7 @@ pub fn switch(ctx: &Ctx, target: &ProfileName) -> crate::Result<DesktopReport> {
         restored_to_sidebar,
         waiting: repo.carry_pending(target),
         sidebar,
+        nothing_to_share,
         warnings,
     })
 }

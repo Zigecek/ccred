@@ -189,10 +189,7 @@ fn accounts_with_sessions(dir: &Path) -> Vec<String> {
                 .map(|orgs| {
                     orgs.flatten().any(|o| {
                         std::fs::read_dir(o.path())
-                            .map(|f| {
-                                f.flatten()
-                                    .any(|e| e.file_name().to_string_lossy().starts_with("local_"))
-                            })
+                            .map(|f| f.flatten().any(|e| is_session_file(&e.path())))
                             .unwrap_or(false)
                     })
                 })
@@ -1040,7 +1037,7 @@ fn fill_in_scopes(config: &Path, scopes: Scopes) -> crate::Result<usize> {
     Ok(added)
 }
 
-/// `local_*.json` files under a session-list directory, at any depth.
+/// Session entries under a session-list directory, at any depth.
 fn count_sessions(dir: &Path) -> usize {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return 0;
@@ -1052,10 +1049,34 @@ fn count_sessions(dir: &Path) -> usize {
             if p.is_dir() {
                 count_sessions(&p)
             } else {
-                usize::from(e.file_name().to_string_lossy().starts_with("local_"))
+                usize::from(is_session_file(&p))
             }
         })
         .sum()
+}
+
+/// Is this file one of the Desktop's session entries?
+///
+/// Answered by what is in it -- a JSON object with a `sessionId` -- and not
+/// by its name. The build this was written against calls them
+/// `local_<id>.json`, and the same directory also holds
+/// `scheduled-tasks.json` and the archived index, which have no `sessionId`
+/// and are not entries. A build that renames the files still works; the
+/// name is only ever used to write an entry back where it was found.
+fn is_session_file(path: &Path) -> bool {
+    read_session(path).is_some()
+}
+
+fn read_session(path: &Path) -> Option<serde_json::Map<String, serde_json::Value>> {
+    if path.extension().is_none_or(|e| e != "json") {
+        return None;
+    }
+    let entry = read_entry(path)?;
+    entry
+        .get("sessionId")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())?;
+    Some(entry)
 }
 
 /// Move a tree into another, file by file, never replacing what is there.
@@ -1083,8 +1104,9 @@ fn move_merge(from: &Path, into: &Path) -> crate::Result<usize> {
         if src.is_dir() {
             moved += move_merge(&src, &dst)?;
         } else if !dst.exists() {
+            let was_session = is_session_file(&src);
             rename(&src, &dst)?;
-            if entry.file_name().to_string_lossy().starts_with("local_") {
+            if was_session {
                 moved += 1;
             }
         }
@@ -1361,16 +1383,16 @@ pub fn sidebar_collect(paths: &Paths, data: &Path, uuid: &str) -> crate::Result<
                 let _ = std::fs::remove_file(store.entry_path(&id));
                 continue;
             }
-            let Some(id) = name
-                .strip_suffix(".json")
-                .filter(|s| s.starts_with(ENTRY_PREFIX))
-            else {
+            // Keyed by the name the Desktop gave the file, so it goes back
+            // under that name; what makes it an entry is the `sessionId`
+            // inside it, not the name.
+            let Some(id) = name.strip_suffix(".json") else {
                 continue;
             };
             if state.deleted.contains(id) {
                 continue;
             }
-            let Some(entry) = read_entry(&f.path()) else {
+            let Some(entry) = read_session(&f.path()) else {
                 continue;
             };
             let mine = portable(&entry);
@@ -1411,6 +1433,11 @@ pub struct Spread {
     /// when it does, since the union is where the groups live. The next
     /// switch to the profile puts them in.
     pub groups_kept_back: Option<String>,
+    /// How many sessions the shared sidebar holds after this pass. Zero
+    /// means there is nothing to share yet -- the state a person is in
+    /// before they have ever started a Claude Code session from inside the
+    /// Desktop, which looks exactly like a feature that did not run.
+    pub shared: usize,
 }
 
 /// Bring account `uuid`'s sidebar in `data` up to the union: missing entries
@@ -1424,6 +1451,7 @@ pub fn sidebar_spread(paths: &Paths, data: &Path, uuid: &str) -> crate::Result<S
     let store = SidebarStore::new(paths);
     let state = store.state();
     let entries = store.entries();
+    let shared = entries.len();
     let mut out = Sidebar::default();
     let mut scopes = Scopes::new();
     for (org, dir) in list_dirs(data, uuid) {
@@ -1511,6 +1539,7 @@ pub fn sidebar_spread(paths: &Paths, data: &Path, uuid: &str) -> crate::Result<S
     Ok(Spread {
         done: out,
         groups_kept_back,
+        shared,
     })
 }
 
@@ -1760,28 +1789,43 @@ mod tests {
 
     /// A sign-out inside the app leaves the old account's session list in
     /// the directory. Only accounts with sessions count; the logged-in one
-    /// is not "other".
+    /// is not "other", and a directory holding only the app's own
+    /// bookkeeping holds no sessions -- which is what a session entry is
+    /// told apart by: the `sessionId` in it, not the name of the file.
     #[test]
-    fn session_lists_of_other_accounts_are_noticed_by_directory_name_alone() {
+    fn an_account_has_sessions_when_a_file_there_says_it_does() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
             dir.path().join("config.json"),
             br#"{"lastKnownAccountUuid":"new"}"#,
         )
         .unwrap();
+        let entry = br#"{"sessionId":"local_1","title":"a chat"}"#;
+        let bookkeeping = br#"{"scheduledTasks":[],"recordedSkips":{}}"#;
         let lists = dir.path().join("claude-code-sessions");
         for (acc, files) in [
-            ("old", &["local_1.json", "scheduled-tasks.json"][..]),
-            ("new", &["local_2.json"][..]),
-            ("empty", &["scheduled-tasks.json"][..]),
+            (
+                "old",
+                &[
+                    ("local_1.json", &entry[..]),
+                    ("scheduled-tasks.json", &bookkeeping[..]),
+                ][..],
+            ),
+            // Named whatever a later build might name it.
+            ("renamed", &[("session-2.json", &entry[..])][..]),
+            ("new", &[("local_2.json", &entry[..])][..]),
+            ("empty", &[("scheduled-tasks.json", &bookkeeping[..])][..]),
         ] {
             let org = lists.join(acc).join("org");
             std::fs::create_dir_all(&org).unwrap();
-            for f in files {
-                std::fs::write(org.join(f), b"{}").unwrap();
+            for (f, body) in files {
+                std::fs::write(org.join(f), body).unwrap();
             }
         }
-        assert_eq!(inspect(dir.path()).other_accounts, vec!["old".to_string()]);
+        assert_eq!(
+            inspect(dir.path()).other_accounts,
+            vec!["old".to_string(), "renamed".to_string()]
+        );
     }
 
     #[test]

@@ -999,6 +999,21 @@ pub fn desktop_switch(theme: &Theme, r: &crate::ops::desktop::DesktopReport) {
             );
         }
         println!("{}", f.render(PAD));
+    } else if r.nothing_to_share {
+        // Silence here was read as a switch that skipped the sidebar. What
+        // is shared is the list of Claude Code sessions the Desktop keeps
+        // per account -- the chats in the sidebar above them belong to the
+        // account on the server, and nothing local moves those.
+        println!();
+        callout(
+            MUTED,
+            g.bullet,
+            "no Claude Code sessions to share yet",
+            &[
+                "the shared list fills up as you start them from inside Claude Desktop",
+                "chats with Claude belong to the account on Anthropic's side; switching accounts shows that account's own",
+            ],
+        );
     }
     if !r.warnings.is_empty() {
         println!();

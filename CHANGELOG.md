@@ -2,6 +2,22 @@
 
 ## 0.3.6
 
+- **A switch that shares nothing says so.** The shared sidebar is a list
+  of Claude Code sessions -- the ones started from inside Claude Desktop
+  -- and someone who has never started one has an empty list, so the
+  switch printed nothing about it at all. That is indistinguishable from
+  a feature that did not run, and it was read that way. It now says there
+  is nothing to share yet, and where the chats in the sidebar actually
+  live: on Anthropic's side, under the account, which nothing local moves
+  between accounts.
+- **A session entry is known by the `sessionId` in it, not by its name.**
+  Only `local_*.json` counted, which is what the build this was written
+  against calls them. A Desktop that renames them would have shared
+  nothing, silently; the same directory's `scheduled-tasks.json`, which
+  has no `sessionId`, is still not an entry and does not travel.
+- The README said "one sidebar for every account" without saying which
+  list that is. It says now, in the first sentence, that conversations
+  with Claude are not in it.
 - **The last four lines that ran off the page.** A note under a table row
   -- what `list` prints about a profile it cannot read -- was the one line
   in a table that could be wrapped and was not. `rename` printed its
