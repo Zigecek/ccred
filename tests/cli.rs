@@ -1083,6 +1083,48 @@ fn a_removed_profile_can_be_put_back_from_the_copy_rm_kept() {
     assert_eq!(code, 3, "{err}");
 }
 
+/// The layout an MSIX Claude Desktop has on Windows, which is what a
+/// downloaded installer produces as readily as the Store: the app writes
+/// what it believes is `%APPDATA%\Claude` and Windows redirects it under
+/// `%LOCALAPPDATA%\Packages\Claude_<publisher>\LocalCache\Roaming`. A
+/// process outside the package sees only that, and ccred is one -- it
+/// reported "no Claude Desktop here" on a machine plainly running one.
+#[cfg(windows)]
+#[test]
+fn a_packaged_desktop_on_windows_is_found_and_read() {
+    let sb = Sandbox::new();
+    let packaged = sb
+        .path()
+        .join("AppData")
+        .join("Local")
+        .join("Packages")
+        .join("Claude_abcdefghijklm")
+        .join("LocalCache")
+        .join("Roaming")
+        .join("Claude");
+    std::fs::create_dir_all(&packaged).unwrap();
+    std::fs::write(
+        packaged.join("config.json"),
+        br#"{"lastKnownAccountUuid":"uuid-a","oauth:tokenCache":"opaque"}"#,
+    )
+    .unwrap();
+
+    // Nothing at the classic path at all, which is the case on a machine
+    // that has only ever had the packaged build.
+    assert!(!sb.desktop_dir().exists());
+
+    let (out, err, code) = sb.run(&["current", "--json"]);
+    assert_eq!(code, 0, "{err}{out}");
+    let v: serde_json::Value = serde_json::from_str(&out).expect(&out);
+    assert_eq!(v["desktop"]["installed"], serde_json::json!(true), "{out}");
+    assert_eq!(v["desktop"]["logged_in"], serde_json::json!(true), "{out}");
+
+    // And it is the account in that file, not some other directory's.
+    sb.run(&["save", "work"]);
+    let (out, _, _) = sb.run(&["list", "--json"]);
+    assert!(out.contains("work-desktop"), "{out}");
+}
+
 /// A profile saved as `foo-desktop` before that suffix meant a Desktop
 /// login. Dropping it from the listing made it invisible to every command --
 /// and `uninstall --purge` still deleted it, which is somebody's credentials
