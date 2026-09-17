@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.3.3
+
+The sidebar machinery, which is the part of Desktop support that touches
+Claude Desktop's own files.
+
+- **A carry that cannot be put back is kept.** Merging sidebar groups back
+  means writing into `claude_desktop_config.json`, and that file can be
+  absent -- a fresh install that was never configured -- or mid-write, or in
+  a shape this version does not know. Every one of those raised, from a
+  point after the directories had already moved: a switch that had happened
+  was reported as a failure, and one line further on the carry would have
+  been deleted with the groups still in it. The same for the chat lists,
+  whose move cannot cross a file system, so a `CCRED_HOME` on another volume
+  hit it. Both now stay put with the reason said, and the next switch takes
+  them.
+- **A restored sidebar counts what actually moved.** It reported everything
+  the carry held, while the merge deliberately leaves a chat whose name is
+  already taken on the other side -- that copy is the account's own and
+  newer. The count was a claim about somebody's chats that was not true.
+- Claude Desktop's two files are read the way every other JSON here is: a
+  byte-order mark from an editor is not a malformation, and UTF-16 says so.
+
 ## 0.3.2
 
 Walking the documented Desktop flow end to end, and reading the new README
