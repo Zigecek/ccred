@@ -703,6 +703,11 @@ pub fn unclaimed(paths: &Paths) -> Vec<PathBuf> {
                 .to_string_lossy()
                 .starts_with(UNCLAIMED_PREFIX)
         })
+        // `unclaimed-` is a prefix, not a reserved word: `unclaimed-old` is
+        // a name someone may have saved, and its parking place is not
+        // stray. A profile is its metadata file, and the advice attached to
+        // this list ends in "delete when sure".
+        .filter(|e| !e.path().join(META_FILE).is_file())
         .map(|e| e.path().join(DATA_DIR))
         .filter(|p| p.is_dir())
         .collect();
@@ -1087,7 +1092,14 @@ fn move_merge(from: &Path, into: &Path) -> crate::Result<usize> {
 // changed under one account changes under the others on the next switch,
 // and one deleted under any account is deleted everywhere.
 
-const SIDEBAR_DIR: &str = "sidebar";
+/// The shared union sits in the same directory as the parked logins, whose
+/// names people choose. A profile name has to start with a letter or a
+/// digit, so a leading dot is a name no profile can take; `sidebar`, the
+/// first spelling, is one someone could save and then have `rm --purge`
+/// delete the union with.
+const SIDEBAR_DIR: &str = ".sidebar";
+/// Where it sat in 0.3.0 through 0.3.3.
+const SIDEBAR_DIR_WAS: &str = "sidebar";
 const ARCHIVED_IDX: &str = "archived-sessions.idx";
 const ENTRY_PREFIX: &str = "local_";
 const DELETED_PREFIX: &str = "deleted_";
@@ -1154,9 +1166,17 @@ struct SidebarState {
 
 impl SidebarStore {
     fn new(paths: &Paths) -> Self {
-        SidebarStore {
-            dir: paths.desktop_store_dir().join(SIDEBAR_DIR),
+        let store = paths.desktop_store_dir();
+        let dir = store.join(SIDEBAR_DIR);
+        // Bring the old spelling along, once, and only when it is nobody's
+        // parking place -- a directory with a metadata file is a profile
+        // called `sidebar`, and its login is not ours to move. What stays
+        // behind is a union this rebuilds on the next switch anyway.
+        let was = store.join(SIDEBAR_DIR_WAS);
+        if !dir.exists() && was.is_dir() && !was.join(META_FILE).is_file() {
+            let _ = std::fs::rename(&was, &dir);
         }
+        SidebarStore { dir }
     }
 
     fn state_path(&self) -> PathBuf {

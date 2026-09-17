@@ -3754,3 +3754,112 @@ fn every_documented_command_speaks_json() {
         });
     }
 }
+
+/// `sidebar` is a name someone can save, and the shared sidebar used to
+/// live under it: one directory holding a profile's parked login and every
+/// account's chat list, where `rm --purge` deleted both.
+#[test]
+fn a_profile_may_be_called_sidebar_without_taking_the_shared_one_with_it() {
+    let sb = Sandbox::new();
+    sb.desktop_login("uuid-a", "A");
+    let chats = sb
+        .desktop_dir()
+        .join("claude-code-sessions")
+        .join("uuid-a")
+        .join("org-a");
+    std::fs::create_dir_all(&chats).unwrap();
+    std::fs::write(
+        chats.join("local_1.json"),
+        br#"{"sessionId":"local_1","lastActivityAt":5}"#,
+    )
+    .unwrap();
+    sb.run(&["save", "sidebar"]);
+    sb.login_b();
+    sb.run(&["save", "personal", "--only-code"]);
+
+    let (out, err, code) = sb.run(&["switch", "personal-desktop"]);
+    assert_eq!(code, 0, "{err}{out}");
+    let union = sb.path().join(".ccred").join("desktop").join(".sidebar");
+    assert!(
+        union.join("sessions").join("local_1.json").is_file(),
+        "the chat went into the shared sidebar"
+    );
+    assert!(
+        !sb.parked_desktop("sidebar").join("sessions").exists(),
+        "and not into the profile's directory"
+    );
+    assert_eq!(
+        std::fs::read_to_string(sb.parked_desktop("sidebar").join("data").join("marker")).unwrap(),
+        "A",
+        "whose parked login is untouched"
+    );
+
+    // Deleting that profile deletes that profile.
+    let (out, err, code) = sb.run(&["rm", "sidebar", "--purge"]);
+    assert_eq!(code, 0, "{err}{out}");
+    assert!(
+        union.join("sessions").join("local_1.json").is_file(),
+        "the shared sidebar is not one profile's to delete"
+    );
+}
+
+/// A union written by 0.3.0 through 0.3.3 sits under the name a profile
+/// could take. It moves out of the way on its own.
+#[test]
+fn a_shared_sidebar_from_an_older_version_moves_out_of_the_name_space() {
+    let sb = Sandbox::new();
+    let old = sb.path().join(".ccred").join("desktop").join("sidebar");
+    std::fs::create_dir_all(old.join("sessions")).unwrap();
+    std::fs::write(
+        old.join("sessions").join("local_9.json"),
+        br#"{"sessionId":"local_9","title":"from before","lastActivityAt":9}"#,
+    )
+    .unwrap();
+
+    sb.desktop_login("uuid-a", "A");
+    let chats = sb
+        .desktop_dir()
+        .join("claude-code-sessions")
+        .join("uuid-a")
+        .join("org-a");
+    std::fs::create_dir_all(&chats).unwrap();
+    sb.run(&["save", "work"]);
+    sb.login_b();
+    sb.run(&["save", "personal", "--only-code"]);
+    let (out, err, code) = sb.run(&["switch", "personal-desktop"]);
+    assert_eq!(code, 0, "{err}{out}");
+
+    let union = sb.path().join(".ccred").join("desktop").join(".sidebar");
+    assert!(
+        union.join("sessions").join("local_9.json").is_file(),
+        "the old union came along"
+    );
+    assert!(!old.exists(), "and nothing is left under the old name");
+}
+
+/// `unclaimed-<ms>` is what a parking place for nobody is called, and
+/// `unclaimed-old` is a name someone can save. Doctor's advice about the
+/// first ends in "delete when sure", so it must not name the second.
+#[test]
+fn a_profile_named_like_a_parking_place_is_not_reported_as_stray() {
+    let sb = Sandbox::new();
+    sb.desktop_login("uuid-a", "A");
+    sb.run(&["save", "unclaimed-old"]);
+    sb.login_b();
+    sb.run(&["save", "personal", "--only-code"]);
+    let (out, err, code) = sb.run(&["switch", "personal-desktop"]);
+    assert_eq!(code, 0, "{err}{out}");
+    assert!(
+        sb.parked_desktop("unclaimed-old")
+            .join("data")
+            .join("marker")
+            .is_file(),
+        "the login is parked under the profile's name"
+    );
+
+    let (out, err, _) = sb.run(&["doctor"]);
+    assert!(
+        !out.contains("belongs to no profile") && !out.contains("belong to no profile"),
+        "{err}{out}"
+    );
+}

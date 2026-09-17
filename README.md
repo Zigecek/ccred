@@ -315,7 +315,7 @@ says where. `ccred current` shows which account the Desktop is on.
 account, but the sessions are not per account -- they are transcripts under
 `~/.claude/projects/`, and Claude Code opens any of them under whatever
 login it has. So every account's list feeds one shared sidebar under
-`~/.ccred/desktop/sidebar/`, and a switch brings the target account's list
+`~/.ccred/desktop/.sidebar/`, and a switch brings the target account's list
 up to it: sessions it lacks are added, a title changed under one account
 changes under the others, a session deleted under any account is deleted
 everywhere, and the sidebar groups follow. Only the part of an entry that
