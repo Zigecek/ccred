@@ -131,7 +131,8 @@ starts a *different* copy of `ccred` is left alone too.
 ```
 ccred current             who is logged in, and which profile is active
 ccred list                saved profiles and how much refresh window each has
-ccred save <name>         store the account that is logged in, under a name
+ccred save <name>         store what is logged in: Claude Code as <name>,
+                          Claude Desktop as <name>-desktop
 ccred switch <name>       make a saved profile the active account
 ccred rm <name>           delete a profile
 ccred restore <name>      put a profile's last-known-good credentials back
@@ -203,6 +204,120 @@ default refusal to start on battery -- and all of them look installed.
 Switching refuses to run while Claude Code is open. A live session holds the
 old account in memory and would write its next refreshed token into what is by
 then a different profile's file. Quit it first, or pass `--force` knowing that.
+
+**Claude Desktop is the exception, in both directions.** The Desktop app logs
+in on its own and hands every Claude Code session it opens its own token, so
+those sessions never read the credential file: `ccred switch work` does not
+move them to the new account, and it does not need them closed either --
+`ccred` tells them apart and only counts the rest. The terminal and the VS
+Code extension log in through the file and follow every switch. The Desktop
+has a profile of its own, `work-desktop`, switched separately; see below.
+Sessions themselves are ordinary transcripts under `~/.claude/projects/`
+whichever way they were opened, so a Desktop conversation can be continued
+under the switched account with `claude --resume` from a terminal.
+
+### Claude Desktop
+
+The Desktop app logs in on its own, so `ccred save work` records two things:
+`work`, Claude Code's login, and `work-desktop`, the Desktop's. `ccred list`
+shows them in two tables, and they are switched separately -- `ccred switch
+work` moves the terminal and the VS Code extension, `ccred switch
+work-desktop` moves the Desktop -- because the two can legitimately be on
+different accounts. `--only-code` and `--only-desktop` save one half; the
+output always says which halves were saved and why the other was not.
+`-desktop` is reserved: it cannot be a Claude Code profile's name.
+
+```sh
+ccred save work                  # work, and work-desktop if the Desktop is logged in
+ccred switch work-desktop        # Claude Desktop only; quit it first
+ccred switch work                # Claude Code only; the Desktop can stay open
+ccred rm work-desktop            # the Desktop profile only; `rm work` leaves it
+```
+
+The Desktop's token cannot be switched the way Claude Code's can. It is
+encrypted with the operating system's keyring, so nothing here can read
+it, check it or tell whose it is -- and every safety rule in this tool
+depends on doing exactly that before a write. What can be moved is the
+Desktop's whole data directory (`~/.config/Claude`, `~/Library/Application
+Support/Claude`, `%APPDATA%\Claude`): one complete logged-in state, all of
+it belonging to one account. A Desktop profile is therefore a name, an
+account, and at most one such directory -- the live one while the Desktop
+is logged in as that account, or a parked one under
+`~/.ccred/desktop/<name>/data`. `save` records the identity and leaves the
+live directory where it is; nothing is ever copied, because a token that
+cannot be checked is not one to duplicate. `switch work-desktop` parks the
+live directory under the profile whose account it holds -- read from the
+directory's own `lastKnownAccountUuid`, never assumed -- and puts `work`'s
+parked one in its place. When nothing is parked for `work` yet, the Desktop
+starts fresh and asks for a login: log in as that account, and the next
+switch away parks it under the right name. That is how a second Desktop
+account is brought in: `ccred switch personal-desktop` while only
+`personal` exists parks the current login, makes `personal-desktop` from
+`personal`'s identity, and leaves the Desktop for you to log in.
+
+Three things follow from moving a directory rather than writing a file:
+
+- **The Desktop has to be closed.** A directory renamed under a running app
+  is split, not moved, and on Windows the rename is refused. `switch
+  <name>-desktop` checks Electron's single-instance lock and refuses before
+  touching anything -- and only when it would actually move something; a
+  Desktop already on the target account can stay open. A plain `switch`
+  never asks, because Claude Code logs in separately.
+- **A parked login ages.** The Desktop refreshes its token only while it is
+  the one running, and `ccred refresh` cannot help it. When a parked login
+  has expired, the Desktop asks to log in after the switch. That is the
+  whole cost.
+- **Chats stay.** Code sessions live in `~/.claude/projects/` and are not in
+  the moved directory. The Desktop's own sidebar index is, and it is
+  per-account anyway.
+
+A Desktop logged in as an account nobody saved is left where it is, unless
+the target has a parked login to bring in -- then it is parked under an
+`unclaimed-<timestamp>` name that nothing switches back to, and `doctor`
+says where. `ccred current` shows which account the Desktop is on.
+
+**One sidebar for every account.** The Desktop lists Code sessions per
+account, but the sessions are not per account -- they are transcripts under
+`~/.claude/projects/`, and Claude Code opens any of them under whatever
+login it has. So every account's list feeds one shared sidebar under
+`~/.ccred/desktop/sidebar/`, and a switch brings the target account's list
+up to it: sessions it lacks are added, a title changed under one account
+changes under the others, a session deleted under any account is deleted
+everywhere, and the sidebar groups follow. Only the part of an entry that
+is the session's travels -- which transcript, where, what it is called,
+when; what the Desktop wrote for the account (connector configuration,
+bridge ids) stays with that account and is filled in for the new one when
+the session is opened. The list is read whenever a profile is saved or
+parked, so a running Desktop still feeds it; writing into it needs the
+Desktop closed, and a switch says so when it could not.
+
+What this does *not* do is keep the accounts apart on the server. The
+Desktop registers a session with Anthropic under the account it is logged
+in as when that session runs -- that is how sessions from another machine
+show up in a sidebar -- so a session you run under someone else's account
+is listed under that account, title and all, for whoever uses it elsewhere.
+Listing a session does not do that; running it does. If an account is not
+yours alone, that is the cost of running under its tokens, with or without
+a shared sidebar.
+
+**Do not sign out inside the Desktop to change accounts; switch with
+`ccred` instead.** The Desktop keeps the sidebar's list of Code sessions
+per account inside its directory, and the sidebar groups in its config, and
+signing out leaves both where they are. Log in as someone else and the
+directory is theirs -- the first account's chats are still in it, the
+transcripts are still in `~/.claude/projects/`, but the sidebar of the
+first account shows nothing once it is parked under the second one's name.
+`ccred switch <name>-desktop` knows this shape: it gathers that account's
+list and groups from the live directory or any parked one, and puts them
+back into the account's own directory once the Desktop is logged in as it
+(with the Desktop closed, since that rewrites its config). `doctor` and
+`list` say when something is waiting to be put back.
+
+What has been checked against a real Desktop, on Linux: that it reads the
+account from `lastKnownAccountUuid`, that the running-app check sees it,
+and -- by hand -- that a directory moved away and back keeps its login. The
+running-app check on macOS and Windows follows the same Chromium lock
+without having been tried on real hardware.
 
 ### When something is wrong
 

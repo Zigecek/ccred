@@ -126,6 +126,11 @@ pub struct Plan {
     /// Entries in the backups directory. Those are credentials too, and can
     /// be the only copy of an account that was never saved.
     pub backups: usize,
+    /// Claude Desktop profiles, parked logins included. Deleting a parked
+    /// login logs that account out of the Desktop for good; it can only be
+    /// logged in again.
+    #[serde(default)]
+    pub desktop_logins: usize,
     /// A directory that could not be listed might hold anything.
     pub unreadable: bool,
 }
@@ -141,7 +146,11 @@ impl Plan {
     /// Judged from what is on disk, not from what `list` accepts: a profile
     /// too damaged to list must still not be deleted without a yes.
     pub fn destroys_credentials(&self) -> bool {
-        self.deletes_data() && (self.unreadable || !self.profiles.is_empty() || self.backups > 0)
+        self.deletes_data()
+            && (self.unreadable
+                || !self.profiles.is_empty()
+                || self.backups > 0
+                || self.desktop_logins > 0)
     }
 }
 
@@ -189,6 +198,7 @@ const OURS: &[&str] = &[
     "state",
     "backups",
     "logs",
+    "desktop",
     ".DS_Store",
     "desktop.ini",
     "Thumbs.db",
@@ -393,6 +403,7 @@ pub fn plan(ctx: &Ctx, purge: bool) -> crate::Result<Plan> {
     );
     let (profiles, profiles_unreadable) = entry_names(&paths.profiles_dir());
     let (backups, backups_unreadable) = entry_names(&paths.backups_dir());
+    let (desktop_logins, desktop_unreadable) = entry_names(&paths.desktop_store_dir());
 
     Ok(Plan {
         exe,
@@ -406,7 +417,8 @@ pub fn plan(ctx: &Ctx, purge: bool) -> crate::Result<Plan> {
         purge_refused,
         profiles,
         backups: backups.len(),
-        unreadable: profiles_unreadable || backups_unreadable,
+        desktop_logins: desktop_logins.len(),
+        unreadable: profiles_unreadable || backups_unreadable || desktop_unreadable,
     })
 }
 
@@ -654,6 +666,7 @@ mod tests {
             purge_refused: None,
             profiles: vec!["work".into()],
             backups: 0,
+            desktop_logins: 0,
             unreadable: false,
         };
         assert!(!base.destroys_credentials(), "no purge, nothing destroyed");
@@ -677,6 +690,7 @@ mod tests {
         // listed, is credentials too -- a purge of either needs a yes.
         let backups_only = Plan {
             backups: 1,
+            desktop_logins: 0,
             ..empty.clone()
         };
         assert!(backups_only.destroys_credentials());
@@ -710,6 +724,7 @@ mod tests {
             purge_refused: None,
             profiles: vec!["work".into()],
             backups: 0,
+            desktop_logins: 0,
             unreadable: false,
         };
         let purge = Plan {

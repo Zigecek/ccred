@@ -8,8 +8,11 @@ use anstream::println;
 use clap::Parser;
 
 use ccred::cli::{Cli, Command, ScheduleAction};
+use ccred::desktop::Handle;
 use ccred::error::ExitCode;
-use ccred::ops::{Ctx, doctor, refresh, schedule as sched_ops, simple, switch, uninstall};
+use ccred::ops::{
+    Ctx, desktop as desktop_ops, doctor, refresh, schedule as sched_ops, simple, switch, uninstall,
+};
 use ccred::ui::{Theme, render};
 use ccred::validate::validate_profile_name;
 
@@ -44,21 +47,33 @@ fn run(cli: &Cli, theme: &Theme) -> ccred::Result<ExitCode> {
         }
 
         Some(Command::List) => {
-            let rows = simple::list(&ctx)?;
+            let listing = simple::listing(&ctx)?;
             if cli.json {
-                // The shape stays an array of profiles: a script that reads
-                // `ccred list --json` predates the note below, and `current
-                // --json` already reports a pointer that matches nothing.
-                print_json(&rows);
+                // The shape stays one array: a script that reads `ccred list
+                // --json` predates the note below, and `current --json`
+                // already reports a pointer that matches nothing. Desktop
+                // rows come after the profiles, each row saying its `kind`.
+                print_json(&listing.rows());
             } else {
-                render::list(theme, &rows, simple::pointer_note(&ctx).as_ref());
+                render::list(theme, &listing, simple::pointer_note(&ctx).as_ref());
             }
             Ok(ExitCode::Ok)
         }
 
-        Some(Command::Save { name }) => {
+        Some(Command::Save {
+            name,
+            only_code,
+            only_desktop,
+        }) => {
             let name = validate_profile_name(name)?;
-            let report = simple::save(&ctx, &name)?;
+            let scope = if *only_code {
+                simple::SaveScope::CodeOnly
+            } else if *only_desktop {
+                simple::SaveScope::DesktopOnly
+            } else {
+                simple::SaveScope::Both
+            };
+            let report = simple::save(&ctx, &name, scope)?;
             if cli.json {
                 print_json(&report);
             } else {
@@ -67,27 +82,47 @@ fn run(cli: &Cli, theme: &Theme) -> ccred::Result<ExitCode> {
             Ok(ExitCode::Ok)
         }
 
-        Some(Command::Switch { name, force }) => {
-            let name = validate_profile_name(name)?;
-            let report = switch::switch(&ctx, &name, *force)?;
-            if cli.json {
-                print_json(&report);
-            } else {
-                render::switch(theme, &report);
+        Some(Command::Switch { name, force }) => match Handle::parse(name)? {
+            Handle::ClaudeCode(name) => {
+                let report = switch::switch(&ctx, &name, *force)?;
+                if cli.json {
+                    print_json(&report);
+                } else {
+                    render::switch(theme, &report);
+                }
+                Ok(ExitCode::Ok)
             }
-            Ok(ExitCode::Ok)
-        }
+            Handle::Desktop(name) => {
+                let report = desktop_ops::switch(&ctx, &name)?;
+                if cli.json {
+                    print_json(&report);
+                } else {
+                    render::desktop_switch(theme, &report);
+                }
+                Ok(ExitCode::Ok)
+            }
+        },
 
-        Some(Command::Rm { name }) => {
-            let name = validate_profile_name(name)?;
-            let report = simple::remove(&ctx, &name)?;
-            if cli.json {
-                print_json(&report);
-            } else {
-                render::removed(theme, &report);
+        Some(Command::Rm { name }) => match Handle::parse(name)? {
+            Handle::ClaudeCode(name) => {
+                let report = simple::remove(&ctx, &name)?;
+                if cli.json {
+                    print_json(&report);
+                } else {
+                    render::removed(theme, &report);
+                }
+                Ok(ExitCode::Ok)
             }
-            Ok(ExitCode::Ok)
-        }
+            Handle::Desktop(name) => {
+                let report = desktop_ops::remove(&ctx, &name)?;
+                if cli.json {
+                    print_json(&report);
+                } else {
+                    render::desktop_removed(theme, &report);
+                }
+                Ok(ExitCode::Ok)
+            }
+        },
 
         Some(Command::Restore { name }) => {
             let name = validate_profile_name(name)?;

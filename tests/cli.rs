@@ -107,6 +107,9 @@ impl Sandbox {
             // user units. Left alone, `uninstall --dry-run` read the real
             // machine's receipt.
             .env("LOCALAPPDATA", self.path().join("AppData").join("Local"))
+            // Where Claude Desktop keeps its login on Windows. Left alone,
+            // `desktop switch` would look at the real machine's.
+            .env("APPDATA", self.path().join("AppData").join("Roaming"))
             .env("XDG_CONFIG_HOME", self.path().join(".config"))
             .env_remove("CCRED_HOME")
             .env_remove("CLAUDE_CONFIG_DIR")
@@ -130,6 +133,37 @@ impl Sandbox {
             String::from_utf8_lossy(&out.stderr).to_string(),
             out.status.code().unwrap_or(-1),
         )
+    }
+
+    /// Where Claude Desktop keeps its data directory, under this sandbox.
+    fn desktop_dir(&self) -> std::path::PathBuf {
+        if cfg!(target_os = "windows") {
+            self.path().join("AppData").join("Roaming").join("Claude")
+        } else if cfg!(target_os = "macos") {
+            self.path()
+                .join("Library")
+                .join("Application Support")
+                .join("Claude")
+        } else {
+            self.path().join(".config").join("Claude")
+        }
+    }
+
+    /// A stand-in Desktop data directory logged in as `uuid`, with a marker
+    /// file to tell one directory from another after they move.
+    fn desktop_login(&self, uuid: &str, marker: &str) {
+        let dir = self.desktop_dir();
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("config.json"),
+            format!(r#"{{"oauth:tokenCache":"djExopaque","lastKnownAccountUuid":"{uuid}"}}"#),
+        )
+        .unwrap();
+        std::fs::write(dir.join("marker"), marker).unwrap();
+    }
+
+    fn parked_desktop(&self, name: &str) -> std::path::PathBuf {
+        self.path().join(".ccred").join("desktop").join(name)
     }
 
     fn config_json(&self) -> serde_json::Value {
@@ -220,6 +254,9 @@ fn no_command_ever_prints_a_token() {
         &["switch", "work"],
         &["switch", "nope"],      // fails: not found
         &["switch", "../../etc"], // fails: invalid name
+        &["switch", "personal-desktop"],
+        &["switch", "personal-desktop", "--json"],
+        &["rm", "work-desktop"], // fails: not found
         &["restore", "work"],
         &["restore", "nope"], // fails: not found
         &["refresh"],         // leaves a run log and a last-run record
@@ -1631,6 +1668,775 @@ fn switching_is_refused_while_claude_code_runs() {
     );
 }
 
+/// A session Claude Desktop opened runs on the Desktop's own token and never
+/// writes the credential file, so it is no reason to refuse -- and with the
+/// Desktop open all day, refusing would only teach people to pass `--force`.
+/// It is still reported, because the switch does not reach it either.
+#[test]
+fn a_claude_desktop_session_neither_blocks_a_switch_nor_follows_it() {
+    let sb = Sandbox::new();
+    sb.run(&["save", "work"]);
+    sb.login_b();
+    sb.run(&["save", "personal"]);
+
+    let session = Session(
+        Command::new(fake_claude())
+            .arg("--sleep")
+            .spawn()
+            .expect("start the stand-in session"),
+    );
+    let pid = session.0.id();
+    let sessions = sb.path().join(".claude").join("sessions");
+    std::fs::create_dir_all(&sessions).unwrap();
+    std::fs::write(
+        sessions.join(format!("{pid}.json")),
+        format!(r#"{{"pid":{pid},"kind":"interactive","entrypoint":"claude-desktop"}}"#),
+    )
+    .unwrap();
+
+    let (out, _, _) = sb.run(&["current"]);
+    assert!(out.contains("Claude Desktop is running"), "{out}");
+    assert!(!out.contains("Claude Code is running"), "{out}");
+
+    let (out, err, code) = sb.run(&["switch", "work"]);
+    assert_eq!(code, 0, "a Desktop session must not block:\n{out}{err}");
+    assert!(
+        out.contains("Claude Desktop is running")
+            && out.contains("stay on the Desktop's own login"),
+        "{out}"
+    );
+    let (out, _, _) = sb.run(&["current"]);
+    assert!(out.contains("alice@example.com"), "{out}");
+
+    let (json, _, _) = sb.run(&["current", "--json"]);
+    let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(v["desktop_sessions"], serde_json::json!([pid]));
+    assert_eq!(v["claude_running"], serde_json::json!([]));
+
+    // The same process with the store-backed entrypoint blocks as before:
+    // it is the entrypoint that decides, not anything about the process.
+    std::fs::write(
+        sessions.join(format!("{pid}.json")),
+        format!(r#"{{"pid":{pid},"kind":"interactive","entrypoint":"cli"}}"#),
+    )
+    .unwrap();
+    let (_, err, code) = sb.run(&["switch", "personal"]);
+    assert_eq!(code, 7, "{err}");
+    assert!(err.contains("Claude Code is running"), "{err}");
+}
+
+// --- Claude Desktop's own login --------------------------------------------
+
+fn marker(dir: &Path) -> String {
+    std::fs::read_to_string(dir.join("marker")).unwrap_or_else(|_| "<none>".into())
+}
+
+/// Hold Electron's single-instance lock in a Desktop directory the way a
+/// running Desktop does: a `SingletonLock` symlink naming a live PID on
+/// Unix, a `lockfile` open for writing with read-only sharing on Windows.
+struct DesktopLock {
+    dir: std::path::PathBuf,
+    #[cfg(unix)]
+    _holder: Session,
+    #[cfg(windows)]
+    _file: std::fs::File,
+}
+
+impl DesktopLock {
+    fn hold(dir: &Path) -> Self {
+        #[cfg(unix)]
+        {
+            let holder = Session(
+                Command::new(fake_claude())
+                    .arg("--sleep")
+                    .spawn()
+                    .expect("start the stand-in"),
+            );
+            std::os::unix::fs::symlink(
+                format!("host-{}", holder.0.id()),
+                dir.join("SingletonLock"),
+            )
+            .unwrap();
+            DesktopLock {
+                dir: dir.to_path_buf(),
+                _holder: holder,
+            }
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            const FILE_SHARE_READ: u32 = 1;
+            let file = std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(false)
+                .share_mode(FILE_SHARE_READ)
+                .open(dir.join("lockfile"))
+                .unwrap();
+            DesktopLock {
+                dir: dir.to_path_buf(),
+                _file: file,
+            }
+        }
+    }
+}
+
+impl Drop for DesktopLock {
+    fn drop(&mut self) {
+        // The holder goes first on Unix (a field drop), then the link.
+        let _ = std::fs::remove_file(self.dir.join("SingletonLock"));
+        let _ = std::fs::remove_file(self.dir.join("lockfile"));
+    }
+}
+
+/// `save` records both halves under one name. The Desktop half is its
+/// identity only -- the live directory is the login and stays where it is
+/// -- and the output says what was and was not saved, every time.
+#[test]
+fn save_records_the_desktop_login_beside_the_profile_and_says_so() {
+    let sb = Sandbox::new();
+
+    // No Desktop here at all: the Claude Code half is saved, the Desktop
+    // half is reported as not there.
+    let (out, err, code) = sb.run(&["save", "work"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("work  alice@example.com  created"), "{out}");
+    assert!(
+        out.contains("work-desktop  not saved: no Claude Desktop here"),
+        "{out}"
+    );
+
+    // Now the Desktop is logged in as the same account.
+    sb.desktop_login("uuid-a", "A");
+    let (out, err, code) = sb.run(&["save", "work"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains("work  alice@example.com  already up to date"),
+        "{out}"
+    );
+    assert!(
+        out.contains("work-desktop  alice@example.com  created"),
+        "{out}"
+    );
+    assert!(sb.parked_desktop("work").join("meta.json").is_file());
+    assert!(
+        !sb.parked_desktop("work").join("data").exists(),
+        "save must not copy the live directory"
+    );
+    assert_eq!(marker(&sb.desktop_dir()), "A", "the live login stays live");
+
+    // The JSON shape a script relied on is still there, and the Desktop
+    // half is beside it.
+    let (json, _, _) = sb.run(&["save", "work", "--json"]);
+    let v: serde_json::Value = serde_json::from_str(&json).expect(&json);
+    assert_eq!(v["account"], "alice@example.com", "{json}");
+    assert_eq!(v["outcome"], "already up to date", "{json}");
+    assert_eq!(v["desktop"]["outcome"], "updated", "{json}");
+
+    // Only one half, either way.
+    let (out, _, code) = sb.run(&["save", "work", "--only-desktop"]);
+    assert_eq!(code, 0);
+    assert!(
+        out.contains("work-desktop  alice@example.com  updated"),
+        "{out}"
+    );
+    assert!(!out.contains("work  alice"), "{out}");
+    let (out, _, code) = sb.run(&["save", "work", "--only-code"]);
+    assert_eq!(code, 0);
+    assert!(
+        out.contains("work  alice@example.com  already up to date"),
+        "{out}"
+    );
+    assert!(!out.contains("work-desktop"), "{out}");
+
+    // The reserved suffix cannot be a profile name.
+    let (_, err, code) = sb.run(&["save", "work-desktop"]);
+    assert_ne!(code, 0);
+    assert!(err.contains("-desktop"), "{err}");
+
+    // The Desktop on another account than Claude Code: both are saved,
+    // each as what it is.
+    sb.login_b();
+    let (out, err, code) = sb.run(&["save", "personal"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("personal  bob@example.com  created"), "{out}");
+    assert!(
+        out.contains("personal-desktop  alice@example.com  created"),
+        "{out}"
+    );
+
+    // A name that already holds another Desktop account is refused. On
+    // its own that is a failure; beside a Claude Code half that was saved
+    // it is a line in the output.
+    sb.desktop_login("uuid-b", "B");
+    let (_, err, code) = sb.run(&["save", "personal", "--only-desktop"]);
+    assert_eq!(code, 7, "{err}");
+    assert!(
+        err.contains("'personal-desktop' belongs to alice@example.com"),
+        "{err}"
+    );
+    let (out, err, code) = sb.run(&["save", "personal"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains("personal  bob@example.com  already up to date"),
+        "{out}"
+    );
+    assert!(
+        out.contains(
+            "personal-desktop  not saved: 'personal-desktop' belongs to alice@example.com"
+        ),
+        "{out}"
+    );
+}
+
+/// With Claude Code logged out, `save` still records the Desktop, says why
+/// the other half was not, and is an error only when neither was there.
+#[test]
+fn save_takes_whichever_half_is_there() {
+    let sb = Sandbox::new();
+    sb.desktop_login("uuid-a", "A");
+    std::fs::remove_file(sb.path().join(".claude").join(".credentials.json")).unwrap();
+
+    let (out, err, code) = sb.run(&["save", "work"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains("work  not saved: Claude Code is not logged in"),
+        "{out}"
+    );
+    // The email comes from `.claude.json`, which still names the account
+    // whose credentials were removed.
+    assert!(
+        out.contains("work-desktop  alice@example.com  created"),
+        "{out}"
+    );
+    assert!(!sb.path().join(".ccred/profiles/work").exists());
+
+    // Asked for the half that is not there: the failure it always was.
+    let (_, err, code) = sb.run(&["save", "work", "--only-code"]);
+    assert_eq!(code, 7, "{err}");
+    assert!(err.contains("holds no credentials"), "{err}");
+
+    std::fs::remove_dir_all(sb.desktop_dir()).unwrap();
+    let (_, err, code) = sb.run(&["save", "other"]);
+    assert_eq!(code, 7, "{err}");
+    assert!(err.contains("nothing to save"), "{err}");
+}
+
+/// The Desktop logs in on its own, so its login is a directory to move, not
+/// a file to write: parked under the profile whose account it holds -- read
+/// from the directory, never assumed from the switch -- and the target's
+/// parked one put in its place. Claude Code's own login is not touched.
+#[test]
+fn switching_a_desktop_profile_parks_the_login_by_its_account() {
+    let sb = Sandbox::new();
+    sb.desktop_login("uuid-a", "A");
+    sb.run(&["save", "work"]); // alice, both halves
+    sb.login_b();
+    sb.run(&["save", "personal", "--only-code"]); // bob, Claude Code only
+
+    // `personal-desktop` does not exist yet, but `personal` does: the
+    // Desktop profile is made from it, the live login is parked as work's,
+    // and the Desktop will start fresh.
+    let (out, err, code) = sb.run(&["switch", "personal-desktop"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("work-desktop parked"), "{out}");
+    assert!(out.contains("log in as that account"), "{out}");
+    assert!(
+        !sb.desktop_dir().exists(),
+        "the live directory must be gone"
+    );
+    assert_eq!(marker(&sb.parked_desktop("work").join("data")), "A");
+    assert!(sb.parked_desktop("personal").join("meta.json").is_file());
+    let (out, _, _) = sb.run(&["current"]);
+    assert!(
+        out.contains("bob@example.com"),
+        "Claude Code untouched:\n{out}"
+    );
+
+    // The user logs in as personal in the fresh Desktop.
+    sb.desktop_login("uuid-b", "B");
+    let (out, _, _) = sb.run(&["list"]);
+    assert!(out.contains("personal-desktop"), "{out}");
+    assert!(out.contains("logged in"), "{out}");
+    assert!(out.contains("parked"), "{out}");
+
+    let (json, err, code) = sb.run(&["switch", "work-desktop", "--json"]);
+    assert_eq!(code, 0, "{json}{err}");
+    let v: serde_json::Value = serde_json::from_str(&json).expect(&json);
+    assert_eq!(v["desktop"]["outcome"], "moved", "{json}");
+    assert_eq!(v["desktop"]["parked_as"], "personal-desktop", "{json}");
+    assert_eq!(v["desktop"]["restored"], true, "{json}");
+    assert_eq!(marker(&sb.desktop_dir()), "A");
+    assert_eq!(marker(&sb.parked_desktop("personal").join("data")), "B");
+    assert!(!sb.parked_desktop("work").join("data").exists());
+
+    // Again: already there, nothing moves.
+    let (json, _, code) = sb.run(&["switch", "work-desktop", "--json"]);
+    assert_eq!(code, 0);
+    assert!(json.contains("already_on"), "{json}");
+
+    // `current` says which account the Desktop is on, and that it is not
+    // the active profile's.
+    let (out, _, _) = sb.run(&["current"]);
+    assert!(out.contains("work-desktop"), "{out}");
+    assert!(out.contains("not the active profile's account"), "{out}");
+    let (json, _, _) = sb.run(&["current", "--json"]);
+    let v: serde_json::Value = serde_json::from_str(&json).expect(&json);
+    assert_eq!(v["desktop"]["profile"], "work-desktop", "{json}");
+    assert_eq!(
+        v["desktop"]["parked"],
+        serde_json::json!(["personal-desktop"])
+    );
+
+    // `list --json` is still one array; the Desktop rows say what they are.
+    let (json, _, _) = sb.run(&["list", "--json"]);
+    let v: serde_json::Value = serde_json::from_str(&json).expect(&json);
+    let rows = v.as_array().expect("an array");
+    assert_eq!(rows[0]["kind"], "claude_code", "{json}");
+    assert_eq!(rows[0]["name"], "personal", "{json}");
+    let desktop: Vec<&serde_json::Value> = rows.iter().filter(|r| r["kind"] == "desktop").collect();
+    assert_eq!(desktop.len(), 2, "{json}");
+    assert_eq!(desktop[0]["name"], "personal-desktop", "{json}");
+    assert_eq!(desktop[0]["state"], "parked", "{json}");
+    assert_eq!(desktop[1]["name"], "work-desktop", "{json}");
+    assert_eq!(desktop[1]["state"], "logged_in", "{json}");
+    assert_eq!(desktop[1]["active"], true, "{json}");
+}
+
+/// A directory cannot be moved under a running app, so a Desktop switch
+/// refuses before anything is touched. A Claude Code switch never asks:
+/// the two log in separately, and a running Desktop is no reason to refuse
+/// the terminal its account.
+#[test]
+fn a_desktop_switch_is_refused_while_the_desktop_runs_and_a_code_switch_is_not() {
+    let sb = Sandbox::new();
+    sb.run(&["save", "work"]);
+    sb.login_b();
+    sb.desktop_login("uuid-b", "B");
+    sb.run(&["save", "personal"]);
+    let lock = DesktopLock::hold(&sb.desktop_dir());
+
+    let (out, err, code) = sb.run(&["switch", "work-desktop"]);
+    assert_eq!(code, 7, "{out}{err}");
+    assert!(err.contains("Claude Desktop is running"), "{err}");
+    assert_eq!(marker(&sb.desktop_dir()), "B");
+    assert!(!sb.parked_desktop("personal").join("data").exists());
+    assert!(
+        !sb.parked_desktop("work").join("meta.json").exists(),
+        "a refused switch must not leave a profile it made on the way"
+    );
+
+    let (out, err, code) = sb.run(&["switch", "work"]);
+    assert_eq!(
+        code, 0,
+        "a Claude Code switch ignores the Desktop:\n{out}{err}"
+    );
+    assert!(!err.contains("Desktop"), "{err}");
+    let (out, _, _) = sb.run(&["current"]);
+    assert!(out.contains("alice@example.com"), "{out}");
+    assert!(out.contains("(running)"), "{out}");
+    assert_eq!(marker(&sb.desktop_dir()), "B");
+
+    // Already on the target: nothing to move, so a running Desktop is fine.
+    let (json, err, code) = sb.run(&["switch", "personal-desktop", "--json"]);
+    assert_eq!(code, 0, "{json}{err}");
+    assert!(json.contains("already_on"), "{json}");
+
+    drop(lock);
+    let (out, err, code) = sb.run(&["switch", "work-desktop"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(marker(&sb.parked_desktop("personal").join("data")), "B");
+}
+
+/// A Desktop logged in as an account nobody saved is left alone -- until
+/// the target has a parked login to bring in, when it is parked under a
+/// name nothing switches back to, and `doctor` says where.
+#[test]
+fn a_foreign_desktop_login_is_left_alone_until_the_target_has_one_parked() {
+    let sb = Sandbox::new();
+    sb.run(&["save", "work"]);
+    sb.desktop_login("uuid-someone-else", "X");
+
+    let (json, err, code) = sb.run(&["switch", "work-desktop", "--json"]);
+    assert_eq!(code, 0, "{json}{err}");
+    assert!(json.contains("left_alone"), "{json}");
+    assert_eq!(marker(&sb.desktop_dir()), "X");
+
+    let parked = sb.parked_desktop("work").join("data");
+    std::fs::create_dir_all(&parked).unwrap();
+    std::fs::write(parked.join("marker"), "W").unwrap();
+    let (json, err, code) = sb.run(&["switch", "work-desktop", "--json"]);
+    assert_eq!(code, 0, "{json}{err}");
+    let v: serde_json::Value = serde_json::from_str(&json).expect(&json);
+    let parked_as = v["desktop"]["parked_as"].as_str().unwrap_or_default();
+    assert!(parked_as.starts_with("unclaimed-"), "{json}");
+    assert_eq!(marker(&sb.desktop_dir()), "W");
+    assert_eq!(
+        marker(
+            &sb.path()
+                .join(".ccred")
+                .join("desktop")
+                .join(parked_as)
+                .join("data")
+        ),
+        "X"
+    );
+    let (out, _, _) = sb.run(&["doctor"]);
+    assert!(out.contains("belongs to no profile"), "{out}");
+}
+
+/// A name removes exactly what it names: `rm work-desktop` takes the
+/// Desktop profile and its parked login, and leaves `work` alone; `rm work`
+/// leaves `work-desktop` alone.
+#[test]
+fn rm_of_a_desktop_name_removes_the_desktop_profile_only() {
+    let sb = Sandbox::new();
+    sb.desktop_login("uuid-a", "A");
+    sb.run(&["save", "work"]);
+    sb.login_b();
+    sb.run(&["save", "personal"]);
+    let parked = sb.parked_desktop("work").join("data");
+    std::fs::create_dir_all(&parked).unwrap();
+
+    let (out, err, code) = sb.run(&["rm", "work-desktop"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("removed work-desktop"), "{out}");
+    assert!(out.contains("parked login was deleted"), "{out}");
+    assert!(!sb.parked_desktop("work").exists());
+    assert!(
+        sb.path().join(".ccred/profiles/work").is_dir(),
+        "work stays"
+    );
+
+    let (out, err, code) = sb.run(&["rm", "work"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(!out.contains("desktop"), "{out}");
+    assert!(sb.parked_desktop("personal").join("meta.json").is_file());
+
+    let (_, err, code) = sb.run(&["rm", "work-desktop"]);
+    assert_eq!(code, 3, "gone already: {err}");
+
+    let (json, _, _) = sb.run(&["uninstall", "--purge", "--dry-run", "--json"]);
+    let v: serde_json::Value = serde_json::from_str(&json).expect(&json);
+    assert_eq!(v["desktop_logins"], 1, "{json}");
+}
+
+/// The Desktop lists an account's Code sessions in its own directory, per
+/// account, and keeps the sidebar groups in its config. Signing out inside
+/// the app and in as someone else leaves both behind, so the directory is
+/// parked under the second account's name with the first account's chats
+/// inside -- which is how they went missing from a sidebar without a byte
+/// of them being deleted. A switch gathers them and puts them back.
+#[test]
+fn chats_left_behind_by_a_sign_out_inside_the_app_are_put_back() {
+    let sb = Sandbox::new();
+    sb.desktop_login("uuid-a", "A");
+    sb.run(&["save", "work"]);
+    let lists = sb.desktop_dir().join("claude-code-sessions");
+    let a_list = lists.join("uuid-a").join("org-a");
+    std::fs::create_dir_all(&a_list).unwrap();
+    for id in ["1", "2", "3"] {
+        std::fs::write(
+            a_list.join(format!("local_{id}.json")),
+            format!(r#"{{"sessionId":"local_{id}","title":"chat {id}"}}"#),
+        )
+        .unwrap();
+    }
+    std::fs::write(a_list.join("scheduled-tasks.json"), b"{}").unwrap();
+    std::fs::write(
+        sb.desktop_dir().join("claude_desktop_config.json"),
+        r#"{"preferences":{"other":true,"epitaxyPrefs":{"dframe-group-scopes":{"uuid-a/org-a":{"groups":[{"id":"g1","name":"Work"}],"assignments":{"code:local_1":"g1","code:local_2":"g1"}}}}}}"#,
+    )
+    .unwrap();
+
+    // Signed out inside the app, signed in as bob: same directory, new
+    // account, alice's list and groups still in it.
+    sb.desktop_login("uuid-b", "B");
+    std::fs::create_dir_all(lists.join("uuid-b").join("org-b")).unwrap();
+    std::fs::write(
+        lists
+            .join("uuid-b")
+            .join("org-b")
+            .join("scheduled-tasks.json"),
+        b"{}",
+    )
+    .unwrap();
+    let (out, _, _) = sb.run(&["save", "personal", "--only-desktop"]);
+    assert!(out.contains("personal-desktop"), "{out}");
+    let (out, _, _) = sb.run(&["doctor"]);
+    assert!(
+        out.contains("session lists of other accounts"),
+        "doctor must point at the mixed directory:\n{out}"
+    );
+
+    // Switching to work parks bob's directory -- and takes alice's chats
+    // out of it first, for work.
+    let (out, err, code) = sb.run(&["switch", "work-desktop"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("personal-desktop parked"), "{out}");
+    assert!(
+        out.contains("3 sessions and 1 sidebar group from a sign-out are waiting"),
+        "{out}"
+    );
+    assert!(
+        !sb.parked_desktop("personal")
+            .join("data")
+            .join("claude-code-sessions")
+            .join("uuid-a")
+            .exists(),
+        "alice's list must not stay buried in bob's parked directory"
+    );
+    let (out, _, _) = sb.run(&["list"]);
+    assert!(
+        out.contains("3 sessions and 1 sidebar group from a sign-out are waiting"),
+        "{out}"
+    );
+
+    // The Desktop starts fresh, alice logs in, and the app writes a config
+    // with an empty groups slot. Running, the chats cannot be put back yet.
+    sb.desktop_login("uuid-a", "A2");
+    std::fs::create_dir_all(a_list.parent().unwrap()).unwrap();
+    std::fs::create_dir_all(&a_list).unwrap();
+    std::fs::write(a_list.join("scheduled-tasks.json"), b"{\"fresh\":true}").unwrap();
+    std::fs::write(
+        sb.desktop_dir().join("claude_desktop_config.json"),
+        r#"{"preferences":{"fresh":true,"epitaxyPrefs":{"dframe-group-scopes":{}}}}"#,
+    )
+    .unwrap();
+    let lock = DesktopLock::hold(&sb.desktop_dir());
+    let (_, err, code) = sb.run(&["switch", "work-desktop"]);
+    assert_eq!(code, 7, "{err}");
+    assert!(err.contains("put back into its sidebar"), "{err}");
+    drop(lock);
+
+    // Closed: the same switch puts them back, and nothing of the fresh
+    // directory is overwritten.
+    let (out, err, code) = sb.run(&["switch", "work-desktop"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("already logged in as work-desktop"), "{out}");
+    assert!(
+        out.contains("3 sessions and 1 sidebar group put back into its sidebar"),
+        "{out}"
+    );
+    for id in ["1", "2", "3"] {
+        assert!(
+            a_list.join(format!("local_{id}.json")).is_file(),
+            "chat {id}"
+        );
+    }
+    assert_eq!(
+        std::fs::read_to_string(a_list.join("scheduled-tasks.json")).unwrap(),
+        "{\"fresh\":true}",
+        "the live file wins"
+    );
+    let cfg: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(sb.desktop_dir().join("claude_desktop_config.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        cfg["preferences"]["fresh"], true,
+        "the rest of the config is untouched"
+    );
+    let scope = &cfg["preferences"]["epitaxyPrefs"]["dframe-group-scopes"]["uuid-a/org-a"];
+    assert_eq!(scope["groups"][0]["name"], "Work", "{cfg}");
+    assert_eq!(scope["assignments"]["code:local_2"], "g1", "{cfg}");
+    assert!(
+        !sb.parked_desktop("work").join("carry").exists(),
+        "the carry is spent"
+    );
+
+    // Nothing waiting any more, and a second run changes nothing.
+    let (out, _, _) = sb.run(&["list"]);
+    assert!(!out.contains("waiting"), "{out}");
+    let (out, _, code) = sb.run(&["switch", "work-desktop"]);
+    assert_eq!(code, 0);
+    assert!(!out.contains("put back"), "{out}");
+}
+
+/// A `-desktop` name that exists nowhere is an account the Desktop has
+/// never logged in as. The switch parks the current login and starts the
+/// Desktop fresh; the login that follows is claimed for the new profile by
+/// the next command that writes. Parking is allowed only when the current
+/// login is a saved profile, so a typo costs a switch back, never a login.
+#[test]
+fn switching_to_a_desktop_name_that_exists_nowhere_makes_room_for_a_new_account() {
+    let sb = Sandbox::new();
+    sb.desktop_login("uuid-a", "A");
+
+    // The current login is nobody's yet: refused, with the way out.
+    let (_, err, code) = sb.run(&["switch", "pepa-desktop"]);
+    assert_eq!(code, 7, "{err}");
+    assert!(err.contains("not a saved profile"), "{err}");
+    assert!(err.contains("--only-desktop"), "{err}");
+    assert!(
+        !sb.parked_desktop("pepa").exists(),
+        "a refused switch leaves no profile behind"
+    );
+    assert_eq!(marker(&sb.desktop_dir()), "A");
+
+    sb.run(&["save", "work"]);
+    let (out, err, code) = sb.run(&["switch", "pepa-desktop"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("work-desktop parked"), "{out}");
+    assert!(out.contains("log in as that account"), "{out}");
+    assert!(!sb.desktop_dir().exists());
+    assert_eq!(marker(&sb.parked_desktop("work").join("data")), "A");
+    let (out, _, _) = sb.run(&["list"]);
+    assert!(out.contains("pepa-desktop"), "{out}");
+    assert!(out.contains("no login"), "{out}");
+
+    // The user logs in as pepa in the fresh Desktop. That is pepa-desktop's
+    // account now -- shown as such before anything is written, and written
+    // by the next save or switch.
+    sb.desktop_login("uuid-p", "P");
+    let (out, _, _) = sb.run(&["list"]);
+    assert!(out.contains("pepa-desktop"), "{out}");
+    assert!(out.contains("logged in"), "{out}");
+    let (json, _, _) = sb.run(&["current", "--json"]);
+    let v: serde_json::Value = serde_json::from_str(&json).expect(&json);
+    assert_eq!(v["desktop"]["profile"], "pepa-desktop", "{json}");
+
+    let (out, err, code) = sb.run(&["switch", "work-desktop"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains("pepa-desktop parked, work-desktop restored"),
+        "{out}"
+    );
+    assert_eq!(marker(&sb.desktop_dir()), "A");
+    assert_eq!(marker(&sb.parked_desktop("pepa").join("data")), "P");
+    let meta: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(sb.parked_desktop("pepa").join("meta.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(meta["account"]["account_uuid"], "uuid-p", "{meta}");
+
+    // A typo now: parks work, makes an empty profile, and both are undone
+    // with the commands the output names.
+    let (out, _, code) = sb.run(&["switch", "wrok-desktop"]);
+    assert_eq!(code, 0, "{out}");
+    let (_, _, code) = sb.run(&["switch", "work-desktop"]);
+    assert_eq!(code, 0);
+    assert_eq!(marker(&sb.desktop_dir()), "A");
+    let (_, _, code) = sb.run(&["rm", "wrok-desktop"]);
+    assert_eq!(code, 0);
+}
+
+/// The Desktop lists sessions per account; the sessions are not. So every
+/// account's list feeds one shared sidebar, and a switch brings the target
+/// account's list up to it: entries it lacks are written with the fields
+/// that travel, a title changed under one account changes under the other,
+/// a deletion under one is a deletion under the other. What the Desktop
+/// wrote for the account -- connector configuration, bridge ids -- stays.
+#[test]
+fn every_account_gets_the_same_sidebar() {
+    let sb = Sandbox::new();
+    sb.desktop_login("uuid-a", "A");
+    sb.run(&["save", "work"]);
+    let a_list = sb
+        .desktop_dir()
+        .join("claude-code-sessions")
+        .join("uuid-a")
+        .join("org-a");
+    std::fs::create_dir_all(&a_list).unwrap();
+    let entry = |id: &str, title: &str, at: i64| {
+        format!(
+            r#"{{"sessionId":"local_{id}","cliSessionId":"cli-{id}","cwd":"/code","title":"{title}","lastActivityAt":{at},"bridgeSessionIds":["bridge-a"],"remoteMcpServersConfig":[{{"name":"a-only"}}]}}"#
+        )
+    };
+    std::fs::write(a_list.join("local_1.json"), entry("1", "one", 100)).unwrap();
+    std::fs::write(a_list.join("local_2.json"), entry("2", "two", 100)).unwrap();
+    std::fs::write(
+        a_list.join("archived-sessions.idx"),
+        r#"{"v":1,"archived":["local_2"]}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        sb.desktop_dir().join("claude_desktop_config.json"),
+        r#"{"preferences":{"epitaxyPrefs":{"dframe-group-scopes":{"uuid-a/org-a":{"groups":[{"id":"g1","name":"Work"}],"assignments":{"code:local_1":"g1"}}}}}}"#,
+    )
+    .unwrap();
+
+    // Over to a new account: alice's list is collected on the way out.
+    let (out, err, code) = sb.run(&["switch", "pepa-desktop"]);
+    assert_eq!(code, 0, "{out}{err}");
+    sb.desktop_login("uuid-p", "P");
+    let p_list = sb
+        .desktop_dir()
+        .join("claude-code-sessions")
+        .join("uuid-p")
+        .join("org-p");
+    std::fs::create_dir_all(&p_list).unwrap();
+    std::fs::write(
+        sb.desktop_dir().join("claude_desktop_config.json"),
+        r#"{"preferences":{"epitaxyPrefs":{"dframe-group-scopes":{}}}}"#,
+    )
+    .unwrap();
+
+    // Logged in as pepa, the Desktop closed: the same switch fills the list.
+    let (out, err, code) = sb.run(&["switch", "pepa-desktop"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("sidebar: 2 sessions added"), "{out}");
+    assert!(out.contains("1 group added"), "{out}");
+    let one: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(p_list.join("local_1.json")).unwrap())
+            .unwrap();
+    assert_eq!(one["title"], "one");
+    assert_eq!(one["cliSessionId"], "cli-1");
+    assert!(
+        one.get("bridgeSessionIds").is_none(),
+        "account-bound: {one}"
+    );
+    assert!(one.get("remoteMcpServersConfig").is_none(), "{one}");
+    let archived = std::fs::read_to_string(p_list.join("archived-sessions.idx")).unwrap();
+    assert!(archived.contains("local_2"), "{archived}");
+    let cfg: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(sb.desktop_dir().join("claude_desktop_config.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        cfg["preferences"]["epitaxyPrefs"]["dframe-group-scopes"]["uuid-p/org-p"]["assignments"]["code:local_1"],
+        "g1",
+        "{cfg}"
+    );
+
+    // Under pepa: one is renamed, two is deleted, the Desktop writes its own
+    // account-bound fields, and a third session is started.
+    std::fs::write(
+        p_list.join("local_1.json"),
+        r#"{"sessionId":"local_1","cliSessionId":"cli-1","cwd":"/code","title":"one, renamed","lastActivityAt":200,"remoteMcpServersConfig":[{"name":"p-only"}]}"#,
+    )
+    .unwrap();
+    std::fs::remove_file(p_list.join("local_2.json")).unwrap();
+    std::fs::write(p_list.join("deleted_2"), b"1700").unwrap();
+    std::fs::write(p_list.join("local_3.json"), entry("3", "three", 300)).unwrap();
+
+    // Back to work: alice's list catches up, and her own account-bound
+    // fields on `one` survive the title change.
+    let (out, err, code) = sb.run(&["switch", "work-desktop"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains("2 sessions added or brought up to date"),
+        "{out}"
+    );
+    assert!(out.contains("1 session removed"), "{out}");
+    let one: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(a_list.join("local_1.json")).unwrap())
+            .unwrap();
+    assert_eq!(one["title"], "one, renamed");
+    assert_eq!(one["bridgeSessionIds"][0], "bridge-a", "kept: {one}");
+    assert_eq!(
+        one["remoteMcpServersConfig"][0]["name"], "a-only",
+        "kept: {one}"
+    );
+    assert!(!a_list.join("local_2.json").exists(), "deleted under pepa");
+    assert!(a_list.join("local_3.json").is_file(), "started under pepa");
+
+    // And nothing changes on a second pass.
+    let (out, _, code) = sb.run(&["switch", "work-desktop"]);
+    assert_eq!(code, 0);
+    assert!(!out.contains("sidebar:"), "{out}");
+}
+
 /// A journal nobody can read used to fail every later save and switch on the
 /// same parse error, for good. It is now moved aside -- and the command that
 /// found it still stops, because the switch it described may have left the
@@ -2145,6 +2951,7 @@ fn every_documented_command_speaks_json() {
         &["list"],
         &["save", "personal"],
         &["switch", "work"],
+        &["switch", "work-desktop"],
         &["restore", "work"],
         &["refresh"],
         &["log"],

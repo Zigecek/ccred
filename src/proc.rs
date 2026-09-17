@@ -13,17 +13,63 @@
 //! process that could be Claude Code". A stale file whose number now belongs
 //! to a browser would otherwise block switching until the file was deleted by
 //! hand.
+//!
+//! Not every live session is in that danger. Claude Desktop logs in on its
+//! own and hands each session it spawns its own access token -- through a
+//! file descriptor on Linux and macOS, through `CLAUDE_CODE_OAUTH_TOKEN` on
+//! Windows -- which Claude Code prefers over the credential file, and when
+//! that token expires the session asks the Desktop for another rather than
+//! refreshing from the file. Such a session never reads or writes the store,
+//! and its account is whatever the Desktop is logged in as, whatever the file
+//! says. Refusing to switch because of one only trains people to pass
+//! `--force`, which defeats the check for the sessions it exists for. The
+//! session file records which kind a process is, in `entrypoint`.
 
 use std::path::Path;
+
+use serde::Deserialize;
 
 /// Session files live here, relative to the config directory.
 const SESSIONS_DIR: &str = "sessions";
 
-/// PIDs of Claude Code processes that look alive for this config directory.
-pub fn running_claude_pids(claude_config_dir: &Path) -> Vec<u32> {
+/// The `entrypoint` Claude Code records when Claude Desktop started it.
+///
+/// Read out of `sessions/<pid>.json` written by Claude Code 2.1.266 under
+/// Claude Desktop 1.52386.3. The other values seen in the binary -- `cli`,
+/// `claude-vscode`, `sdk-cli` and so on -- log in through the store.
+const DESKTOP_ENTRYPOINT: &str = "claude-desktop";
+
+/// The sessions that look alive, split by what a switch means to them.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RunningSessions {
+    /// Logged in through the credential store: a terminal, the VS Code
+    /// extension, an SDK. Each holds the live account in memory and writes
+    /// its next refreshed token back into the file, so a switch under one
+    /// corrupts the new profile.
+    pub store: Vec<u32>,
+    /// Started by Claude Desktop, on the Desktop's own login. A switch
+    /// neither reaches nor endangers them.
+    pub desktop: Vec<u32>,
+}
+
+impl RunningSessions {
+    pub fn is_empty(&self) -> bool {
+        self.store.is_empty() && self.desktop.is_empty()
+    }
+}
+
+/// The part of a session file this module reads.
+#[derive(Deserialize)]
+struct SessionFile {
+    #[serde(default)]
+    entrypoint: Option<String>,
+}
+
+/// Claude Code processes that look alive for this config directory.
+pub fn running_sessions(claude_config_dir: &Path) -> RunningSessions {
     let dir = claude_config_dir.join(SESSIONS_DIR);
     let Ok(entries) = std::fs::read_dir(&dir) else {
-        return Vec::new();
+        return RunningSessions::default();
     };
 
     let candidates: Vec<u32> = entries
@@ -37,21 +83,52 @@ pub fn running_claude_pids(claude_config_dir: &Path) -> Vec<u32> {
         .collect();
 
     if candidates.is_empty() {
-        return Vec::new();
+        return RunningSessions::default();
     }
     let alive = live_pids(&candidates);
-    let mut out: Vec<u32> = candidates
-        .into_iter()
-        .filter(|p| match alive(*p) {
+    let mut out = RunningSessions::default();
+    for pid in candidates {
+        let running = match alive(pid) {
             Liveness::Gone => false,
             // One candidate per line: any of them may identify it.
             Liveness::Running(Some(names)) => names.lines().any(could_be_claude),
             // Alive, but the name could not be read: assume the worst.
             Liveness::Running(None) => true,
-        })
-        .collect();
-    out.sort_unstable();
+        };
+        if !running {
+            continue;
+        }
+        if is_desktop_session(&dir.join(format!("{pid}.json"))) {
+            out.desktop.push(pid);
+        } else {
+            out.store.push(pid);
+        }
+    }
+    out.store.sort_unstable();
+    out.desktop.sort_unstable();
     out
+}
+
+/// Is there a process with this PID at all, whatever it is?
+///
+/// For lock files that name their holder by PID: a lock whose holder is gone
+/// is stale, and a PID that was reused is still "alive" here, which is the
+/// answer that refuses rather than risks.
+pub fn is_alive(pid: u32) -> bool {
+    live_pids(&[pid])(pid) != Liveness::Gone
+}
+
+/// Did Claude Desktop start the session this file describes?
+///
+/// Anything short of a clear yes is a no: a file that cannot be read or
+/// parsed, or one without the field, describes a session that is treated as
+/// store-backed -- the answer that blocks a switch rather than risks one.
+fn is_desktop_session(session_file: &Path) -> bool {
+    std::fs::read(session_file)
+        .ok()
+        .and_then(|raw| serde_json::from_slice::<SessionFile>(&raw).ok())
+        .and_then(|s| s.entrypoint)
+        .is_some_and(|e| e == DESKTOP_ENTRYPOINT)
 }
 
 /// What is known about one PID.
@@ -226,7 +303,7 @@ mod tests {
     #[test]
     fn no_sessions_directory_means_nothing_running() {
         let dir = tempdir().unwrap();
-        assert!(running_claude_pids(dir.path()).is_empty());
+        assert!(running_sessions(dir.path()).is_empty());
     }
 
     /// The test binary is alive but is not Claude Code: the shape of a stale
@@ -235,7 +312,7 @@ mod tests {
     fn a_reused_pid_held_by_another_program_is_ignored() {
         let dir = tempdir().unwrap();
         session(dir.path(), std::process::id());
-        assert!(running_claude_pids(dir.path()).is_empty());
+        assert!(running_sessions(dir.path()).is_empty());
     }
 
     #[test]
@@ -295,7 +372,36 @@ mod tests {
         // would block switching forever.
         let dir = tempdir().unwrap();
         session(dir.path(), 4_294_967_294); // no such process
-        assert!(running_claude_pids(dir.path()).is_empty());
+        assert!(running_sessions(dir.path()).is_empty());
+    }
+
+    /// Only the Desktop's own entrypoint clears a session. Every other
+    /// answer -- another entrypoint, none, a file that is not JSON, no file
+    /// -- is "store-backed", because that is the reading that refuses a
+    /// switch instead of risking one.
+    #[test]
+    fn only_a_desktop_entrypoint_marks_a_session_as_the_desktops() {
+        let dir = tempdir().unwrap();
+        let file = |name: &str, body: &[u8]| {
+            let p = dir.path().join(name);
+            std::fs::write(&p, body).unwrap();
+            p
+        };
+        assert!(is_desktop_session(&file(
+            "desktop.json",
+            br#"{"pid":1,"entrypoint":"claude-desktop","kind":"interactive"}"#
+        )));
+        for (name, body) in [
+            ("cli.json", &br#"{"pid":1,"entrypoint":"cli"}"#[..]),
+            ("vscode.json", br#"{"entrypoint":"claude-vscode"}"#),
+            ("prefix.json", br#"{"entrypoint":"claude-desktop-3p"}"#),
+            ("bare.json", b"{}"),
+            ("broken.json", b"{\"entrypoint\":"),
+            ("empty.json", b""),
+        ] {
+            assert!(!is_desktop_session(&file(name, body)), "{name}");
+        }
+        assert!(!is_desktop_session(&dir.path().join("missing.json")));
     }
 
     #[test]
@@ -305,6 +411,6 @@ mod tests {
         std::fs::create_dir_all(&s).unwrap();
         std::fs::write(s.join("notes.txt"), b"x").unwrap();
         std::fs::write(s.join("abc.json"), b"{}").unwrap();
-        assert!(running_claude_pids(dir.path()).is_empty());
+        assert!(running_sessions(dir.path()).is_empty());
     }
 }

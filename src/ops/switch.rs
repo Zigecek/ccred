@@ -5,6 +5,10 @@
 //! Claude Code refetches: a window where the credentials say B but the
 //! identity still says A is cosmetic and self-heals. The reverse -- showing
 //! account B while acting as account A -- would be actively misleading.
+//!
+//! Claude Desktop is not looked at here. It logs in separately, its login
+//! is switched by name (`work-desktop`, see `ops::desktop`), and a running
+//! Desktop is no reason to refuse Claude Code its switch.
 
 use std::time::Duration;
 
@@ -14,7 +18,7 @@ use super::Ctx;
 use crate::error::CcredError;
 use crate::journal::{Recovery, SwitchJournal, SwitchPhase};
 use crate::model::ClaudeJsonDoc;
-use crate::proc::running_claude_pids;
+use crate::proc::running_sessions;
 use crate::store::{CredentialStore, now_ms};
 use crate::validate::{ProfileName, validate_credentials, validate_profile_name};
 
@@ -47,7 +51,13 @@ pub struct SwitchReport {
     /// Set when an interrupted earlier switch was healed first.
     pub recovered: Option<String>,
     pub warnings: Vec<String>,
+    /// Store-backed sessions that were live: only ever non-empty under
+    /// `--force`, and each of them still holds the account switched away
+    /// from.
     pub claude_running: Vec<u32>,
+    /// Claude Desktop sessions that were live. They stay on the Desktop's
+    /// own account; the switch does not reach them.
+    pub desktop_sessions: Vec<u32>,
 }
 
 pub fn switch(ctx: &Ctx, target: &ProfileName, force: bool) -> crate::Result<SwitchReport> {
@@ -83,11 +93,16 @@ pub fn switch(ctx: &Ctx, target: &ProfileName, force: bool) -> crate::Result<Swi
         )));
     }
 
-    let claude_running = running_claude_pids(ctx.paths().claude_config_dir());
-    if !claude_running.is_empty() && !force {
+    // Only the store-backed sessions matter here. A Claude Desktop session
+    // runs on the Desktop's own token and never writes the file, so it is
+    // reported but does not refuse; see `proc` for why that distinction is
+    // worth making.
+    let sessions = running_sessions(ctx.paths().claude_config_dir());
+    if !sessions.store.is_empty() && !force {
         return Err(CcredError::UnsafeWrite(format!(
-            "Claude Code is running (pid {claude_running:?}); it would write the old \
-             account's refreshed token into the new profile's file. Quit it, or pass --force"
+            "Claude Code is running (pid {:?}); it would write the old account's \
+             refreshed token into the new profile's file. Quit it, or pass --force",
+            sessions.store
         )));
     }
 
@@ -162,7 +177,8 @@ pub fn switch(ctx: &Ctx, target: &ProfileName, force: bool) -> crate::Result<Swi
         identity_restored,
         recovered,
         warnings,
-        claude_running,
+        claude_running: sessions.store,
+        desktop_sessions: sessions.desktop,
     })
 }
 

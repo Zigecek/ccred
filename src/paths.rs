@@ -17,6 +17,7 @@ pub struct Paths {
     ccred_home: PathBuf,
     claude_config_dir: PathBuf,
     claude_config_file: PathBuf,
+    desktop_dir: PathBuf,
     overrides: Locations,
 }
 
@@ -77,11 +78,26 @@ impl Paths {
                 .claude_config_dir
                 .or_else(|| env_path("CLAUDE_CONFIG_DIR")),
         };
-        Ok(Self::with_overrides(
+        let mut paths = Self::with_overrides(
             home,
             chosen.ccred_home.map(absolute),
             chosen.claude_config_dir.map(absolute),
-        ))
+        );
+        // The Desktop's directory follows the platform's config-dir variable
+        // when one is set, and those are read here, once, for the reason
+        // `log_dir` gives: a `Paths` built for a sandbox must not quietly
+        // point at the real user's directory through the process environment.
+        let base = if cfg!(target_os = "windows") {
+            env_path("APPDATA")
+        } else if cfg!(target_os = "macos") {
+            None
+        } else {
+            env_path("XDG_CONFIG_HOME")
+        };
+        if let Some(base) = base {
+            paths.desktop_dir = absolute(base).join(DESKTOP_DIR_NAME);
+        }
+        Ok(paths)
     }
 
     /// Constructor for tests and for explicit directory choices.
@@ -109,11 +125,14 @@ impl Paths {
             None => (home.join(".claude"), home.join(".claude.json")),
         };
 
+        let desktop_dir = default_desktop_dir(&home);
+
         Paths {
             home,
             ccred_home,
             claude_config_dir,
             claude_config_file,
+            desktop_dir,
             overrides,
         }
     }
@@ -207,6 +226,42 @@ impl Paths {
     pub fn log_dir(&self) -> PathBuf {
         self.ccred_home.join("logs")
     }
+
+    /// Claude Desktop's own data directory -- Electron's `userData`, where
+    /// the app keeps its login, its cookies and its index of Code sessions.
+    ///
+    /// `~/.config/Claude` on Linux, `~/Library/Application Support/Claude`
+    /// on macOS, `%APPDATA%\Claude` on Windows. Nothing inside is ours to
+    /// read beyond one plaintext key; see `desktop`.
+    pub fn desktop_dir(&self) -> &Path {
+        &self.desktop_dir
+    }
+
+    /// Where the Desktop directories of profiles that are not active wait.
+    pub fn desktop_store_dir(&self) -> PathBuf {
+        self.ccred_home.join("desktop")
+    }
+
+    /// One profile's parked Desktop directory.
+    pub fn desktop_profile_dir(&self, name: &ProfileName) -> crate::Result<PathBuf> {
+        confine(&self.desktop_store_dir(), name)
+    }
+}
+
+/// The last path component of the Desktop's data directory on every platform.
+const DESKTOP_DIR_NAME: &str = "Claude";
+
+/// The Desktop's directory when no environment variable relocates it.
+fn default_desktop_dir(home: &Path) -> PathBuf {
+    if cfg!(target_os = "windows") {
+        home.join("AppData").join("Roaming").join(DESKTOP_DIR_NAME)
+    } else if cfg!(target_os = "macos") {
+        home.join("Library")
+            .join("Application Support")
+            .join(DESKTOP_DIR_NAME)
+    } else {
+        home.join(".config").join(DESKTOP_DIR_NAME)
+    }
 }
 
 /// `.credentials.json` inside a given config directory.
@@ -273,6 +328,24 @@ mod tests {
         assert_eq!(
             p.live_credentials(),
             Path::new("/tmp/alt/.credentials.json")
+        );
+    }
+
+    #[test]
+    fn the_desktop_directory_is_the_platforms_and_its_parking_is_ours() {
+        let p = paths();
+        let expected = if cfg!(target_os = "windows") {
+            "/home/user/AppData/Roaming/Claude"
+        } else if cfg!(target_os = "macos") {
+            "/home/user/Library/Application Support/Claude"
+        } else {
+            "/home/user/.config/Claude"
+        };
+        assert_eq!(p.desktop_dir(), Path::new(expected));
+        let name = validate_profile_name("work").unwrap();
+        assert_eq!(
+            p.desktop_profile_dir(&name).unwrap(),
+            Path::new("/home/user/.ccred/desktop/work")
         );
     }
 

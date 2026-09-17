@@ -6,7 +6,7 @@ use super::{Ctx, days_until};
 use crate::journal::SwitchJournal;
 use crate::lockfile::lock_path_for;
 use crate::paths::storage_write_lock_target;
-use crate::proc::running_claude_pids;
+use crate::proc::running_sessions;
 use crate::schedule::{Health, State, Warning, detect};
 use crate::store::now_ms;
 use crate::validate::ProfileName;
@@ -113,16 +113,90 @@ pub fn doctor(ctx: &Ctx) -> crate::Result<Vec<Finding>> {
     }
 
     // --- running sessions -------------------------------------------------
-    let pids = running_claude_pids(ctx.paths().claude_config_dir());
-    if !pids.is_empty() {
+    let sessions = running_sessions(ctx.paths().claude_config_dir());
+    let count = |n: usize| match n {
+        1 => "1 session".to_string(),
+        n => format!("{n} sessions"),
+    };
+    if !sessions.store.is_empty() {
         findings.push(Finding::warn(
             "Claude Code is running",
             format!(
                 "{} live; switching now needs --force and is not advised",
-                match pids.len() {
-                    1 => "1 session".to_string(),
-                    n => format!("{n} sessions"),
-                }
+                count(sessions.store.len())
+            ),
+        ));
+    }
+    // Not a warning: nothing is wrong, and nothing here can change it. But
+    // someone who switched and sees the Desktop still on the old account
+    // needs to be told that this is the design, not a failed switch.
+    if !sessions.desktop.is_empty() {
+        findings.push(Finding::ok(format!(
+            "Claude Desktop is running ({}); its sessions use the Desktop's own login, \
+             which only `ccred switch <name>-desktop` moves",
+            count(sessions.desktop.len())
+        )));
+    }
+
+    // --- the Desktop's own login -------------------------------------------
+    // The pointer is read again further down, where an unreadable one is a
+    // finding of its own; here it only breaks a tie between two names for
+    // one account.
+    let pointer = ctx.repo().active().unwrap_or(None);
+    if let Some(d) = super::desktop::status(ctx, pointer.as_ref()) {
+        match (&d.profile, d.installed, d.logged_in) {
+            (Some(p), _, _) => {
+                findings.push(Finding::ok(format!("Claude Desktop is logged in as '{p}'")));
+            }
+            (None, true, true) => findings.push(Finding::ok(
+                "Claude Desktop is logged in as an account that is not a saved profile; \
+                 `ccred save <name>` records it as <name>-desktop",
+            )),
+            (None, true, false) => {
+                findings.push(Finding::ok("Claude Desktop is installed and not logged in"));
+            }
+            (None, false, _) => findings.push(Finding::warn(
+                "Claude Desktop has no live login directory",
+                "a parked one exists; `ccred switch <name>-desktop` puts it back",
+            )),
+        }
+        if !d.parked.is_empty() {
+            findings.push(Finding::ok(format!(
+                "parked Desktop logins: {}",
+                d.parked.join(", ")
+            )));
+        }
+    }
+    let inspection = crate::desktop::inspect(ctx.paths().desktop_dir());
+    if !inspection.other_accounts.is_empty() {
+        findings.push(Finding::warn(
+            "the Desktop's directory holds Code-session lists of other accounts",
+            format!(
+                "{}: the Desktop was signed out and in inside the app, which leaves them \
+                 behind. `ccred switch <name>-desktop` gathers them for their profile and \
+                 puts them back once it is logged in; switching with ccred instead of \
+                 signing out in the app avoids it altogether",
+                inspection.other_accounts.join(", ")
+            ),
+        ));
+    }
+    let stray = crate::desktop::unclaimed(ctx.paths());
+    if !stray.is_empty() {
+        findings.push(Finding::warn(
+            format!(
+                "{} parked Desktop login{} belong{} to no profile",
+                stray.len(),
+                if stray.len() == 1 { "" } else { "s" },
+                if stray.len() == 1 { "s" } else { "" }
+            ),
+            format!(
+                "a switch put aside a Desktop that was logged in as an account nobody had \
+                 saved; nothing switches back to it. Delete when sure: {}",
+                stray
+                    .iter()
+                    .map(|p| p.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
             ),
         ));
     }

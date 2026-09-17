@@ -12,6 +12,7 @@
 pub mod atomic;
 pub mod claude_cli;
 pub mod cli;
+pub mod desktop;
 pub mod error;
 pub mod journal;
 pub mod lockfile;
