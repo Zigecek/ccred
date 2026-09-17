@@ -1401,13 +1401,25 @@ pub fn sidebar_collect(paths: &Paths, data: &Path, uuid: &str) -> crate::Result<
     Ok(out)
 }
 
+/// What a spread did, and what it could not.
+#[derive(Debug, Clone, Default)]
+pub struct Spread {
+    pub done: Sidebar,
+    /// Why the groups stayed in the shared sidebar. A Desktop that has
+    /// never been started has no config to put them in, which is a state a
+    /// switch walks into on the way to a first login -- and nothing is lost
+    /// when it does, since the union is where the groups live. The next
+    /// switch to the profile puts them in.
+    pub groups_kept_back: Option<String>,
+}
+
 /// Bring account `uuid`'s sidebar in `data` up to the union: missing entries
 /// written, stale ones brought up to date, deleted ones removed, the
 /// archived list and the groups filled in. Every file the Desktop wrote
 /// for the account keeps its account-bound fields.
-pub fn sidebar_spread(paths: &Paths, data: &Path, uuid: &str) -> crate::Result<Sidebar> {
+pub fn sidebar_spread(paths: &Paths, data: &Path, uuid: &str) -> crate::Result<Spread> {
     if uuid.is_empty() {
-        return Ok(Sidebar::default());
+        return Ok(Spread::default());
     }
     let store = SidebarStore::new(paths);
     let state = store.state();
@@ -1485,10 +1497,21 @@ pub fn sidebar_spread(paths: &Paths, data: &Path, uuid: &str) -> crate::Result<S
             scopes.insert(format!("{uuid}/{org}"), state.groups.clone());
         }
     }
+    // Not a `?`: the chats are in by now, and a config that cannot be
+    // written is the ordinary state of a Desktop that has not been started
+    // yet. Raising would throw away the count of what did go in and call a
+    // spread that worked a failure.
+    let mut groups_kept_back = None;
     if !scopes.is_empty() {
-        out.groups = fill_in_scopes(&data.join(DESKTOP_CONFIG), scopes)?;
+        match fill_in_scopes(&data.join(DESKTOP_CONFIG), scopes) {
+            Ok(added) => out.groups = added,
+            Err(e) => groups_kept_back = Some(e.to_string()),
+        }
     }
-    Ok(out)
+    Ok(Spread {
+        done: out,
+        groups_kept_back,
+    })
 }
 
 fn write_entry_file(

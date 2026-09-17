@@ -2,6 +2,15 @@
 
 ## 0.3.5
 
+- **Sidebar groups that have nowhere to go no longer hide the chats that
+  went.** They are written into Claude Desktop's own config, and a
+  Desktop that has never been started has not written one -- which is
+  exactly the state a switch walks into on the way to a first login. The
+  whole pass was reported as having failed, so the chats that did go in
+  were not counted anywhere. The groups wait in the shared sidebar, which
+  is where they live, and the next switch to that profile puts them in.
+- **A warning says what happened on one line and what to do under it.**
+  Both halves ran together into a single line wider than the terminal.
 - **A refused switch no longer deletes a parked Desktop login.** The
   target's metadata is written before the plan is made, so the plan can
   see the Desktop is already on that account, and taken back when the

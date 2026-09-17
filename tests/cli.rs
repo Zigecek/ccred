@@ -4116,3 +4116,82 @@ fn a_refused_switch_takes_back_its_metadata_and_nothing_else() {
         "and the metadata the refused switch wrote is gone again"
     );
 }
+
+/// The sidebar groups go into the Desktop's own config, and a Desktop that
+/// has never been started does not have one -- which is exactly the state a
+/// switch on the way to a first login walks into. The chats still go in,
+/// the count still says how many, and the groups wait in the shared sidebar
+/// instead of taking the report down with them.
+#[test]
+fn groups_with_nowhere_to_go_do_not_hide_the_chats_that_went() {
+    let sb = Sandbox::new();
+    sb.desktop_login("uuid-a", "A");
+    let alice = sb
+        .desktop_dir()
+        .join("claude-code-sessions")
+        .join("uuid-a")
+        .join("org-a");
+    std::fs::create_dir_all(&alice).unwrap();
+    for (id, at) in [("local_1", 10), ("local_2", 20)] {
+        std::fs::write(
+            alice.join(format!("{id}.json")),
+            format!(r#"{{"sessionId":"{id}","title":"a chat","lastActivityAt":{at}}}"#),
+        )
+        .unwrap();
+    }
+    std::fs::write(
+        sb.desktop_dir().join("claude_desktop_config.json"),
+        br#"{"preferences":{"epitaxyPrefs":{"dframe-group-scopes":{"uuid-a/org-a":{"groups":[{"id":"g1","name":"Client work"}],"assignments":{}}}}}}"#,
+    )
+    .unwrap();
+    sb.run(&["save", "work"]);
+    sb.login_b();
+    sb.run(&["save", "personal", "--only-code"]);
+    // Alice's directory is parked, config and all. Bob logs in to a Desktop
+    // that has never been configured.
+    let (out, err, code) = sb.run(&["switch", "personal-desktop"]);
+    assert_eq!(code, 0, "{err}{out}");
+    sb.desktop_login("uuid-b", "B");
+    std::fs::create_dir_all(
+        sb.desktop_dir()
+            .join("claude-code-sessions")
+            .join("uuid-b")
+            .join("org-b"),
+    )
+    .unwrap();
+    sb.run(&["save", "personal"]);
+    sb.run(&["switch", "work-desktop"]);
+
+    let (out, err, code) = sb.run(&["switch", "personal-desktop"]);
+    assert_eq!(code, 0, "{err}{out}");
+    assert!(
+        out.contains("2 sessions"),
+        "the chats went in, and the report says so: {out}"
+    );
+    assert!(
+        out.lines().any(|l| l
+            .trim_start()
+            .starts_with("they stay in the shared sidebar")),
+        "the remedy hangs under the warning rather than running off the line: {out}"
+    );
+    assert!(
+        sb.desktop_dir()
+            .join("claude-code-sessions")
+            .join("uuid-b")
+            .join("org-b")
+            .join("local_1.json")
+            .is_file(),
+        "{out}"
+    );
+    // And once there is a config, the groups follow.
+    std::fs::write(
+        sb.desktop_dir().join("claude_desktop_config.json"),
+        br#"{"preferences":{}}"#,
+    )
+    .unwrap();
+    sb.run(&["switch", "work-desktop"]);
+    let (out, err, code) = sb.run(&["switch", "personal-desktop"]);
+    assert_eq!(code, 0, "{err}{out}");
+    let cfg = std::fs::read_to_string(sb.desktop_dir().join("claude_desktop_config.json")).unwrap();
+    assert!(cfg.contains("Client work"), "{cfg}");
+}

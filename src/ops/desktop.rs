@@ -245,7 +245,16 @@ pub fn switch(ctx: &Ctx, target: &ProfileName) -> crate::Result<DesktopReport> {
             );
         } else {
             match desktop::sidebar_spread(ctx.paths(), live, &uuid) {
-                Ok(done) => sidebar = done,
+                Ok(done) => {
+                    sidebar = done.done;
+                    if let Some(why) = done.groups_kept_back {
+                        warnings.push(format!(
+                            "the sidebar groups were not written into this account's config \
+                             ({why}); they stay in the shared sidebar, and the next switch to \
+                             this profile puts them in"
+                        ));
+                    }
+                }
                 Err(e) => warnings.push(format!(
                     "the shared sidebar was not written into this account's list ({e}); \
                      switching to it again does it"

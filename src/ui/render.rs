@@ -42,6 +42,25 @@ fn callout(style: anstyle::Style, glyph: &str, head: &str, body: &[&str]) {
     }
 }
 
+/// A warning as a callout: what happened on the first line, what to do
+/// about it hung underneath.
+///
+/// Every warning this program writes has the shape "what happened; what to
+/// do about it", and printed as one run they came out as a single line
+/// wider than the terminal -- the same shape the sidebar counts had before
+/// they became a `Fields` block. Short ones stay on one line: hanging two
+/// words under a half-empty line reads as an afterthought rather than a
+/// remedy.
+fn warning(theme: &Theme, text: &str) {
+    const ONE_LINE: usize = 72;
+    match text.split_once("; ") {
+        Some((head, tail)) if text.chars().count() > ONE_LINE => {
+            callout(WARN, theme.glyphs.warn, head, &[tail]);
+        }
+        _ => callout(WARN, theme.glyphs.warn, text, &[]),
+    }
+}
+
 /// A pid list that stays one line. Six live sessions is normal, and printing
 /// all six teaches the reader nothing the count does not.
 fn pids(list: &[u32]) -> String {
@@ -627,7 +646,7 @@ pub fn save(theme: &Theme, r: &SaveReport) {
     }
     println!("{}", t.render(theme, PAD));
     for w in &r.warnings {
-        callout(WARN, g.warn, w, &[]);
+        warning(theme, w);
     }
     let Some(code) = &r.code else {
         println!();
@@ -968,8 +987,11 @@ pub fn desktop_switch(theme: &Theme, r: &crate::ops::desktop::DesktopReport) {
         }
         println!("{}", f.render(PAD));
     }
+    if !r.warnings.is_empty() {
+        println!();
+    }
     for w in &r.warnings {
-        callout(WARN, g.warn, w, &[]);
+        warning(theme, w);
     }
     println!();
 }
