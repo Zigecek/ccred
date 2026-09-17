@@ -1837,6 +1837,39 @@ fn a_dry_run_refresh_decides_and_touches_nothing() {
     assert!(out.contains("dry run"), "still a preview: {out}");
 }
 
+/// A firing that found nothing to do left no trace at all, so `ccred log`
+/// could not tell it from a timer that never fired -- the one question the
+/// log exists to answer, on a platform where Task Scheduler discards
+/// everything a job prints.
+#[test]
+fn a_run_that_did_nothing_is_still_in_the_log() {
+    let (sb, _creds) = sandbox_with_a_due_profile();
+    let probe = Probe::new();
+
+    probe.refresh(&sb, "", &[]); // a real run, which records itself
+    probe.refresh(&sb, "", &["--if-older-than", "48"]); // the job, rate-limited
+
+    let (out, _, code) = sb.run(&["log", "--json"]);
+    assert_eq!(code, 0, "{out}");
+    let entries: Vec<serde_json::Value> = serde_json::from_str(&out).expect("valid JSON");
+    assert_eq!(entries.len(), 2, "the skip is a line too: {entries:#?}");
+    let skip = entries.last().unwrap();
+    assert!(
+        skip["status"].as_str().unwrap().starts_with("skipped"),
+        "{skip}"
+    );
+    assert_eq!(skip["scheduled"], serde_json::json!(true));
+
+    // But it is not recorded as the last run: the rate limit measures from
+    // the last run that did something, and a skip that moved it forward
+    // would suppress the real ones for as long as the timer kept firing.
+    let record: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(sb.path().join(".ccred/state/last-run.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(record["status"], serde_json::json!("ran"), "{record}");
+}
+
 /// "The timer has not fired since Tuesday and you have been refreshing by
 /// hand" is a thing the log could not say: every run looked alike. Only the
 /// registered job passes `--if-older-than`, so that is what tells them apart.

@@ -470,7 +470,7 @@ pub fn refresh(ctx: &Ctx, opts: &RefreshOptions) -> crate::Result<RefreshReport>
     let now = now_ms();
 
     if rate_limited(ctx, opts, now) {
-        return Ok(RefreshReport::skipped("last run was recent"));
+        return Ok(skipped_and_logged(ctx, opts, now, "last run was recent"));
     }
 
     // Settle a switch that died part-way before deciding which profile is
@@ -492,7 +492,12 @@ pub fn refresh(ctx: &Ctx, opts: &RefreshOptions) -> crate::Result<RefreshReport>
                 let _ = super::switch::recover_locked(ctx, &mut Vec::new());
             }
             (Err(CcredError::Busy(_)), _) | (_, Err(CcredError::Busy(_))) => {
-                return Ok(RefreshReport::skipped("a switch is in progress"));
+                return Ok(skipped_and_logged(
+                    ctx,
+                    opts,
+                    now,
+                    "a switch is in progress",
+                ));
             }
             (Err(e), _) | (_, Err(e)) => return Err(e),
         }
@@ -1049,6 +1054,25 @@ fn refresh_one(
         m.refresh.next_attempt_after_ms = Some(next);
     })?;
     Ok((Decision::SkipBackoff, Some(last_note)))
+}
+
+/// A run that decided to do nothing, written down anyway.
+///
+/// Without this, a firing that found nothing to do left no trace at all, and
+/// `ccred log` could not tell it from a timer that never fired -- which is
+/// the one question the log exists to answer, on a platform where Task
+/// Scheduler discards everything a job prints.
+///
+/// Deliberately does NOT record it as the last run: the rate limit measures
+/// from the last run that did something, and moving that forward on every
+/// skip would suppress the real ones for as long as the timer kept firing.
+fn skipped_and_logged(ctx: &Ctx, opts: &RefreshOptions, now: i64, reason: &str) -> RefreshReport {
+    let report = RefreshReport::skipped(reason);
+    let _ = crate::logbook::append(
+        &ctx.paths().log_dir(),
+        &log_entry(now, &report, opts.if_older_than_ms.is_some()),
+    );
+    report
 }
 
 /// Turn a report into a log line.
