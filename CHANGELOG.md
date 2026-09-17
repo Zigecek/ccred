@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.3.2
+
+Walking the documented Desktop flow end to end, and reading the new README
+paragraph against the code.
+
+- **The uninstall plan says a parked Desktop login would go.** The
+  confirmation counted them and `--json` reported them, while the plan a
+  person reads before answering listed profiles, backups and the receipt and
+  said nothing about the Desktop -- the one thing in there no copy can
+  replace, since its token is encrypted and nothing was ever kept aside.
+- **Signing out inside the app does not delete anything**, which is what the
+  README had started saying. It throws the login away -- the token is gone
+  and only a fresh login brings the account back -- and leaves that account's
+  chat list in the directory, where the next account inherits it. The chats
+  stop appearing, which looks exactly like deletion; `switch` carries them
+  out and hands them back, and that is the whole reason it does.
+- The two listings are spaced and summed alike, rather than a table followed
+  by an afterthought, and the README shows the two-table form.
+
 ## 0.3.1
 
 Three things the Desktop support was still missing, found by fuzzing the new
