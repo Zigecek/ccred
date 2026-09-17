@@ -541,7 +541,10 @@ fn apply_move(
     let live = paths.desktop_dir();
     if let Some(name) = park_as {
         let dest = parking_place(paths, name);
-        let parent = dest.parent().expect("a parking place has a parent");
+        // A parking place is built by joining, so it has a parent -- but this
+        // runs while the live login is about to be moved, and a panic there
+        // would leave someone with no message and a directory in mid-air.
+        let parent = dest.parent().unwrap_or(&dest);
         std::fs::create_dir_all(parent).map_err(|source| CcredError::Io {
             path: parent.to_path_buf(),
             source,
@@ -1218,8 +1221,13 @@ pub fn sidebar_spread(paths: &Paths, data: &Path, uuid: &str) -> crate::Result<S
             }
         }
         if grew {
+            // Strings in, JSON out: this cannot fail, and saying so in a
+            // panic would still end an unattended run with nothing to read.
             let bytes = serde_json::to_vec(&serde_json::json!({"v": 1, "archived": archived}))
-                .expect("a list of strings serializes");
+                .map_err(|source| CcredError::Json {
+                    path: dir.join(ARCHIVED_IDX),
+                    source,
+                })?;
             write_atomic(&dir.join(ARCHIVED_IDX), &bytes, true)?;
         }
         if !state.groups.groups.is_empty() {

@@ -6,6 +6,7 @@
 //! can read in one screen beat a transitive dependency.
 
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use crate::error::CcredError;
 use crate::validate::ProfileName;
@@ -126,6 +127,14 @@ impl Paths {
         };
         if let Some(base) = base {
             paths.desktop_dir = absolute(base).join(DESKTOP_DIR_NAME);
+        }
+        if cfg!(target_os = "windows") {
+            paths.desktop_dir =
+                windows_desktop_dir(&paths.desktop_dir, packaged_desktop_dirs(), |dir| {
+                    std::fs::metadata(dir.join(DESKTOP_CONFIG_FILE))
+                        .and_then(|m| m.modified())
+                        .ok()
+                });
         }
         Ok(paths)
     }
@@ -281,6 +290,80 @@ impl Paths {
 /// The last path component of the Desktop's data directory on every platform.
 const DESKTOP_DIR_NAME: &str = "Claude";
 
+/// The file every Claude Desktop data directory has, and the one this tool
+/// reads an account out of. Its presence is what tells a real directory from
+/// a path that merely could be one.
+const DESKTOP_CONFIG_FILE: &str = "config.json";
+
+/// Which of the two places a Windows Claude Desktop keeps its data.
+///
+/// There are two installs, and they are not a Store/not-Store distinction.
+/// The classic installer writes to `%APPDATA%\Claude`. The MSIX package --
+/// which arrives from the Store *or* from a downloaded installer, and reports
+/// `SignatureKind: Developer` in the second case -- runs with filesystem
+/// redirection: it writes what it thinks is `%APPDATA%\Claude`, and Windows
+/// puts it under `%LOCALAPPDATA%\Packages\Claude_<publisher>\LocalCache/// Roaming\Claude`. A process outside the package, which is what ccred is,
+/// sees only the redirected path.
+///
+/// Measured on a machine running Claude 2.110.1.0 installed by hand: the
+/// classic directory did not exist at all, and the packaged one held the
+/// `config.json`, the `lockfile` and everything else. Looking only where the
+/// contributor's Linux machine suggested would have reported "no Claude
+/// Desktop here" on a machine that plainly has one.
+///
+/// So: whichever holds a `config.json`, and the most recently written one
+/// when both do -- a machine that has been through both installs keeps the
+/// older directory, and the app is whichever wrote last. With neither, the
+/// classic path stands, so a message names the conventional place.
+fn windows_desktop_dir(
+    classic: &Path,
+    packaged: Vec<PathBuf>,
+    changed_at: impl Fn(&Path) -> Option<SystemTime>,
+) -> PathBuf {
+    let mut candidates: Vec<(SystemTime, PathBuf)> = Vec::new();
+    for dir in std::iter::once(classic.to_path_buf()).chain(packaged) {
+        if let Some(at) = changed_at(&dir) {
+            candidates.push((at, dir));
+        }
+    }
+    candidates.sort_by(|a, b| a.0.cmp(&b.0));
+    candidates
+        .pop()
+        .map(|(_, dir)| dir)
+        .unwrap_or_else(|| classic.to_path_buf())
+}
+
+/// Every packaged Claude the local account has installed.
+///
+/// The directory under `Packages` is a package family name: the app's name,
+/// an underscore, and a hash of the publisher. The hash is stable for
+/// Anthropic but is not something to hard-code, so the family is matched by
+/// its `Claude_` prefix.
+fn packaged_desktop_dirs() -> Vec<PathBuf> {
+    let Some(local) = env_path("LOCALAPPDATA") else {
+        return Vec::new();
+    };
+    let Ok(entries) = std::fs::read_dir(absolute(local).join("Packages")) else {
+        return Vec::new();
+    };
+    let mut found: Vec<PathBuf> = entries
+        .flatten()
+        .filter(|e| {
+            e.file_name()
+                .to_string_lossy()
+                .starts_with(concat!("Claude", "_"))
+        })
+        .map(|e| {
+            e.path()
+                .join("LocalCache")
+                .join("Roaming")
+                .join(DESKTOP_DIR_NAME)
+        })
+        .collect();
+    found.sort();
+    found
+}
+
 /// The Desktop's directory when no environment variable relocates it.
 fn default_desktop_dir(home: &Path) -> PathBuf {
     if cfg!(target_os = "windows") {
@@ -390,6 +473,50 @@ mod tests {
         assert_eq!(
             p.live_credentials(),
             Path::new("/tmp/alt/.credentials.json")
+        );
+    }
+
+    /// Windows keeps a packaged Claude Desktop somewhere else entirely, and
+    /// a machine that has one usually has nothing at the classic path. Found
+    /// on a real install of 2.110.1.0: `%APPDATA%` held no Claude directory
+    /// at all, and everything was under
+    /// `%LOCALAPPDATA%\Packages\Claude_<publisher>\LocalCache\Roaming`.
+    /// Looking only at the classic path reported "no Claude Desktop here" on
+    /// a machine that plainly had one.
+    #[test]
+    fn a_packaged_desktop_is_found_where_windows_redirects_it() {
+        let classic = PathBuf::from("/appdata/Claude");
+        let packaged = PathBuf::from("/local/Packages/Claude_abc/LocalCache/Roaming/Claude");
+        let at = |secs: u64| SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(secs);
+        let only = |real: PathBuf, when: u64| move |dir: &Path| (dir == real).then(|| at(when));
+
+        // The case that was broken: nothing classic, everything packaged.
+        assert_eq!(
+            windows_desktop_dir(&classic, vec![packaged.clone()], only(packaged.clone(), 10)),
+            packaged
+        );
+
+        // A classic install on its own still wins.
+        assert_eq!(
+            windows_desktop_dir(&classic, vec![packaged.clone()], only(classic.clone(), 10)),
+            classic
+        );
+
+        // Both real: the one written last, since a machine that has been
+        // through both installs keeps the older directory around.
+        let both_newer_packaged = windows_desktop_dir(&classic, vec![packaged.clone()], |dir| {
+            Some(if dir == classic { at(10) } else { at(20) })
+        });
+        assert_eq!(both_newer_packaged, packaged);
+        let both_newer_classic = windows_desktop_dir(&classic, vec![packaged.clone()], |dir| {
+            Some(if dir == classic { at(30) } else { at(20) })
+        });
+        assert_eq!(both_newer_classic, classic);
+
+        // Neither: the conventional path stands, so a message names it.
+        assert_eq!(
+            windows_desktop_dir(&classic, vec![packaged], |_| None),
+            classic
         );
     }
 
