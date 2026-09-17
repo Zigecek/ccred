@@ -48,17 +48,17 @@ scheduled refresh first, so no task is left pointing at a binary that is gone.
 Every release carries one for `amd64` and `arm64`:
 
 ```sh
-curl -fsSLO https://github.com/Zigecek/ccred/releases/download/v0.2.42/ccred_0.2.42_amd64.deb
-sudo apt install ./ccred_0.2.42_amd64.deb
+curl -fsSLO https://github.com/Zigecek/ccred/releases/download/v0.3.0/ccred_0.3.0_amd64.deb
+sudo apt install ./ccred_0.3.0_amd64.deb
 ```
 
 `apt install` runs as root, so it is worth checking what you are handing it.
 The package carries a checksum and a provenance attestation of its own:
 
 ```sh
-curl -fsSLO https://github.com/Zigecek/ccred/releases/download/v0.2.42/ccred_0.2.42_amd64.deb.sha256
-sha256sum -c ccred_0.2.42_amd64.deb.sha256
-gh attestation verify ccred_0.2.42_amd64.deb --repo Zigecek/ccred
+curl -fsSLO https://github.com/Zigecek/ccred/releases/download/v0.3.0/ccred_0.3.0_amd64.deb.sha256
+sha256sum -c ccred_0.3.0_amd64.deb.sha256
+gh attestation verify ccred_0.3.0_amd64.deb --repo Zigecek/ccred
 ```
 
 It carries no maintainer scripts on purpose: a `postinst` must not install the
@@ -74,12 +74,12 @@ are worth maintaining at all is in [docs/install.md](docs/install.md).
 
 ```sh
 # Linux and macOS
-curl --proto '=https' --tlsv1.2 -LsSf https://github.com/Zigecek/ccred/releases/download/v0.2.42/ccred-installer.sh | sh
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/Zigecek/ccred/releases/download/v0.3.0/ccred-installer.sh | sh
 ```
 
 ```powershell
 # Windows
-powershell -ExecutionPolicy Bypass -c "irm https://github.com/Zigecek/ccred/releases/download/v0.2.42/ccred-installer.ps1 | iex"
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/Zigecek/ccred/releases/download/v0.3.0/ccred-installer.ps1 | iex"
 ```
 
 `-ExecutionPolicy Bypass` is not bypassing a protection. Execution policy does
@@ -91,7 +91,7 @@ That, and why Defender intermittently flags this command line, is written up in
 To read every byte before running anything:
 
 ```powershell
-$v = "0.2.42"
+$v = "0.3.0"
 $z = "ccred-x86_64-pc-windows-msvc.zip"
 irm "https://github.com/Zigecek/ccred/releases/download/v$v/$z" -OutFile $z
 (Get-FileHash $z -Algorithm SHA256).Hash    # compare against the .sha256 on the release

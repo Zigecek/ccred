@@ -1,5 +1,51 @@
 # Changelog
 
+## 0.3.0
+
+**Claude Desktop.** The Desktop app logs in on its own, and a session it
+opens runs as whatever account *it* is logged in as, whatever
+`.credentials.json` says. Its token is encrypted with the operating system's
+keyring, so nothing here can read it, check it, or tell whose it is -- and
+every safety rule in this tool depends on doing exactly that before a write.
+What can be moved is the whole data directory: one complete logged-in state,
+all of it one account's. So a Desktop login is a profile of its own,
+`work-desktop`, switched separately, and `ccred save work` records both
+halves. The identity comes from the directory's own `lastKnownAccountUuid`,
+which is plain text; nothing else in there is read, and nothing is ever
+copied, because a token that cannot be checked is not one to duplicate.
+
+Contributed by Yagat0, who tested it on Linux. What the review and a Windows
+machine added:
+
+- **Windows keeps it in two different places**, and which one a machine has
+  does not depend on the Store: an MSIX package -- what a downloaded
+  installer produces as readily as the Store -- runs with filesystem
+  redirection, so what the app believes is `%APPDATA%\Claude` lands under
+  `%LOCALAPPDATA%\Packages\Claude_<publisher>\LocalCache\Roaming\Claude`,
+  and a process outside the package sees only that. Measured on a machine
+  running 2.110.1.0: the classic directory did not exist at all. Both are
+  checked now, and `doctor` names the one it settled on.
+- **A login whose owner cannot be read is not moved.** The identity file was
+  read with `.ok()`, so a file being rewritten, truncated by a crash or
+  refused by permissions all came back as "nobody's" -- and the plan then
+  parked the live directory under a name no command restores.
+- **`rm <name>-desktop` refuses to delete a parked login** unless `--purge`
+  says to. That directory is the login; its token is encrypted, so nothing
+  can be copied aside first and nothing can put it back.
+- **A profile saved as `foo-desktop` before the suffix meant anything** is
+  listed and renameable again. It had become invisible to every command and
+  was still deleted by `uninstall --purge`.
+- A half-finished move exits 7 rather than 0, and says where the live login
+  was parked. The Desktop save takes the profiles lock. The suffix is read
+  whatever its case.
+- The output was rebuilt against the rest of the program: callouts instead
+  of semicolon-joined lines up to 155 columns, a `Fields` block instead of
+  three counts joined by commas, a `Table` instead of hand-laid spacing, and
+  a heading over each of the two listings.
+
+Also: packaging no longer starts -- and fails -- on the release workflow's
+pull-request run, which is what the repository's first pull request found.
+
 ## 0.2.42
 
 - **`ccred restore <name>` puts a removed profile back.** `rm` prints where
