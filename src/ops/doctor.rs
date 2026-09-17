@@ -144,16 +144,25 @@ pub fn doctor(ctx: &Ctx) -> crate::Result<Vec<Finding>> {
     // one account.
     let pointer = ctx.repo().active().unwrap_or(None);
     if let Some(d) = super::desktop::status(ctx, pointer.as_ref()) {
+        // Named, because on Windows there are two places it could be --
+        // the classic `%APPDATA%\Claude` and the redirected one a
+        // packaged install gets -- and someone whose Desktop is not being
+        // seen has no other way to find out which ccred settled on.
+        let dir = ctx.paths().desktop_dir().display().to_string();
         match (&d.profile, d.installed, d.logged_in) {
             (Some(p), _, _) => {
                 findings.push(Finding::ok(format!("Claude Desktop is logged in as '{p}'")));
             }
-            (None, true, true) => findings.push(Finding::ok(
-                "Claude Desktop is logged in as an account that is not a saved profile; \
-                 `ccred save <name>` records it as <name>-desktop",
+            (None, true, true) => findings.push(Finding::warn(
+                format!(
+                    "Claude Desktop is logged in as an account that is not a saved profile ({dir})"
+                ),
+                "`ccred save <name>` records it as <name>-desktop",
             )),
             (None, true, false) => {
-                findings.push(Finding::ok("Claude Desktop is installed and not logged in"));
+                findings.push(Finding::ok(format!(
+                    "Claude Desktop is installed and not logged in ({dir})"
+                )));
             }
             (None, false, _) => findings.push(Finding::warn(
                 "Claude Desktop has no live login directory",

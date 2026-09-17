@@ -253,7 +253,17 @@ it, check it or tell whose it is -- and every safety rule in this tool
 depends on doing exactly that before a write. What can be moved is the
 Desktop's whole data directory (`~/.config/Claude`, `~/Library/Application
 Support/Claude`, `%APPDATA%\Claude`): one complete logged-in state, all of
-it belonging to one account. A Desktop profile is therefore a name, an
+it belonging to one account.
+
+On Windows there are two of those, and which one you have does not depend on
+the Store. The classic installer writes to `%APPDATA%\Claude`. The MSIX
+package -- what a downloaded installer produces as readily as the Store --
+runs with filesystem redirection: it writes what it believes is
+`%APPDATA%\Claude`, and Windows puts it under
+`%LOCALAPPDATA%\Packages\Claude_<publisher>\LocalCache\Roaming\Claude`.
+A process outside the package sees only the second, so ccred looks in both
+and takes whichever holds a `config.json`, the most recently written one if
+both do. `ccred doctor` names the directory it settled on. A Desktop profile is therefore a name, an
 account, and at most one such directory -- the live one while the Desktop
 is logged in as that account, or a parked one under
 `~/.ccred/desktop/<name>/data`. `save` records the identity and leaves the
