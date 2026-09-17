@@ -63,7 +63,16 @@ pub struct CurrentReport {
     pub last_synced_at_ms: Option<i64>,
     /// How many profiles exist, so `current` can point at `list`.
     pub profile_count: usize,
+    /// Store-backed sessions that are live, and so hold the account a switch
+    /// would move away from.
     pub claude_running: Vec<u32>,
+    /// Claude Desktop sessions that are live. They run on the Desktop's own
+    /// login, which is not the account this report describes.
+    pub desktop_sessions: Vec<u32>,
+    /// The Desktop's own login: which profile it is on, and whether it is
+    /// running. Absent when there is no Desktop here.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub desktop: Option<super::desktop::DesktopStatus>,
     /// Set when the active pointer disagrees with the live account. This is
     /// the shape of a near-miss that once nearly destroyed a profile.
     pub pointer_mismatch: Option<String>,
@@ -145,6 +154,9 @@ pub fn current(ctx: &Ctx) -> crate::Result<CurrentReport> {
         None => None,
     };
 
+    let sessions = crate::proc::running_sessions(ctx.paths().claude_config_dir());
+    let desktop = super::desktop::status(ctx, active.as_ref());
+
     Ok(CurrentReport {
         active_profile: active.map(|n| n.as_str().to_string()),
         account: account.label(),
@@ -156,7 +168,9 @@ pub fn current(ctx: &Ctx) -> crate::Result<CurrentReport> {
         plan: account.identity.plan(),
         last_synced_at_ms,
         profile_count: ctx.repo().list()?.len(),
-        claude_running: crate::proc::running_claude_pids(ctx.paths().claude_config_dir()),
+        claude_running: sessions.store,
+        desktop_sessions: sessions.desktop,
+        desktop,
         pointer_mismatch,
         live_error,
     })
@@ -206,6 +220,40 @@ pub fn pointer_note(ctx: &Ctx) -> Option<PointerNote> {
             })
         }
     }
+}
+
+/// Both tables of `ccred list`.
+#[derive(Debug, Clone)]
+pub struct Listing {
+    pub profiles: Vec<ProfileRow>,
+    pub desktop: Vec<super::desktop::DesktopRow>,
+}
+
+/// One row of `list --json`, saying which table it is from.
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ListRow<'a> {
+    ClaudeCode(&'a ProfileRow),
+    Desktop(&'a super::desktop::DesktopRow),
+}
+
+impl Listing {
+    /// Profiles first, in the shape they have always had, then the Desktop
+    /// rows after them.
+    pub fn rows(&self) -> Vec<ListRow<'_>> {
+        self.profiles
+            .iter()
+            .map(ListRow::ClaudeCode)
+            .chain(self.desktop.iter().map(ListRow::Desktop))
+            .collect()
+    }
+}
+
+pub fn listing(ctx: &Ctx) -> crate::Result<Listing> {
+    Ok(Listing {
+        profiles: list(ctx)?,
+        desktop: super::desktop::rows(ctx),
+    })
 }
 
 pub fn list(ctx: &Ctx) -> crate::Result<Vec<ProfileRow>> {
@@ -296,9 +344,28 @@ pub enum ScheduleSetup {
     },
 }
 
+/// Which halves `save` is asked for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SaveScope {
+    Both,
+    CodeOnly,
+    DesktopOnly,
+}
+
+impl SaveScope {
+    pub fn code(self) -> bool {
+        self != SaveScope::DesktopOnly
+    }
+    pub fn desktop(self) -> bool {
+        self != SaveScope::CodeOnly
+    }
+}
+
+/// The Claude Code half of a save. Flattened into the report, so a script
+/// reading `account` and `outcome` off `save --json` reads what it always
+/// did.
 #[derive(Debug, Clone, Serialize)]
-pub struct SaveReport {
-    pub name: String,
+pub struct CodeSave {
     pub account: String,
     pub outcome: String,
     /// Set when this save registered the refresh schedule, or tried to.
@@ -308,10 +375,6 @@ pub struct SaveReport {
     /// guaranteed to be watching.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub schedule: Option<ScheduleSetup>,
-    /// Anything worth saying that did not stop the save, such as an
-    /// interrupted switch settled on the way.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub warnings: Vec<String>,
     /// The credentials just stored are already past their refresh deadline.
     ///
     /// Saving them is still right -- they are what is logged in -- but a
@@ -319,6 +382,24 @@ pub struct SaveReport {
     /// working profile, and they find out otherwise from `list` a moment
     /// later. The fix is a login, and that has to be said here.
     pub already_expired: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SaveReport {
+    pub name: String,
+    /// Claude Code's login, when it was saved.
+    #[serde(flatten, skip_serializing_if = "Option::is_none")]
+    pub code: Option<CodeSave>,
+    /// Why Claude Code's login was not saved, when it was not.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code_skipped: Option<String>,
+    /// The Desktop's login, when it was looked at.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub desktop: Option<super::desktop::DesktopSave>,
+    /// Anything worth saying that did not stop the save, such as an
+    /// interrupted switch settled on the way.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
 }
 
 /// Does this save call for registering the schedule?
@@ -385,10 +466,89 @@ fn auto_schedule(ctx: &Ctx, outcome: SaveOutcome) -> Option<ScheduleSetup> {
     }
 }
 
-pub fn save(ctx: &Ctx, name: &ProfileName) -> crate::Result<SaveReport> {
+/// Record what is logged in, under a name: Claude Code's login as a
+/// profile, the Desktop's as its `-desktop` namesake. Each half is saved
+/// when it is there to save; asking for both when only one is logged in
+/// saves that one and says why the other was not. Only when nothing at all
+/// could be saved is that an error.
+pub fn save(ctx: &Ctx, name: &ProfileName, scope: SaveScope) -> crate::Result<SaveReport> {
     // In the spelling the profile is stored under, where the file system
     // does not tell spellings apart.
     let name = &ctx.repo().canonical_name(name);
+    let mut warnings = Vec::new();
+
+    // With the Desktop half still to try, a Claude Code login that is not
+    // there is a reason, not a failure -- unless it was all that was asked
+    // for, or the trouble is something other than "not logged in", which
+    // stops the save the way it always has.
+    let logged_out = || matches!(crate::store::load_unlocked(&ctx.live_store()), Ok(None));
+    let (code, code_skipped, live_account) = if scope.code() && scope.desktop() && logged_out() {
+        (
+            None,
+            Some("Claude Code is not logged in".to_string()),
+            ctx.live_account().identity,
+        )
+    } else if scope.code() {
+        match save_code(ctx, name, &mut warnings) {
+            Ok((half, account)) => (Some(half), None, account),
+            Err(e) if scope.desktop() && is_not_logged_in(&e) => {
+                (None, Some(e.to_string()), ctx.live_account().identity)
+            }
+            Err(e) => return Err(e),
+        }
+    } else {
+        (None, None, ctx.live_account().identity)
+    };
+
+    let desktop = scope
+        .desktop()
+        .then(|| super::desktop::save(ctx, name, &live_account));
+
+    if code.is_none() && !desktop.as_ref().is_some_and(|d| d.saved()) {
+        let why = match (&code_skipped, &desktop) {
+            (Some(c), Some(d)) => format!("{c}; {}", desktop_reason(d)),
+            (None, Some(d)) => desktop_reason(d),
+            (Some(c), None) => c.clone(),
+            (None, None) => "nothing was asked for".into(),
+        };
+        return Err(CcredError::UnsafeWrite(format!("nothing to save: {why}")));
+    }
+
+    Ok(SaveReport {
+        name: name.as_str().to_string(),
+        code,
+        code_skipped,
+        desktop,
+        warnings,
+    })
+}
+
+fn desktop_reason(d: &super::desktop::DesktopSave) -> String {
+    match d {
+        super::desktop::DesktopSave::Nothing { reason }
+        | super::desktop::DesktopSave::Refused { reason } => reason.clone(),
+        _ => String::new(),
+    }
+}
+
+/// The failures that mean "Claude Code is logged out", as opposed to a
+/// name that is taken, a store that cannot be read, or a lock held: a
+/// credential blob that does not validate is what a logout leaves behind,
+/// and `.claude.json` naming no account is the other half of that.
+fn is_not_logged_in(e: &CcredError) -> bool {
+    match e {
+        CcredError::InvalidCredentials(_) => true,
+        CcredError::UnsafeWrite(msg) => msg.contains("cannot tell which account"),
+        _ => false,
+    }
+}
+
+/// Claude Code's half of `save`, exactly as it has always been.
+fn save_code(
+    ctx: &Ctx,
+    name: &ProfileName,
+    warnings: &mut Vec<String>,
+) -> crate::Result<(CodeSave, crate::model::AccountIdentity)> {
     // Read the live store under the lock Claude Code also takes. Without it a
     // refresh landing mid-read stores half of one token pair and half of the
     // next. The lock is taken here rather than inside `save_from`, because
@@ -401,7 +561,6 @@ pub fn save(ctx: &Ctx, name: &ProfileName) -> crate::Result<SaveReport> {
     // have blocked Claude Code's own credential refresh for as long as it
     // hung, with our heartbeat keeping the lock from ever looking stale.
     let live = ctx.live_store();
-    let mut warnings = Vec::new();
     // Held to the end, unlike the live lock: a scheduled refresh must not
     // probe this profile between the store being written and the pointer
     // naming it.
@@ -416,7 +575,7 @@ pub fn save(ctx: &Ctx, name: &ProfileName) -> crate::Result<SaveReport> {
         // live credentials, which by then belonged to the switch's target,
         // under the identity `.claude.json` still named: one account's
         // tokens in another account's profile.
-        super::switch::recover_locked(ctx, &mut warnings)?;
+        super::switch::recover_locked(ctx, warnings)?;
 
         // Read after recovery, which may have rewritten it.
         let account = ctx.live_account();
@@ -455,19 +614,20 @@ pub fn save(ctx: &Ctx, name: &ProfileName) -> crate::Result<SaveReport> {
     drop(_profiles);
     let schedule = auto_schedule(ctx, outcome);
 
-    Ok(SaveReport {
-        name: name.as_str().to_string(),
-        account: account.label(),
-        outcome: match outcome {
-            SaveOutcome::Created => "created",
-            SaveOutcome::Updated => "updated",
-            SaveOutcome::Unchanged => "already up to date",
-        }
-        .to_string(),
-        schedule,
-        warnings,
-        already_expired,
-    })
+    Ok((
+        CodeSave {
+            account: account.label(),
+            outcome: match outcome {
+                SaveOutcome::Created => "created",
+                SaveOutcome::Updated => "updated",
+                SaveOutcome::Unchanged => "already up to date",
+            }
+            .to_string(),
+            schedule,
+            already_expired,
+        },
+        account.identity,
+    ))
 }
 
 /// Put a profile's last-known-good credentials back.
@@ -667,6 +827,8 @@ pub fn remove(ctx: &Ctx, name: &ProfileName, purge: bool) -> crate::Result<Remov
     let dir = ctx.paths().profile_dir(name)?;
     std::fs::remove_dir_all(&dir).map_err(|source| CcredError::Io { path: dir, source })?;
 
+    // The `-desktop` namesake is its own profile with its own `rm`. A name
+    // on this command removes exactly the thing it names.
     Ok(RemoveReport {
         name: name.as_str().to_string(),
         // The path of the file that was actually written. Reporting a

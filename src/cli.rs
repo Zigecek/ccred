@@ -34,7 +34,7 @@ const HELP_TEMPLATE: &str = "{before-help}{name} {version}
 
 const EXAMPLES: &str = "Examples:
   ccred                      who is logged in right now
-  ccred save work            store that account under a name
+  ccred save work            store that account under a name (Desktop as work-desktop)
   ccred switch personal      make another saved profile the active one
   ccred list                 every profile, and how much window each has left
   ccred schedule install     keep idle profiles alive without being asked
@@ -91,20 +91,38 @@ pub enum Command {
     #[command(alias = "ls", display_order = 2)]
     List,
 
-    /// Save the account that is currently logged in as a named profile.
+    /// Save what is logged in, under a name (Claude Desktop as <name>-desktop).
+    ///
+    /// Claude Code's login becomes the profile, Claude Desktop's its
+    /// `-desktop` namesake. Each half is saved when it is there to save, and
+    /// the output says which. `-desktop` is reserved: `ccred save work`
+    /// records `work` and `work-desktop`, and the two are switched
+    /// separately from then on.
     #[command(display_order = 3)]
     Save {
         /// Profile name (letters, digits, dot, underscore, hyphen).
         name: String,
+        /// Save only Claude Code's login.
+        #[arg(long, conflicts_with = "only_desktop")]
+        only_code: bool,
+        /// Save only Claude Desktop's login.
+        #[arg(long)]
+        only_desktop: bool,
     },
 
     /// Make a saved profile the active account.
+    ///
+    /// `ccred switch work` moves Claude Code -- the terminal, the VS Code
+    /// extension -- and `ccred switch work-desktop` moves Claude Desktop,
+    /// which has to be closed for it. The two log in separately and can be
+    /// on different accounts.
     #[command(display_order = 4)]
     Switch {
         /// The profile to make active.
         name: String,
         /// Switch even though Claude Code is running. It may then write the
         /// old account's refreshed token into the new profile's file.
+        /// (Claude Desktop sessions never do, and do not need this.)
         #[arg(long, short)]
         force: bool,
     },
@@ -112,9 +130,10 @@ pub enum Command {
     /// Give a saved profile another name.
     ///
     /// Moves the profile and the copies that belong to it, and takes the
-    /// active pointer with it when it was the active one. No credential is
-    /// written: `rm` and `save` again only works for the account that
-    /// happens to be logged in.
+    /// active pointer with it when it was the active one. A Desktop login
+    /// saved under the same name moves with it, since the two are one
+    /// profile under two roofs. No credential is written: `rm` and `save`
+    /// again only works for the account that happens to be logged in.
     #[command(display_order = 5)]
     Rename {
         /// The profile to move.
@@ -123,11 +142,13 @@ pub enum Command {
         to: String,
     },
 
-    /// Delete a saved profile.
+    /// Delete a saved profile: `work`, or its Desktop login `work-desktop`.
     ///
     /// A copy of its credentials is kept in the backups directory first: a
     /// mistyped name is the one mistake here that cannot otherwise be taken
-    /// back.
+    /// back. A Desktop login has no such copy -- its token is encrypted and
+    /// cannot be read, so there is nothing to keep -- and removing one only
+    /// forgets a parked directory.
     #[command(alias = "remove", display_order = 6)]
     Rm {
         /// The profile to delete.

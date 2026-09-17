@@ -4,6 +4,7 @@
 //! keeps formatting decisions -- including the rule that no output may ever
 //! contain a token -- in one place.
 
+pub mod desktop;
 pub mod doctor;
 pub mod refresh;
 pub mod schedule;

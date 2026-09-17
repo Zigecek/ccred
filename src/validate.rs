@@ -225,6 +225,15 @@ pub fn validate_profile_name(name: &str) -> Result<ProfileName> {
     if WINDOWS_RESERVED.contains(&stem.as_str()) {
         return Err(bad("reserved device name on Windows"));
     }
+    // `work-desktop` is how `work`'s Claude Desktop login is addressed. A
+    // Claude Code profile of that name would be unreachable: every command
+    // would read the suffix and go to the Desktop one.
+    if name.to_ascii_lowercase().ends_with(crate::desktop::SUFFIX) {
+        return Err(bad(
+            "ends with -desktop, which names a profile's Claude Desktop login; save the \
+             name without it and the Desktop login is recorded alongside",
+        ));
+    }
     Ok(ProfileName(name.to_string()))
 }
 
@@ -412,6 +421,9 @@ mod tests {
             "with space",
             "",
             &"x".repeat(65),
+            // Reserved for the Desktop login of the profile before it.
+            "work-desktop",
+            "Work-DESKTOP",
         ];
         for name in bad {
             assert!(

@@ -10,9 +10,13 @@ use super::{
     ACCENT, Align, Cell, ERR, Fields, HEAD, LABEL, MUTED, NAME, NOMINAL_WINDOW_DAYS, OK, Table,
     Theme, VALUE, WARN, ago, days_style, heading, left, meter, paint,
 };
+use crate::desktop::DesktopSwitch;
+use crate::ops::desktop::{DesktopRow, DesktopSave, DesktopState, DesktopStatus};
 use crate::ops::doctor::{Finding, Severity};
 use crate::ops::refresh::{Decision, RefreshReport};
-use crate::ops::simple::{CurrentReport, PointerNote, ProfileRow, SaveReport, ScheduleSetup};
+use crate::ops::simple::{
+    CurrentReport, Listing, PointerNote, ProfileRow, SaveReport, ScheduleSetup,
+};
 use crate::ops::switch::{OutgoingSync, SwitchReport};
 use crate::schedule::{Backend, Health, RenderedFile, State, Warning};
 
@@ -141,6 +145,12 @@ pub fn current(theme: &Theme, r: &CurrentReport) {
                 paint(MUTED, "(ccred list)")
             ),
         );
+        if let Some(d) = &r.desktop {
+            f.add(
+                "Desktop",
+                desktop_status_line(d, r.active_profile.as_deref()),
+            );
+        }
         println!("{}", f.render(PAD));
     } else if let Some(why) = &r.live_error {
         callout(
@@ -165,6 +175,21 @@ pub fn current(theme: &Theme, r: &CurrentReport) {
             g.warn,
             &format!("Claude Code is running (pid {})", pids(&r.claude_running)),
             &["quit it before switching, or pass --force and accept the risk"],
+        );
+    }
+    // Context, not a warning: these sessions are on another login by design,
+    // and the line is what stops "I switched, but the Desktop did not" from
+    // reading as a bug in either program.
+    if !r.desktop_sessions.is_empty() {
+        println!();
+        callout(
+            MUTED,
+            g.bullet,
+            &format!(
+                "Claude Desktop is running ({})",
+                plural(r.desktop_sessions.len(), "session", "sessions")
+            ),
+            &["its sessions use the Desktop's own login; `ccred switch <name>-desktop` moves that"],
         );
     }
 
@@ -196,11 +221,92 @@ fn token_meter(theme: &Theme, ms_left: i64, nominal_ms: i64) -> String {
     format!("{}  {}", paint(style, &bar), paint(VALUE, &left(ms_left)))
 }
 
+/// Which account the Desktop is on, and whether that is the one Claude Code
+/// is on. The name is the point; everything else is context.
+fn desktop_status_line(d: &DesktopStatus, active: Option<&str>) -> String {
+    let same_account =
+        |p: &str| active.is_some_and(|a| p.strip_suffix(crate::desktop::SUFFIX) == Some(a));
+    let mut line = match (&d.profile, d.installed, d.logged_in) {
+        (Some(p), _, _) if d.signed_out_in_app => format!(
+            "{}   {}",
+            paint(NAME, p),
+            paint(WARN, "signed out inside the app; switch with ccred instead")
+        ),
+        (Some(p), _, _) if same_account(p) => paint(NAME, p),
+        (Some(p), _, _) => format!(
+            "{}   {}",
+            paint(NAME, p),
+            paint(WARN, "not the active profile's account")
+        ),
+        (None, true, true) => paint(MUTED, "an account that is not a saved profile"),
+        (None, true, false) => paint(MUTED, "not logged in"),
+        (None, false, _) => paint(MUTED, "no active login"),
+    };
+    if d.running {
+        line.push_str(&format!("   {}", paint(MUTED, "(running)")));
+    }
+    if !d.parked.is_empty() {
+        line.push_str(&format!(
+            "   {}",
+            paint(MUTED, &format!("parked: {}", d.parked.join(", ")))
+        ));
+    }
+    line
+}
+
+/// One line on what a Desktop switch did.
+fn desktop_switch_note(d: &DesktopSwitch, to: &str) -> (anstyle::Style, String) {
+    match d {
+        DesktopSwitch::AlreadyOn => (
+            MUTED,
+            format!("Claude Desktop is already logged in as {to}"),
+        ),
+        DesktopSwitch::LeftAlone => (
+            WARN,
+            format!(
+                "Claude Desktop is logged in as an account that is not a saved profile, and \
+                 nothing is parked for {to}; left as it is"
+            ),
+        ),
+        DesktopSwitch::Moved {
+            parked_as,
+            restored: true,
+        } => match parked_as {
+            Some(p) => (
+                OK,
+                format!("{p} parked, {to} restored; start Claude Desktop"),
+            ),
+            None => (OK, format!("{to} restored; start Claude Desktop")),
+        },
+        DesktopSwitch::Moved {
+            parked_as,
+            restored: false,
+        } => (
+            OK,
+            match parked_as {
+                Some(p) => format!(
+                    "{p} parked. Nothing is parked for {to} yet: start Claude Desktop and log \
+                     in as that account, and that login is {to}'s from then on"
+                ),
+                None => format!(
+                    "nothing is parked for {to} yet: start Claude Desktop and log in as that \
+                     account, and that login is {to}'s from then on"
+                ),
+            },
+        ),
+        DesktopSwitch::Failed { error } => (
+            ERR,
+            format!("Claude Desktop was not switched: {error}; move the directory by hand"),
+        ),
+    }
+}
+
 // --- list -----------------------------------------------------------------
 
-pub fn list(theme: &Theme, rows: &[ProfileRow], pointer: Option<&PointerNote>) {
+pub fn list(theme: &Theme, listing: &Listing, pointer: Option<&PointerNote>) {
     let g = theme.glyphs;
-    if rows.is_empty() {
+    let rows = &listing.profiles;
+    if rows.is_empty() && listing.desktop.is_empty() {
         println!();
         callout(
             MUTED,
@@ -212,6 +318,65 @@ pub fn list(theme: &Theme, rows: &[ProfileRow], pointer: Option<&PointerNote>) {
         println!();
         return;
     }
+    if rows.is_empty() {
+        println!();
+        println!("{PAD}{}", paint(MUTED, "no Claude Code profiles"));
+    } else {
+        profile_table(theme, rows);
+    }
+    pointer_note(theme, pointer);
+    if !listing.desktop.is_empty() {
+        desktop_table(theme, &listing.desktop);
+    }
+    println!();
+}
+
+/// The Desktop logins: one row per `-desktop` profile, and where its login
+/// is. No meters -- there is nothing this tool can read to fill one.
+fn desktop_table(theme: &Theme, rows: &[DesktopRow]) {
+    let g = theme.glyphs;
+    let now = crate::store::now_ms();
+    let mut t = Table::new(&[
+        ("DESKTOP", Align::Left),
+        ("ACCOUNT", Align::Left),
+        ("SYNCED", Align::Right),
+        ("STATE", Align::Left),
+    ]);
+    for r in rows {
+        let gutter = " ".repeat(g.active.chars().count());
+        let name = if r.active {
+            Cell::new(format!("{} {}", g.active, r.name), ACCENT)
+        } else {
+            Cell::new(format!("{gutter} {}", r.name), NAME)
+        };
+        let state = match r.state {
+            DesktopState::LoggedIn if r.running => Cell::new("logged in, running", OK),
+            DesktopState::LoggedIn => Cell::new("logged in", OK),
+            DesktopState::SignedOut => Cell::new("signed out in the app", WARN),
+            DesktopState::Parked => Cell::new("parked", VALUE),
+            DesktopState::NoLogin => Cell::new("no login", WARN),
+        };
+        t.row(vec![
+            name,
+            Cell::plain(&r.account),
+            Cell::new(
+                r.last_synced_at_ms
+                    .map(|t| ago(t, now))
+                    .unwrap_or_else(|| "-".into()),
+                MUTED,
+            ),
+            state,
+        ]);
+        if let Some(note) = &r.note {
+            t.note(note);
+        }
+    }
+    println!();
+    println!("{}", t.render(theme, PAD));
+}
+
+fn profile_table(theme: &Theme, rows: &[ProfileRow]) {
+    let g = theme.glyphs;
 
     let now = crate::store::now_ms();
     let mut t = Table::new(&[
@@ -305,8 +470,6 @@ pub fn list(theme: &Theme, rows: &[ProfileRow], pointer: Option<&PointerNote>) {
         )
     };
     println!("{PAD}{summary}");
-    pointer_note(theme, pointer);
-    println!();
 }
 
 /// A pointer that names nothing, or that cannot be read. The table alone
@@ -336,17 +499,62 @@ fn pointer_note(theme: &Theme, note: Option<&PointerNote>) {
 pub fn save(theme: &Theme, r: &SaveReport) {
     let g = theme.glyphs;
     println!();
-    println!(
-        "{PAD}{} saved {} {}",
-        paint(OK, g.ok),
-        paint(NAME, &r.name),
-        paint(MUTED, &format!("({})", r.account))
-    );
-    println!("{PAD}  {}", paint(MUTED, &r.outcome));
+    // One line per half, always, so what was and was not saved is never a
+    // matter of what is missing from the output.
+    match (&r.code, &r.code_skipped) {
+        (Some(c), _) => println!(
+            "{PAD}{} {}  {}  {}",
+            paint(OK, g.ok),
+            paint(NAME, &r.name),
+            paint(VALUE, &c.account),
+            paint(MUTED, &c.outcome)
+        ),
+        (None, Some(why)) => println!(
+            "{PAD}{} {}  {}",
+            paint(MUTED, g.bullet),
+            paint(MUTED, &r.name),
+            paint(MUTED, &format!("not saved: {why}"))
+        ),
+        (None, None) => {}
+    }
+    let desktop_name = format!("{}{}", r.name, crate::desktop::SUFFIX);
+    match &r.desktop {
+        Some(DesktopSave::Created { account }) => println!(
+            "{PAD}{} {}  {}  {}",
+            paint(OK, g.ok),
+            paint(NAME, &desktop_name),
+            paint(VALUE, account),
+            paint(MUTED, "created")
+        ),
+        Some(DesktopSave::Updated { account }) => println!(
+            "{PAD}{} {}  {}  {}",
+            paint(OK, g.ok),
+            paint(NAME, &desktop_name),
+            paint(VALUE, account),
+            paint(MUTED, "updated")
+        ),
+        Some(DesktopSave::Nothing { reason }) => println!(
+            "{PAD}{} {}  {}",
+            paint(MUTED, g.bullet),
+            paint(MUTED, &desktop_name),
+            paint(MUTED, &format!("not saved: {reason}"))
+        ),
+        Some(DesktopSave::Refused { reason }) => println!(
+            "{PAD}{} {}  {}",
+            paint(WARN, g.warn),
+            paint(NAME, &desktop_name),
+            paint(VALUE, &format!("not saved: {reason}"))
+        ),
+        None => {}
+    }
     for w in &r.warnings {
         println!("{PAD}{} {}", paint(WARN, g.warn), paint(VALUE, w));
     }
-    if r.already_expired {
+    let Some(code) = &r.code else {
+        println!();
+        return;
+    };
+    if code.already_expired {
         println!();
         callout(
             ERR,
@@ -361,7 +569,7 @@ pub fn save(theme: &Theme, r: &SaveReport) {
             ],
         );
     }
-    match &r.schedule {
+    match &code.schedule {
         Some(ScheduleSetup::Installed { next_run }) => {
             println!();
             callout(
@@ -418,6 +626,29 @@ pub fn removed(theme: &Theme, r: &crate::ops::simple::RemoveReport) {
                 paint(WARN, "there was nothing left to copy aside first")
             ),
         }
+    }
+    println!();
+}
+
+pub fn desktop_removed(theme: &Theme, r: &crate::ops::desktop::DesktopRemoveReport) {
+    let g = theme.glyphs;
+    println!();
+    println!("{PAD}{} removed {}", paint(OK, g.ok), paint(NAME, &r.name));
+    if r.parked_login_removed {
+        println!(
+            "{PAD}  {}",
+            paint(MUTED, "its parked login was deleted with it")
+        );
+    }
+    if r.still_logged_in {
+        println!(
+            "{PAD}  {}",
+            paint(
+                MUTED,
+                "Claude Desktop stays logged in as that account; its directory now belongs to \
+                 no profile"
+            )
+        );
     }
     println!();
 }
@@ -557,13 +788,104 @@ pub fn switch(theme: &Theme, r: &SwitchReport) {
             ),
         ));
     }
+    if !r.desktop_sessions.is_empty() {
+        notes.push((
+            MUTED,
+            format!(
+                "Claude Desktop is running ({}); its sessions stay on the Desktop's own login",
+                plural(r.desktop_sessions.len(), "session", "sessions")
+            ),
+        ));
+    }
 
     if !notes.is_empty() {
         println!();
         for (style, text) in notes {
-            let glyph = if style == MUTED { g.bullet } else { g.warn };
+            let glyph = match style {
+                s if s == MUTED => g.bullet,
+                s if s == OK => g.ok,
+                s if s == ERR => g.err,
+                _ => g.warn,
+            };
             println!("{PAD}{} {}", paint(style, glyph), paint(VALUE, &text));
         }
+    }
+    println!();
+}
+
+// --- desktop switch -------------------------------------------------------
+
+pub fn desktop_switch(theme: &Theme, r: &crate::ops::desktop::DesktopReport) {
+    let g = theme.glyphs;
+    println!();
+    let carried = |c: &crate::desktop::Carried| {
+        format!(
+            "{} and {}",
+            plural(c.sessions, "session", "sessions"),
+            plural(c.groups, "sidebar group", "sidebar groups")
+        )
+    };
+    let (style, text) = desktop_switch_note(&r.desktop, &r.to);
+    let glyph = match style {
+        s if s == OK => g.ok,
+        s if s == ERR => g.err,
+        s if s == WARN => g.warn,
+        _ => g.bullet,
+    };
+    println!("{PAD}{} {}", paint(style, glyph), paint(VALUE, &text));
+    if !r.restored_to_sidebar.is_empty() {
+        println!(
+            "{PAD}{} {}",
+            paint(OK, g.ok),
+            paint(
+                VALUE,
+                &format!(
+                    "{} put back into its sidebar",
+                    carried(&r.restored_to_sidebar)
+                )
+            )
+        );
+    }
+    if !r.waiting.is_empty() {
+        println!(
+            "{PAD}{} {}",
+            paint(WARN, g.warn),
+            paint(
+                VALUE,
+                &format!(
+                    "{} from a sign-out are waiting; once logged in, quit Claude Desktop and run \
+                     `ccred switch {}` again to put them back",
+                    carried(&r.waiting),
+                    r.to
+                )
+            )
+        );
+    }
+    if !r.sidebar.is_empty() {
+        let mut parts = Vec::new();
+        if r.sidebar.written > 0 {
+            parts.push(format!(
+                "{} added or brought up to date",
+                plural(r.sidebar.written, "session", "sessions")
+            ));
+        }
+        if r.sidebar.removed > 0 {
+            parts.push(format!(
+                "{} removed (deleted under another account)",
+                plural(r.sidebar.removed, "session", "sessions")
+            ));
+        }
+        if r.sidebar.groups > 0 {
+            parts.push(plural(r.sidebar.groups, "group added", "groups added"));
+        }
+        println!(
+            "{PAD}{} {}",
+            paint(OK, g.ok),
+            paint(VALUE, &format!("sidebar: {}", parts.join(", ")))
+        );
+    }
+    for w in &r.warnings {
+        println!("{PAD}{} {}", paint(WARN, g.warn), paint(VALUE, w));
     }
     println!();
 }
@@ -969,6 +1291,13 @@ pub fn uninstall_confirm(theme: &Theme, p: &crate::ops::uninstall::Plan) {
     }
     if p.backups > 0 {
         what.push(plural(p.backups, "backup", "backups"));
+    }
+    if p.desktop_logins > 0 {
+        what.push(plural(
+            p.desktop_logins,
+            "Claude Desktop profile",
+            "Claude Desktop profiles",
+        ));
     }
     if p.unreadable {
         what.push("whatever it could not list".to_string());
