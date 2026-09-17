@@ -107,7 +107,7 @@ fn run(cli: &Cli, theme: &Theme) -> ccred::Result<ExitCode> {
             if cli.json {
                 print_json(&report);
             } else {
-                render::restored(theme, &report.name);
+                render::restored(theme, &report);
             }
             Ok(ExitCode::Ok)
         }

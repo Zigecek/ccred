@@ -477,6 +477,10 @@ pub struct RestoreReport {
     pub name: String,
     /// The file the credentials came from.
     pub from: String,
+    /// Whether the profile itself was put back, rather than its credentials
+    /// repaired in place. What comes back then is the credentials alone: the
+    /// account details a switch restores are not in the copy.
+    pub recreated: bool,
 }
 
 /// What a rename moved.
@@ -589,6 +593,15 @@ pub fn restore(ctx: &Ctx, name: &ProfileName) -> crate::Result<RestoreReport> {
     let _profiles = ctx.lock_profiles(SAVE_LOCK_TIMEOUT)?;
     let name = &ctx.repo().canonical_name(name);
     if !ctx.repo().exists(name)? {
+        // A profile that is gone is not the end of the question: `rm` keeps a
+        // copy and says where, and this is what that copy is for.
+        if let Some(from) = ctx.repo().restore_removed(name)? {
+            return Ok(RestoreReport {
+                name: name.as_str().to_string(),
+                from: from.display().to_string(),
+                recreated: true,
+            });
+        }
         return Err(CcredError::ProfileNotFound(name.as_str().to_string()));
     }
     if !ctx.repo().restore_last_known_good(name)? {
@@ -607,6 +620,7 @@ pub fn restore(ctx: &Ctx, name: &ProfileName) -> crate::Result<RestoreReport> {
             .profile_lkg(name)
             .map(|p| p.display().to_string())
             .unwrap_or_default(),
+        recreated: false,
     })
 }
 

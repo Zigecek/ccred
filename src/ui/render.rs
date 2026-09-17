@@ -444,13 +444,30 @@ pub fn renamed(theme: &Theme, r: &crate::ops::simple::RenameReport) {
     println!();
 }
 
-pub fn restored(theme: &Theme, name: &str) {
+pub fn restored(theme: &Theme, r: &crate::ops::simple::RestoreReport) {
     let g = theme.glyphs;
     println!();
+    if r.recreated {
+        println!(
+            "{PAD}{} put {} back from {}",
+            paint(OK, g.ok),
+            paint(NAME, &r.name),
+            paint(MUTED, &r.from)
+        );
+        println!(
+            "{PAD}  {}",
+            paint(
+                MUTED,
+                "the credentials only: `ccred switch` then `ccred save` fills in the account"
+            )
+        );
+        println!();
+        return;
+    }
     println!(
         "{PAD}{} restored {} from its last-known-good copy",
         paint(OK, g.ok),
-        paint(NAME, name)
+        paint(NAME, &r.name)
     );
     println!(
         "{PAD}  {}",

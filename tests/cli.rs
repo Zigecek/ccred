@@ -1008,6 +1008,44 @@ fn list_shows_a_profile_whose_metadata_will_not_parse() {
     );
 }
 
+/// `rm` says where it put the copy precisely because deleting the only
+/// stored copy of an account should not be the one mistake that cannot be
+/// undone -- and nothing could use that copy. Reading the file back by hand
+/// was the whole recovery.
+#[test]
+fn a_removed_profile_can_be_put_back_from_the_copy_rm_kept() {
+    let sb = Sandbox::new();
+    sb.run(&["save", "work"]); // alice
+    sb.login_b();
+    sb.run(&["save", "personal"]); // bob, active
+
+    let creds = sb.path().join(".ccred/profiles/work/.credentials.json");
+    let before = std::fs::read_to_string(&creds).unwrap();
+    sb.run(&["rm", "work"]);
+    assert!(!creds.exists(), "gone for now");
+
+    let (out, err, code) = sb.run(&["restore", "work"]);
+    assert_eq!(code, 0, "{err}{out}");
+    assert!(out.contains("put work back"), "{out}");
+    let after: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&creds).unwrap()).unwrap();
+    let was: serde_json::Value = serde_json::from_str(&before).unwrap();
+    assert_eq!(
+        after["claudeAiOauth"]["refreshToken"], was["claudeAiOauth"]["refreshToken"],
+        "the same account came back"
+    );
+
+    // What did not come back is said outright: the account details a switch
+    // restores are not in the copy.
+    assert!(out.contains("credentials only"), "{out}");
+    let (list, _, _) = sb.run(&["list"]);
+    assert!(list.contains("unknown account"), "{list}");
+
+    // A name with no profile and no copies is still not found.
+    let (_, err, code) = sb.run(&["restore", "neverexisted"]);
+    assert_eq!(code, 3, "{err}");
+}
+
 /// Renaming was impossible: `rm` and `save` again only works for the account
 /// that happens to be logged in, so a profile named in haste was named that
 /// for good -- short of moving directories by hand.

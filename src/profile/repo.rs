@@ -502,6 +502,64 @@ impl ProfileRepo {
         Ok(true)
     }
 
+    /// Put a removed profile back from the newest copy `rm` kept.
+    ///
+    /// `rm` says where it put the copy precisely because deleting the only
+    /// stored copy of an account should not be the one mistake here that
+    /// cannot be undone -- and until now nothing could use it. Reading the
+    /// file back by hand was the whole recovery.
+    ///
+    /// What comes back is the credentials and nothing else: the account
+    /// details a switch restores into `.claude.json` are not in the copy, so
+    /// the profile reads as an unknown account until the next save fills it
+    /// in, which is the same state as a profile whose blob was never stored.
+    pub fn restore_removed(&self, name: &ProfileName) -> crate::Result<Option<PathBuf>> {
+        let dir = self.paths.backups_dir().join(name.as_str());
+        let Ok(entries) = fs::read_dir(&dir) else {
+            return Ok(None);
+        };
+        let mut copies: Vec<PathBuf> = entries
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| {
+                p.file_name()
+                    .map(|n| n.to_string_lossy().starts_with("credentials."))
+                    .unwrap_or(false)
+            })
+            .collect();
+        // Named by epoch milliseconds, which sorts the same either way until
+        // the year 2286.
+        copies.sort();
+        let Some(newest) = copies.pop() else {
+            return Ok(None);
+        };
+
+        // Parsed and judged before anything is created: a copy that will not
+        // load, or that holds a logged-out blob, is not a profile.
+        let raw = fs::read(&newest).map_err(|source| CcredError::Io {
+            path: newest.clone(),
+            source,
+        })?;
+        let loaded = crate::store::parse_loaded(raw, &newest)?;
+        validate_credentials(&loaded.creds.oauth, now_ms())?;
+        // The same guard a save meets: these tokens may have been re-saved
+        // under another name since, and two profiles sharing a refresh token
+        // is how refreshing one kills the other.
+        self.assert_not_held_elsewhere(name, &loaded.creds.oauth)?;
+
+        // `replace`, not `store`: there is nothing here to compare a window
+        // against, and the file that was kept is by definition older.
+        self.store(name)?.replace(&loaded.creds)?;
+        write_atomic(&self.paths.profile_lkg(name)?, &loaded.raw, true)?;
+        let meta = ProfileMeta::new(name, AccountIdentity::default(), now_ms());
+        let bytes = serde_json::to_vec_pretty(&meta).map_err(|source| CcredError::Json {
+            path: self.meta_path(name).unwrap_or_default(),
+            source,
+        })?;
+        write_atomic(&self.meta_path(name)?, &bytes, true)?;
+        Ok(Some(newest))
+    }
+
     // --------------------------------------------------------------- backups
 
     /// Copy the profile's current credentials aside, keeping the newest few.
