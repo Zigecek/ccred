@@ -36,10 +36,53 @@ const METER_CELLS: usize = 14;
 /// A leading status glyph plus a message, with any following lines hung
 /// underneath it.
 fn callout(style: anstyle::Style, glyph: &str, head: &str, body: &[&str]) {
-    println!("{PAD}{} {}", paint(style, glyph), paint(VALUE, head));
-    for line in body {
-        println!("{PAD}  {}", paint(MUTED, line));
+    for (i, line) in wrapped(head, TEXT_WIDTH).into_iter().enumerate() {
+        if i == 0 {
+            println!("{PAD}{} {}", paint(style, glyph), paint(VALUE, &line));
+        } else {
+            println!("{PAD}  {}", paint(VALUE, &line));
+        }
     }
+    for line in body {
+        for piece in wrapped(line, TEXT_WIDTH) {
+            println!("{PAD}  {}", paint(MUTED, &piece));
+        }
+    }
+}
+
+/// How wide a line of prose gets before it is broken.
+///
+/// Fixed, not the terminal's: the tables here are laid out to about this,
+/// and prose that rewrapped with the window would agree with them only by
+/// luck. It is also what makes a message the same in a log as on a screen.
+const TEXT_WIDTH: usize = 76;
+
+/// Break text at word boundaries, so a sentence that does not fit reads as
+/// one paragraph instead of running off the edge.
+///
+/// A word longer than the width -- a Windows path, which is most of what is
+/// long in these messages -- is left whole. A path broken in half is worse
+/// than a line that scrolls: it cannot be copied, and half of one looks
+/// like a different file.
+fn wrapped(text: &str, width: usize) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut line = String::new();
+    for word in text.split(' ') {
+        let len = line.chars().count();
+        if line.is_empty() {
+            line.push_str(word);
+        } else if len + 1 + word.chars().count() <= width {
+            line.push(' ');
+            line.push_str(word);
+        } else {
+            out.push(std::mem::take(&mut line));
+            line.push_str(word);
+        }
+    }
+    if !line.is_empty() || out.is_empty() {
+        out.push(line);
+    }
+    out
 }
 
 /// A warning as a callout: what happened on the first line, what to do
@@ -731,23 +774,17 @@ pub fn removed(theme: &Theme, r: &crate::ops::simple::RemoveReport) {
 pub fn desktop_removed(theme: &Theme, r: &crate::ops::desktop::DesktopRemoveReport) {
     let g = theme.glyphs;
     println!();
-    println!("{PAD}{} removed {}", paint(OK, g.ok), paint(NAME, &r.name));
+    let mut body: Vec<&str> = Vec::new();
     if r.parked_login_removed {
-        println!(
-            "{PAD}  {}",
-            paint(MUTED, "its parked login was deleted with it")
-        );
+        body.push("its parked login was deleted with it");
     }
     if r.still_logged_in {
-        println!(
-            "{PAD}  {}",
-            paint(
-                MUTED,
-                "Claude Desktop stays logged in as that account; its directory now belongs to \
-                 no profile"
-            )
+        body.push(
+            "Claude Desktop stays logged in as that account; its directory now belongs to \
+             no profile",
         );
     }
+    callout(OK, g.ok, &format!("removed {}", r.name), &body);
     println!();
 }
 
@@ -905,7 +942,7 @@ pub fn switch(theme: &Theme, r: &SwitchReport) {
                 s if s == ERR => g.err,
                 _ => g.warn,
             };
-            println!("{PAD}{} {}", paint(style, glyph), paint(VALUE, &text));
+            callout(style, glyph, &text, &[]);
         }
     }
     println!();
@@ -1519,7 +1556,7 @@ pub fn uninstalled(
         );
     }
     for problem in &o.problems {
-        println!("{PAD}{} {}", paint(ERR, g.err), paint(VALUE, problem));
+        callout(ERR, g.err, problem, &[]);
     }
     println!();
 }
@@ -1543,13 +1580,17 @@ pub fn doctor(theme: &Theme, findings: &[Finding]) {
         } else {
             VALUE
         };
-        println!(
-            "{PAD}{} {}",
-            paint(style, glyph),
-            paint(title_style, &f.title)
-        );
+        for (i, line) in wrapped(&f.title, TEXT_WIDTH).into_iter().enumerate() {
+            if i == 0 {
+                println!("{PAD}{} {}", paint(style, glyph), paint(title_style, &line));
+            } else {
+                println!("{PAD}  {}", paint(title_style, &line));
+            }
+        }
         if let Some(detail) = &f.detail {
-            println!("{PAD}  {}", paint(MUTED, detail));
+            for line in wrapped(detail, TEXT_WIDTH) {
+                println!("{PAD}  {}", paint(MUTED, &line));
+            }
         }
     }
 
@@ -1619,11 +1660,17 @@ fn hint_for(e: &crate::CcredError) -> Option<&'static str> {
 /// Errors go to stderr, so they survive `ccred list > file` and stay visible.
 pub fn error(theme: &Theme, e: &crate::CcredError) {
     eprintln!();
-    eprintln!(
-        "{PAD}{} {}",
-        paint(ERR, theme.glyphs.err),
-        paint(HEAD, &e.to_string())
-    );
+    for (i, line) in wrapped(&e.to_string(), TEXT_WIDTH).into_iter().enumerate() {
+        if i == 0 {
+            eprintln!(
+                "{PAD}{} {}",
+                paint(ERR, theme.glyphs.err),
+                paint(HEAD, &line)
+            );
+        } else {
+            eprintln!("{PAD}  {}", paint(HEAD, &line));
+        }
+    }
     // "I/O error at <path>" alone is rarely enough to act on.
     let mut source = std::error::Error::source(e);
     while let Some(cause) = source {
@@ -1632,11 +1679,17 @@ pub fn error(theme: &Theme, e: &crate::CcredError) {
     }
     if let Some(hint) = hint_for(e) {
         eprintln!();
-        eprintln!(
-            "{PAD}{} {}",
-            paint(MUTED, theme.glyphs.bullet),
-            paint(MUTED, hint)
-        );
+        for (i, line) in wrapped(hint, TEXT_WIDTH).into_iter().enumerate() {
+            if i == 0 {
+                eprintln!(
+                    "{PAD}{} {}",
+                    paint(MUTED, theme.glyphs.bullet),
+                    paint(MUTED, &line)
+                );
+            } else {
+                eprintln!("{PAD}  {}", paint(MUTED, &line));
+            }
+        }
     }
     eprintln!();
 }

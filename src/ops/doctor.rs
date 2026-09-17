@@ -36,6 +36,16 @@ impl Finding {
             detail: None,
         }
     }
+    /// An `ok` finding whose detail is worth a line of its own: a path,
+    /// usually, which is the longest thing in a sentence and the least of
+    /// what it says.
+    fn ok_with(title: impl Into<String>, detail: impl Into<String>) -> Self {
+        Finding {
+            severity: Severity::Ok,
+            title: title.into(),
+            detail: Some(detail.into()),
+        }
+    }
     fn warn(title: impl Into<String>, detail: impl Into<String>) -> Self {
         Finding {
             severity: Severity::Warn,
@@ -154,15 +164,17 @@ pub fn doctor(ctx: &Ctx) -> crate::Result<Vec<Finding>> {
                 findings.push(Finding::ok(format!("Claude Desktop is logged in as '{p}'")));
             }
             (None, true, true) => findings.push(Finding::warn(
-                format!(
-                    "Claude Desktop is logged in as an account that is not a saved profile ({dir})"
-                ),
-                "`ccred save <name>` records it as <name>-desktop",
+                "Claude Desktop is logged in as an account that is not a saved profile",
+                // The directory in the detail, not the headline: it is the
+                // longest thing in the sentence and the least of what the
+                // sentence says.
+                format!("`ccred save <name>` records it as <name>-desktop; it is in {dir}"),
             )),
             (None, true, false) => {
-                findings.push(Finding::ok(format!(
-                    "Claude Desktop is installed and not logged in ({dir})"
-                )));
+                findings.push(Finding::ok_with(
+                    "Claude Desktop is installed and not logged in",
+                    format!("its directory is {dir}"),
+                ));
             }
             (None, false, _) => findings.push(Finding::warn(
                 "Claude Desktop has no live login directory",

@@ -9,8 +9,12 @@
   whole pass was reported as having failed, so the chats that did go in
   were not counted anywhere. The groups wait in the shared sidebar, which
   is where they live, and the next switch to that profile puts them in.
-- **A warning says what happened on one line and what to do under it.**
-  Both halves ran together into a single line wider than the terminal.
+- **Nothing printed runs off the page.** Messages are broken at word
+  boundaries to the width the tables already use, with a warning's remedy
+  hung under what happened -- the refusal to delete a parked login was one
+  240-column line, and `doctor` put a Windows path in the middle of a
+  sentence. A path is never broken: half of one looks like another file
+  and neither half can be copied.
 - **A refused switch no longer deletes a parked Desktop login.** The
   target's metadata is written before the plan is made, so the plan can
   see the Desktop is already on that account, and taken back when the

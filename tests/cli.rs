@@ -172,6 +172,15 @@ impl Sandbox {
     }
 }
 
+/// Output with every run of whitespace collapsed to one space.
+///
+/// A message wider than the page is printed as several lines, and where it
+/// breaks moves whenever a word in it changes. An assertion about wording
+/// should not have to know that, so it reads the flattened text.
+fn flat(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 #[test]
 fn save_list_switch_round_trip() {
     let sb = Sandbox::new();
@@ -2457,9 +2466,10 @@ fn a_claude_desktop_session_neither_blocks_a_switch_nor_follows_it() {
 
     let (out, err, code) = sb.run(&["switch", "work"]);
     assert_eq!(code, 0, "a Desktop session must not block:\n{out}{err}");
+    let flattened = flat(&out);
     assert!(
-        out.contains("Claude Desktop is running")
-            && out.contains("stay on the Desktop's own login"),
+        flattened.contains("Claude Desktop is running")
+            && flattened.contains("stay on the Desktop's own login"),
         "{out}"
     );
     let (out, _, _) = sb.run(&["current"]);
@@ -2622,7 +2632,7 @@ fn save_records_the_desktop_login_beside_the_profile_and_says_so() {
     let (_, err, code) = sb.run(&["save", "personal", "--only-desktop"]);
     assert_eq!(code, 7, "{err}");
     assert!(
-        err.contains("'personal-desktop' belongs to alice@example.com"),
+        flat(&err).contains("'personal-desktop' belongs to alice@example.com"),
         "{err}"
     );
     let (out, err, code) = sb.run(&["save", "personal"]);
@@ -2857,7 +2867,7 @@ fn rm_of_a_desktop_name_removes_the_desktop_profile_only() {
     // Claude Code half keeps a copy and says where; this half asks instead.
     let (_, err, code) = sb.run(&["rm", "work-desktop"]);
     assert_eq!(code, 7, "the only copy is not deleted unasked: {err}");
-    assert!(err.contains("only copy"), "{err}");
+    assert!(flat(&err).contains("only copy"), "{err}");
     assert!(sb.parked_desktop("work").exists(), "still there: {err}");
 
     let (out, err, code) = sb.run(&["rm", "work-desktop", "--purge"]);
@@ -3304,7 +3314,7 @@ fn tokens_another_profile_holds_are_never_stored_under_this_one() {
     sb.run(&["save", "work"]);
     let (_, err, code) = sb.run(&["save", "work"]);
     assert_eq!(code, 7);
-    assert!(err.contains("stored as profile 'personal'"), "{err}");
+    assert!(flat(&err).contains("stored as profile 'personal'"), "{err}");
 
     for args in [&["refresh"][..], &["switch", "personal"][..]] {
         let (out, err, _) = sb.run(args);
@@ -4194,4 +4204,54 @@ fn groups_with_nowhere_to_go_do_not_hide_the_chats_that_went() {
     assert_eq!(code, 0, "{err}{out}");
     let cfg = std::fs::read_to_string(sb.desktop_dir().join("claude_desktop_config.json")).unwrap();
     assert!(cfg.contains("Client work"), "{cfg}");
+}
+
+/// Nothing printed here runs off the page.
+///
+/// A line can be long because one word in it is -- a Windows path, which is
+/// what is long in most of these messages -- and breaking that would make
+/// it uncopyable and half of it look like another file. Everything else
+/// wraps.
+#[test]
+fn no_message_runs_off_the_page() {
+    let sb = Sandbox::new();
+    sb.desktop_login("uuid-a", "A");
+    sb.run(&["save", "work"]);
+    sb.login_b();
+    sb.run(&["save", "personal", "--only-code"]);
+    sb.run(&["switch", "personal-desktop"]);
+    sb.desktop_login("uuid-b", "B");
+
+    let commands: &[&[&str]] = &[
+        &["--help"],
+        &["save", "--help"],
+        &["list"],
+        &["current"],
+        &["doctor"],
+        &["rm", "work-desktop"],
+        &["save", "work", "--only-desktop"],
+        &["switch", "nothing-here"],
+        &["uninstall", "--purge", "--dry-run", "--yes"],
+    ];
+    for args in commands {
+        let out = sb.cmd(args);
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        for line in text.lines() {
+            let longest = line
+                .split_whitespace()
+                .map(|w| w.chars().count())
+                .max()
+                .unwrap_or(0);
+            assert!(
+                line.chars().count() <= 100 || longest > 76,
+                "`ccred {}` printed a {}-column line that could have been wrapped:\n{line}",
+                args.join(" "),
+                line.chars().count()
+            );
+        }
+    }
 }
