@@ -529,6 +529,13 @@ pub fn rename(ctx: &Ctx, from: &ProfileName, to: &ProfileName) -> crate::Result<
     }
 
     let mut warnings = Vec::new();
+    // Read before the move. Afterwards the pointer's spelling is resolved
+    // against the directories that exist now, so a rename that only changes
+    // case -- `work` to `WORK`, the one way to fix a spelling where the file
+    // system ignores it -- compared the new name against the old and decided
+    // the profile had not been active. The pointer then kept the old
+    // spelling: invisible on Windows, a pointer to nothing on Linux.
+    let was_active = ctx.repo().active().unwrap_or(None).as_ref() == Some(from);
     let old_dir = ctx.paths().profile_dir(from)?;
     let new_dir = ctx.paths().profile_dir(to)?;
     std::fs::rename(&old_dir, &new_dir).map_err(|source| CcredError::Io {
@@ -536,7 +543,6 @@ pub fn rename(ctx: &Ctx, from: &ProfileName, to: &ProfileName) -> crate::Result<
         source,
     })?;
 
-    let was_active = ctx.repo().active().unwrap_or(None).as_ref() == Some(from);
     if was_active {
         ctx.repo().set_active(to)?;
     }

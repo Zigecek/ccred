@@ -1056,6 +1056,24 @@ fn a_profile_can_be_given_another_name() {
         sb.path().join(".ccred/backups/job").is_dir(),
         "the copy is under the new name"
     );
+
+    // A change of case only: the one way to fix a spelling where the file
+    // system ignores it. The pointer has to follow that too -- read after
+    // the move, the old name resolved to the new one and the rename decided
+    // the profile had not been active, leaving a pointer to nothing on any
+    // file system that does tell them apart.
+    let (out, err, code) = sb.run(&["rename", "main", "MAIN"]);
+    assert_eq!(code, 0, "{err}{out}");
+    assert!(out.contains("still is"), "{out}");
+    assert_eq!(
+        std::fs::read_to_string(sb.path().join(".ccred/state/current"))
+            .unwrap()
+            .trim(),
+        "MAIN"
+    );
+    let (out, _, _) = sb.run(&["list"]);
+    assert!(out.contains("MAIN"), "{out}");
+    assert!(!out.contains("does not exist"), "a dangling pointer: {out}");
 }
 
 /// `ccred rm --help` listed `<NAME>` with nothing beside it, and so did
