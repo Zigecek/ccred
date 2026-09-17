@@ -240,6 +240,16 @@ fn account_uuid(dir: &Path) -> Option<String> {
 /// leaves behind, and Chromium itself treats it as stale. On Windows it is
 /// a `lockfile` held open for writing with read-only sharing and deleted on
 /// close, so one that exists and refuses a second writer is held.
+/// The file whose holder says the app is running, per platform. Named in the
+/// refusal, since a lock that cannot be read is reported as one that is held.
+fn lock_file(dir: &Path) -> PathBuf {
+    if cfg!(windows) {
+        dir.join("lockfile")
+    } else {
+        dir.join("SingletonLock")
+    }
+}
+
 fn is_running(dir: &Path) -> bool {
     #[cfg(unix)]
     {
@@ -544,11 +554,20 @@ pub fn preflight(paths: &Paths, inspection: &Inspection, step: &Step) -> crate::
         )));
     }
     if inspection.running {
-        return Err(CcredError::UnsafeWrite(
-            "Claude Desktop is running; quit it first. Its login is a directory, and one \
-             cannot be moved under a running app"
-                .into(),
-        ));
+        // The lock is named because the answer is sometimes wrong in the
+        // safe direction: on Windows anything but a clean open counts as
+        // held, so a lock file that cannot be opened for its own reasons --
+        // a permission left by a restored profile, an antivirus holding it --
+        // reads as an app that is not running. Then the only way forward is
+        // to look at the file, so the message says which one.
+        return Err(CcredError::UnsafeWrite(format!(
+            concat!(
+                "Claude Desktop is running; quit it first. Its login is a directory, ",
+                "and one cannot be moved under a running app. If it is closed, the ",
+                "lock it leaves behind is {}"
+            ),
+            lock_file(paths.desktop_dir()).display()
+        )));
     }
     if let Some(name) = park_as {
         let dest = parking_place(paths, name);
@@ -1461,6 +1480,69 @@ mod tests {
         // And a step that moves nothing is never refused for this.
         let stay = Step::Leave(DesktopSwitch::AlreadyOn);
         assert!(preflight(&paths, &unreadable, &stay).is_ok());
+    }
+
+    /// Parking over a directory that is already there would bury one login
+    /// under another, and neither could be told apart afterwards. Refused
+    /// before anything moves, which is the whole point of a preflight.
+    #[test]
+    fn a_parking_place_that_is_taken_is_refused_before_anything_moves() {
+        let home = tempfile::tempdir().unwrap();
+        let paths = Paths::with_overrides(home.path().to_path_buf(), None, None);
+        let idle = Inspection {
+            installed: true,
+            running: false,
+            account_uuid: Some("u".into()),
+            identity_unreadable: None,
+            signed_in: None,
+            other_accounts: Vec::new(),
+        };
+        let step = Step::Move {
+            park_as: Some("work".into()),
+            restore: false,
+        };
+        assert!(preflight(&paths, &idle, &step).is_ok(), "nothing there yet");
+
+        std::fs::create_dir_all(paths.desktop_store_dir().join("work").join(DATA_DIR)).unwrap();
+        let err = preflight(&paths, &idle, &step).unwrap_err().to_string();
+        assert!(err.contains("already has a parked login"), "{err}");
+        assert!(err.contains("by hand"), "the way out is named: {err}");
+    }
+
+    /// The second rename of a move failing leaves the Desktop with no
+    /// directory at all and the live login under a parked name. Whoever
+    /// finishes it by hand has to be told which name that is -- and the
+    /// command must not report success, which is what it did.
+    #[test]
+    fn a_move_that_stops_half_way_says_where_the_login_went() {
+        let home = tempfile::tempdir().unwrap();
+        let paths = Paths::with_overrides(home.path().to_path_buf(), None, None);
+        std::fs::create_dir_all(paths.desktop_dir()).unwrap();
+        std::fs::write(paths.desktop_dir().join("marker"), b"live").unwrap();
+
+        // Park, then restore something that is not there: the first rename
+        // goes through and the second cannot.
+        let outcome = apply(
+            &paths,
+            &validate_profile_name("work").unwrap(),
+            Step::Move {
+                park_as: Some("personal".into()),
+                restore: true,
+            },
+        );
+        let DesktopSwitch::Failed { error, parked_as } = outcome else {
+            panic!("expected a failure, got {outcome:?}");
+        };
+        assert!(!error.is_empty());
+        let parked_as = parked_as.expect("the live login was parked, so it is named");
+        assert!(
+            Path::new(&parked_as).join("marker").is_file(),
+            "the live directory is at the name reported: {parked_as}"
+        );
+        assert!(
+            !paths.desktop_dir().exists(),
+            "and it is no longer where the Desktop looks"
+        );
     }
 
     #[test]
