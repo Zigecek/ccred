@@ -361,6 +361,7 @@ pub fn list(theme: &Theme, listing: &Listing, pointer: Option<&PointerNote>) {
     }
     if !listing.desktop.is_empty() {
         if both {
+            println!();
             println!("{}", heading(theme, PAD, "Claude Desktop"));
         }
         desktop_table(theme, &listing.desktop);
@@ -423,6 +424,16 @@ fn desktop_table(theme: &Theme, rows: &[DesktopRow]) {
     }
     println!();
     println!("{}", t.render(theme, PAD));
+    // A summary of its own, spaced like the profile table's. Without one the
+    // two listings read as a table and an afterthought.
+    println!();
+    println!(
+        "{PAD}{}",
+        paint(
+            MUTED,
+            &plural(rows.len(), "Desktop login", "Desktop logins")
+        )
+    );
 }
 
 fn profile_table(theme: &Theme, rows: &[ProfileRow]) {

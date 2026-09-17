@@ -430,6 +430,30 @@ $ ccred list
 ```
 
 ```
+
+```
+$ ccred list   # with a Claude Desktop login saved too
+
+  Claude Code
+  -----------
+
+  PROFILE  ACCOUNT            PLAN     REFRESH WINDOW  LEFT      SYNCED  STATE
+  * work   ada@example.com    Max 20x  ###########...   23d     3 h ago  ok
+    home   grace@example.com  Max 5x   ##............    4d  9 days ago  expiring
+
+  2 profiles, 1 needs attention
+
+  Claude Desktop
+  --------------
+
+  DESKTOP         ACCOUNT            SYNCED  STATE
+  * work-desktop  ada@example.com   3 h ago  logged in
+    home-desktop  grace@example.com       -  parked
+
+  2 Desktop logins
+```
+
+```
 $ ccred current
 
   ● work   ada@example.com   · Max 20x
