@@ -355,6 +355,29 @@ fn entry_names(dir: &Path) -> (Vec<String>, bool) {
     }
 }
 
+/// Parked Claude Desktop logins: a directory in the store with a `data`
+/// directory in it.
+///
+/// Counting every entry instead said `--purge` would delete logins that
+/// were not there. The store also holds a profile whose Desktop login is
+/// the live one -- metadata and nothing to delete -- and the shared
+/// sidebar, which is an index this rebuilds. What is counted here is what
+/// no copy can replace: a token that is encrypted, so nothing was ever
+/// kept aside, in a directory nothing else has.
+fn parked_logins(dir: &Path) -> (usize, bool) {
+    match std::fs::read_dir(dir) {
+        Ok(entries) => (
+            entries
+                .filter_map(|e| e.ok())
+                .filter(|e| e.path().join(crate::desktop::DATA_DIR).is_dir())
+                .count(),
+            false,
+        ),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => (0, false),
+        Err(_) => (0, true),
+    }
+}
+
 /// Where the release installer leaves its receipt.
 fn receipt_path() -> Option<PathBuf> {
     let base = if cfg!(windows) {
@@ -403,7 +426,7 @@ pub fn plan(ctx: &Ctx, purge: bool) -> crate::Result<Plan> {
     );
     let (profiles, profiles_unreadable) = entry_names(&paths.profiles_dir());
     let (backups, backups_unreadable) = entry_names(&paths.backups_dir());
-    let (desktop_logins, desktop_unreadable) = entry_names(&paths.desktop_store_dir());
+    let (desktop_logins, desktop_unreadable) = parked_logins(&paths.desktop_store_dir());
 
     Ok(Plan {
         exe,
@@ -417,7 +440,7 @@ pub fn plan(ctx: &Ctx, purge: bool) -> crate::Result<Plan> {
         purge_refused,
         profiles,
         backups: backups.len(),
-        desktop_logins: desktop_logins.len(),
+        desktop_logins,
         unreadable: profiles_unreadable || backups_unreadable || desktop_unreadable,
     })
 }

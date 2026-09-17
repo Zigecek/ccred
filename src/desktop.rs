@@ -55,7 +55,7 @@ use crate::validate::{ProfileName, validate_profile_name};
 pub const SUFFIX: &str = "-desktop";
 
 /// The parked directory, inside the profile's own.
-const DATA_DIR: &str = "data";
+pub(crate) const DATA_DIR: &str = "data";
 const META_FILE: &str = "meta.json";
 /// Parking places for directories that belong to no profile.
 const UNCLAIMED_PREFIX: &str = "unclaimed-";
@@ -1078,7 +1078,7 @@ fn move_merge(from: &Path, into: &Path) -> crate::Result<usize> {
 // Claude Code opens any of them under whatever login it has -- so someone
 // who treats accounts as nothing but a source of tokens wants the same
 // sidebar whichever account the Desktop is on. This keeps a union of every
-// account's list under `~/.ccred/desktop/sidebar/` and, on each switch,
+// account's list under `~/.ccred/desktop/.sidebar/` and, on each switch,
 // writes into the target account's list whatever it lacks.
 //
 // What is copied is the part of an entry that means the same under any

@@ -2878,6 +2878,15 @@ fn rm_of_a_desktop_name_removes_the_desktop_profile_only() {
     let (_, err, code) = sb.run(&["rm", "work-desktop"]);
     assert_eq!(code, 3, "gone already: {err}");
 
+    // What `personal` has left in the store is a metadata file: its Desktop
+    // login is the live one, and nothing here can delete that. The count is
+    // of logins parked here, which is what `--purge` would destroy with no
+    // copy anywhere.
+    let (json, _, _) = sb.run(&["uninstall", "--purge", "--dry-run", "--json"]);
+    let v: serde_json::Value = serde_json::from_str(&json).expect(&json);
+    assert_eq!(v["desktop_logins"], 0, "{json}");
+
+    std::fs::create_dir_all(sb.parked_desktop("personal").join("data")).unwrap();
     let (json, _, _) = sb.run(&["uninstall", "--purge", "--dry-run", "--json"]);
     let v: serde_json::Value = serde_json::from_str(&json).expect(&json);
     assert_eq!(v["desktop_logins"], 1, "{json}");
@@ -4021,5 +4030,46 @@ fn an_archived_index_that_cannot_be_read_is_not_overwritten() {
         std::fs::read(bob.join("archived-sessions.idx")).unwrap(),
         mangled,
         "byte for byte as it was found"
+    );
+}
+
+/// The uninstall plan counts parked Desktop logins, and there is more than
+/// those in the store: a profile whose Desktop login is the live one leaves
+/// a metadata file, and the shared sidebar is an index. Counting every
+/// entry told people `--purge` would delete logins that were not there --
+/// about the one thing in the plan that no copy can replace.
+#[test]
+fn the_uninstall_plan_counts_logins_not_directories() {
+    let sb = Sandbox::new();
+    sb.desktop_login("uuid-a", "A");
+    let (out, err, code) = sb.run(&["save", "work"]);
+    assert_eq!(code, 0, "{err}{out}");
+    assert!(
+        sb.parked_desktop("work").join("meta.json").is_file(),
+        "the Desktop half is recorded"
+    );
+    assert!(
+        !sb.parked_desktop("work").join("data").exists(),
+        "and its login is the live one, not parked"
+    );
+    // What a switch leaves behind, written here directly so the state under
+    // test is exactly this and nothing else.
+    let union = sb
+        .path()
+        .join(".ccred")
+        .join("desktop")
+        .join(".sidebar")
+        .join("sessions");
+    std::fs::create_dir_all(&union).unwrap();
+    std::fs::write(union.join("local_1.json"), br#"{"sessionId":"local_1"}"#).unwrap();
+
+    let (json, _, _) = sb.run(&["uninstall", "--purge", "--dry-run", "--json"]);
+    let v: serde_json::Value = serde_json::from_str(&json).expect(&json);
+    assert_eq!(v["desktop_logins"], 0, "{json}");
+    let (out, err, code) = sb.run(&["uninstall", "--purge", "--dry-run", "--yes"]);
+    assert_eq!(code, 0, "{err}{out}");
+    assert!(
+        !out.contains("parked here"),
+        "and the plan a person reads says nothing about logins: {out}"
     );
 }

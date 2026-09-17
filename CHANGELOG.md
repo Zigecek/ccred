@@ -18,6 +18,12 @@ directory.
   belonging to no profile -- advice that ends in "delete when sure", naming
   somebody's parked login. A profile is its metadata file, and that is what
   the check reads now.
+- **The uninstall plan counts parked Desktop logins, not directories.**
+  It counted every entry in the store, where a profile whose Desktop
+  login is the live one leaves a metadata file and the shared sidebar is
+  an index -- so `ccred uninstall --purge` said it would delete logins
+  that were not there, about the one thing in the plan that no copy can
+  replace.
 - **The Desktop's index of archived chats is patched, not rewritten.**
   It was read for the one key this tool cares about and written back
   with that key alone, so a `v` field, or anything a later build of the
