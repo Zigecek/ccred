@@ -99,7 +99,16 @@ fn run(cli: &Cli, theme: &Theme) -> ccred::Result<ExitCode> {
                 } else {
                     render::desktop_switch(theme, &report);
                 }
-                Ok(ExitCode::Ok)
+                // A move that stopped half-way leaves the Desktop with no
+                // directory and the live login under a parked name. Reported
+                // and then exited 0, a script would read that as done; the
+                // whole point of the outcome is that a person has to finish
+                // it by hand.
+                Ok(if report.failed() {
+                    ExitCode::Unsafe
+                } else {
+                    ExitCode::Ok
+                })
             }
         },
 

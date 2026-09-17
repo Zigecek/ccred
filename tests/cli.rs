@@ -2455,8 +2455,11 @@ fn switching_a_desktop_profile_parks_the_login_by_its_account() {
     // and the Desktop will start fresh.
     let (out, err, code) = sb.run(&["switch", "personal-desktop"]);
     assert_eq!(code, 0, "{out}{err}");
-    assert!(out.contains("work-desktop parked"), "{out}");
-    assert!(out.contains("log in as that account"), "{out}");
+    assert!(
+        out.contains("work-desktop was parked in its place"),
+        "{out}"
+    );
+    assert!(out.contains("log in as personal-desktop"), "{out}");
     assert!(
         !sb.desktop_dir().exists(),
         "the live directory must be gone"
@@ -2689,7 +2692,7 @@ fn chats_left_behind_by_a_sign_out_inside_the_app_are_put_back() {
     // out of it first, for work.
     let (out, err, code) = sb.run(&["switch", "work-desktop"]);
     assert_eq!(code, 0, "{out}{err}");
-    assert!(out.contains("personal-desktop parked"), "{out}");
+    assert!(out.contains("personal-desktop"), "{out}");
     assert!(
         out.contains("3 sessions and 1 sidebar group from a sign-out are waiting"),
         "{out}"
@@ -2793,8 +2796,11 @@ fn switching_to_a_desktop_name_that_exists_nowhere_makes_room_for_a_new_account(
     sb.run(&["save", "work"]);
     let (out, err, code) = sb.run(&["switch", "pepa-desktop"]);
     assert_eq!(code, 0, "{out}{err}");
-    assert!(out.contains("work-desktop parked"), "{out}");
-    assert!(out.contains("log in as that account"), "{out}");
+    assert!(
+        out.contains("work-desktop was parked in its place"),
+        "{out}"
+    );
+    assert!(out.contains("log in as pepa-desktop"), "{out}");
     assert!(!sb.desktop_dir().exists());
     assert_eq!(marker(&sb.parked_desktop("work").join("data")), "A");
     let (out, _, _) = sb.run(&["list"]);
@@ -2814,10 +2820,9 @@ fn switching_to_a_desktop_name_that_exists_nowhere_makes_room_for_a_new_account(
 
     let (out, err, code) = sb.run(&["switch", "work-desktop"]);
     assert_eq!(code, 0, "{out}{err}");
-    assert!(
-        out.contains("pepa-desktop parked, work-desktop restored"),
-        "{out}"
-    );
+    // The arrow form `switch` uses for Claude Code, since this is the same
+    // thing happening to the other half of the same profile.
+    assert!(out.contains("pepa-desktop -> work-desktop"), "{out}");
     assert_eq!(marker(&sb.desktop_dir()), "A");
     assert_eq!(marker(&sb.parked_desktop("pepa").join("data")), "P");
     let meta: serde_json::Value = serde_json::from_str(

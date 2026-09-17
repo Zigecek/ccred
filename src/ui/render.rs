@@ -254,19 +254,29 @@ fn desktop_status_line(d: &DesktopStatus, active: Option<&str>) -> String {
     line
 }
 
-/// One line on what a Desktop switch did.
-fn desktop_switch_note(d: &DesktopSwitch, to: &str) -> (anstyle::Style, String) {
+/// What a Desktop switch did: a headline, and the rest underneath it.
+///
+/// One line each is what this was, with the parts joined by semicolons and
+/// colons -- 155 columns of it in the worst case. `callout` exists for
+/// exactly this shape and every other report in this file uses it.
+fn desktop_switch_note(
+    d: &DesktopSwitch,
+    to: &str,
+    arrow: &str,
+) -> (anstyle::Style, String, Vec<String>) {
     match d {
         DesktopSwitch::AlreadyOn => (
             MUTED,
             format!("Claude Desktop is already logged in as {to}"),
+            Vec::new(),
         ),
         DesktopSwitch::LeftAlone => (
             WARN,
-            format!(
-                "Claude Desktop is logged in as an account that is not a saved profile, and \
-                 nothing is parked for {to}; left as it is"
-            ),
+            "Claude Desktop was left as it is".to_string(),
+            vec![
+                "it is logged in as an account that is not a saved profile".to_string(),
+                format!("and nothing is parked for {to}"),
+            ],
         ),
         DesktopSwitch::Moved {
             parked_as,
@@ -274,30 +284,36 @@ fn desktop_switch_note(d: &DesktopSwitch, to: &str) -> (anstyle::Style, String) 
         } => match parked_as {
             Some(p) => (
                 OK,
-                format!("{p} parked, {to} restored; start Claude Desktop"),
+                format!("{p} {arrow} {to}"),
+                vec!["start Claude Desktop".to_string()],
             ),
-            None => (OK, format!("{to} restored; start Claude Desktop")),
+            None => (
+                OK,
+                format!("{to} restored"),
+                vec!["start Claude Desktop".to_string()],
+            ),
         },
         DesktopSwitch::Moved {
             parked_as,
             restored: false,
-        } => (
-            OK,
-            match parked_as {
-                Some(p) => format!(
-                    "{p} parked. Nothing is parked for {to} yet: start Claude Desktop and log \
-                     in as that account, and that login is {to}'s from then on"
-                ),
-                None => format!(
-                    "nothing is parked for {to} yet: start Claude Desktop and log in as that \
-                     account, and that login is {to}'s from then on"
-                ),
-            },
-        ),
-        DesktopSwitch::Failed { error } => (
-            ERR,
-            format!("Claude Desktop was not switched: {error}; move the directory by hand"),
-        ),
+        } => {
+            let mut body = vec![
+                format!("start Claude Desktop and log in as {to}"),
+                format!("that login is {to}'s from then on"),
+            ];
+            if let Some(p) = parked_as {
+                body.insert(0, format!("{p} was parked in its place"));
+            }
+            (OK, format!("{to} has no parked login yet"), body)
+        }
+        DesktopSwitch::Failed { error, parked_as } => {
+            let mut body = vec![error.clone()];
+            if let Some(where_it_went) = parked_as {
+                body.push(format!("the login that was live is now at {where_it_went}"));
+            }
+            body.push("move the directory by hand to finish it".to_string());
+            (ERR, "Claude Desktop was not switched".to_string(), body)
+        }
     }
 }
 
@@ -825,14 +841,15 @@ pub fn desktop_switch(theme: &Theme, r: &crate::ops::desktop::DesktopReport) {
             plural(c.groups, "sidebar group", "sidebar groups")
         )
     };
-    let (style, text) = desktop_switch_note(&r.desktop, &r.to);
+    let (style, headline, body) = desktop_switch_note(&r.desktop, &r.to, g.arrow);
     let glyph = match style {
         s if s == OK => g.ok,
         s if s == ERR => g.err,
         s if s == WARN => g.warn,
         _ => g.bullet,
     };
-    println!("{PAD}{} {}", paint(style, glyph), paint(VALUE, &text));
+    let body: Vec<&str> = body.iter().map(String::as_str).collect();
+    callout(style, glyph, &headline, &body);
     if !r.restored_to_sidebar.is_empty() {
         println!(
             "{PAD}{} {}",

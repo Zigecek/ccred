@@ -42,6 +42,17 @@ pub struct DesktopReport {
     pub warnings: Vec<String>,
 }
 
+impl DesktopReport {
+    /// Did a move stop half-way?
+    ///
+    /// Then the Desktop has no directory and the live login sits under a
+    /// parked name, which a person has to finish by hand. Reported and
+    /// exited 0, a script would read it as done.
+    pub fn failed(&self) -> bool {
+        matches!(self.desktop, DesktopSwitch::Failed { .. })
+    }
+}
+
 /// Decide, check, then move. The check is the whole point: a Desktop that
 /// is running is refused before a directory is touched, so this command
 /// either does the move or does nothing.

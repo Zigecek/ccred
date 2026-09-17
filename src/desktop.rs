@@ -106,6 +106,11 @@ pub struct Inspection {
     pub running: bool,
     /// The account the Desktop last logged in as, when it ever has.
     pub account_uuid: Option<String>,
+    /// Why the account could not be read, when a directory is there but its
+    /// record is not readable. Distinct from "no account": a live login whose
+    /// `config.json` cannot be parsed belongs to somebody, and moving it as
+    /// though it belonged to nobody is how it gets lost.
+    pub identity_unreadable: Option<String>,
     /// `Some(false)` when the app was signed out from inside, which keeps
     /// the last account's id on record. Unknown for a Desktop that has not
     /// written the flag.
@@ -123,7 +128,15 @@ pub struct Inspection {
 
 pub fn inspect(dir: &Path) -> Inspection {
     let installed = dir.is_dir();
-    let config = if installed { read_config(dir) } else { None };
+    let read = if installed {
+        read_config(dir)
+    } else {
+        Ok(None)
+    };
+    // Held, not discarded: everything that moves a directory asks this
+    // first, and a directory whose owner cannot be read is not one to move.
+    let identity_unreadable = read.as_ref().err().map(|e| e.to_string());
+    let config = read.ok().flatten();
     let account_uuid = config
         .as_ref()
         .and_then(|c| c.last_known_account_uuid.clone())
@@ -141,6 +154,7 @@ pub fn inspect(dir: &Path) -> Inspection {
         installed,
         running: installed && is_running(dir),
         account_uuid,
+        identity_unreadable,
         signed_in,
         other_accounts,
     }
@@ -177,14 +191,35 @@ fn accounts_with_sessions(dir: &Path) -> Vec<String> {
     found
 }
 
-fn read_config(dir: &Path) -> Option<DesktopConfig> {
-    let raw = std::fs::read(dir.join("config.json")).ok()?;
-    serde_json::from_slice(&raw).ok()
+/// The Desktop's own record, or why it could not be read.
+///
+/// `Ok(None)` is a directory with no `config.json` at all: a Desktop that has
+/// never been started. Anything else -- a read that failed, a file being
+/// rewritten as we looked, one a crash truncated -- is an `Err`, and the
+/// difference matters more than it looks: the identity in that file is the
+/// only thing that says whose the live login is, and treating "cannot read
+/// it" as "nobody's" is how a live login gets parked where nothing will look
+/// for it again.
+fn read_config(dir: &Path) -> crate::Result<Option<DesktopConfig>> {
+    let path = dir.join("config.json");
+    let raw = match std::fs::read(&path) {
+        Ok(raw) => raw,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(source) => return Err(CcredError::Io { path, source }),
+    };
+    if let Some(e) = crate::store::encoding_error(&raw, &path) {
+        return Err(e);
+    }
+    serde_json::from_slice(&crate::store::without_bom(raw))
+        .map(Some)
+        .map_err(|source| CcredError::Json { path, source })
 }
 
 #[cfg(test)]
 fn account_uuid(dir: &Path) -> Option<String> {
-    read_config(dir)?
+    read_config(dir)
+        .ok()
+        .flatten()?
         .last_known_account_uuid
         .filter(|u| !u.is_empty())
 }
@@ -432,7 +467,15 @@ pub enum DesktopSwitch {
         restored: bool,
     },
     /// Something refused half-way; the message says what to do by hand.
-    Failed { error: String },
+    Failed {
+        error: String,
+        /// Where the live login ended up, when it had already been parked.
+        /// Without this the directory is somewhere the report does not name
+        /// and no command looks: the person finishing the move by hand has
+        /// to be told where to find it.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        parked_as: Option<String>,
+    },
 }
 
 /// The moves a switch will make, decided before anything is written.
@@ -482,6 +525,16 @@ pub fn preflight(paths: &Paths, inspection: &Inspection, step: &Step) -> crate::
     let Step::Move { park_as, .. } = step else {
         return Ok(());
     };
+    // Before anything else, because everything else assumes this is known.
+    // A directory whose `config.json` cannot be read still belongs to
+    // somebody -- and with no id to match, `owner` calls it unclaimed and the
+    // plan parks it under `unclaimed-<ms>`, which no command restores. That
+    // is a live login lost to a read error.
+    if let Some(why) = &inspection.identity_unreadable {
+        return Err(CcredError::UnsafeWrite(format!(
+            "Claude Desktop's record of its account cannot be read ({why}), so there is no telling whose the live login is; nothing was moved"
+        )));
+    }
     if inspection.running {
         return Err(CcredError::UnsafeWrite(
             "Claude Desktop is running; quit it first. Its login is a directory, and one \
@@ -524,12 +577,25 @@ pub fn apply(paths: &Paths, target: &ProfileName, step: Step) -> DesktopSwitch {
                     }),
                     restored: restore,
                 },
-                Err(e) => DesktopSwitch::Failed {
-                    error: e.to_string(),
+                Err(f) => DesktopSwitch::Failed {
+                    error: f.error.to_string(),
+                    // Only when the first rename went through: that is the
+                    // case where the live login is no longer where the
+                    // Desktop will look for it.
+                    parked_as: park_as
+                        .filter(|_| f.parked)
+                        .map(|n| parking_place(paths, &n).display().to_string()),
                 },
             }
         }
     }
+}
+
+/// A move that stopped, and whether the live login had already been parked
+/// when it did. The second half is what a person needs to finish it by hand.
+struct MoveFailure {
+    error: CcredError,
+    parked: bool,
 }
 
 fn apply_move(
@@ -537,22 +603,33 @@ fn apply_move(
     target: &ProfileName,
     park_as: Option<&str>,
     restore: bool,
-) -> crate::Result<()> {
+) -> Result<(), MoveFailure> {
     let live = paths.desktop_dir();
+    let mut parked = false;
     if let Some(name) = park_as {
         let dest = parking_place(paths, name);
         // A parking place is built by joining, so it has a parent -- but this
         // runs while the live login is about to be moved, and a panic there
         // would leave someone with no message and a directory in mid-air.
         let parent = dest.parent().unwrap_or(&dest);
-        std::fs::create_dir_all(parent).map_err(|source| CcredError::Io {
-            path: parent.to_path_buf(),
-            source,
+        std::fs::create_dir_all(parent).map_err(|source| MoveFailure {
+            error: CcredError::Io {
+                path: parent.to_path_buf(),
+                source,
+            },
+            parked: false,
         })?;
-        rename(live, &dest)?;
+        rename(live, &dest).map_err(|error| MoveFailure {
+            error,
+            parked: false,
+        })?;
+        parked = true;
     }
     if restore {
-        rename(&DesktopRepo::new(paths).data_dir(target)?, live)?;
+        let from = DesktopRepo::new(paths)
+            .data_dir(target)
+            .map_err(|error| MoveFailure { error, parked })?;
+        rename(&from, live).map_err(|error| MoveFailure { error, parked })?;
     }
     Ok(())
 }
@@ -1316,6 +1393,47 @@ mod tests {
         assert_eq!(moved(&step), (None, true));
     }
 
+    /// The live directory belongs to somebody even when the file that says
+    /// who cannot be read. With no id to match, `owner` calls it unclaimed
+    /// and the plan parks it under `unclaimed-<ms>`, which no command
+    /// restores -- a live login lost to a read error.
+    #[test]
+    fn a_login_whose_owner_cannot_be_read_is_not_moved() {
+        let paths = Paths::with_overrides(PathBuf::from("/home/user"), None, None);
+        let unreadable = Inspection {
+            installed: true,
+            running: false,
+            account_uuid: None,
+            identity_unreadable: Some("malformed JSON in config.json".into()),
+            signed_in: None,
+            other_accounts: Vec::new(),
+        };
+        let move_it = Step::Move {
+            park_as: Some(format!("{UNCLAIMED_PREFIX}17")),
+            restore: true,
+        };
+        let err = preflight(&paths, &unreadable, &move_it).unwrap_err();
+        let said = err.to_string();
+        assert!(said.contains("cannot be read"), "{said}");
+        assert!(said.contains("nothing was moved"), "{said}");
+
+        // Reading nothing because there is nothing to read is a different
+        // thing, and still allowed: that is a Desktop that never logged in.
+        let never_logged_in = Inspection {
+            installed: true,
+            running: false,
+            account_uuid: None,
+            identity_unreadable: None,
+            signed_in: None,
+            other_accounts: Vec::new(),
+        };
+        assert!(preflight(&paths, &never_logged_in, &move_it).is_ok());
+
+        // And a step that moves nothing is never refused for this.
+        let stay = Step::Leave(DesktopSwitch::AlreadyOn);
+        assert!(preflight(&paths, &unreadable, &stay).is_ok());
+    }
+
     #[test]
     fn a_running_desktop_refuses_only_when_it_would_be_moved() {
         let paths = Paths::with_overrides(PathBuf::from("/home/user"), None, None);
@@ -1323,6 +1441,7 @@ mod tests {
             installed: true,
             running: true,
             account_uuid: Some("u".into()),
+            identity_unreadable: None,
             signed_in: None,
             other_accounts: Vec::new(),
         };
@@ -1413,6 +1532,7 @@ mod tests {
             installed: true,
             running: false,
             account_uuid: Some("u-1".into()),
+            identity_unreadable: None,
             signed_in: None,
             other_accounts: Vec::new(),
         };
