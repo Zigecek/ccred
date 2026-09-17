@@ -115,7 +115,7 @@ pub enum Command {
     /// active pointer with it when it was the active one. No credential is
     /// written: `rm` and `save` again only works for the account that
     /// happens to be logged in.
-    #[command(display_order = 6)]
+    #[command(display_order = 5)]
     Rename {
         /// The profile to move.
         from: String,
@@ -128,7 +128,7 @@ pub enum Command {
     /// A copy of its credentials is kept in the backups directory first: a
     /// mistyped name is the one mistake here that cannot otherwise be taken
     /// back.
-    #[command(alias = "remove", display_order = 5)]
+    #[command(alias = "remove", display_order = 6)]
     Rm {
         /// The profile to delete.
         name: String,
@@ -147,7 +147,7 @@ pub enum Command {
     /// that copy back, for when the current credentials have been damaged --
     /// a spawned Claude Code signing itself out is the case this exists for.
     /// `ccred doctor` says when a profile has a copy worth restoring.
-    #[command(display_order = 6)]
+    #[command(display_order = 7)]
     Restore {
         /// The profile whose last-known-good copy goes back.
         name: String,
@@ -157,7 +157,7 @@ pub enum Command {
     ///
     /// Safe to run more often than needed: it checks when it last ran and
     /// exits successfully without doing anything if that was recent.
-    #[command(display_order = 7)]
+    #[command(display_order = 8)]
     Refresh {
         /// Do nothing if the last run was more recent than this many hours.
         #[arg(long, value_name = "HOURS")]
@@ -192,11 +192,11 @@ pub enum Command {
     },
 
     /// Install, remove or inspect the background refresh schedule.
-    #[command(display_order = 8)]
+    #[command(display_order = 9)]
     Schedule(ScheduleArgs),
 
     /// Check for anything that is quietly wrong.
-    #[command(display_order = 9)]
+    #[command(display_order = 10)]
     Doctor,
 
     /// Remove ccred from this machine.
@@ -208,7 +208,7 @@ pub enum Command {
     /// A binary installed by Scoop, npm, Homebrew, apt or cargo is left for
     /// that tool to remove, and the command to do it is printed: deleting a
     /// file a package manager tracks corrupts its record of what is installed.
-    #[command(display_order = 10)]
+    #[command(display_order = 11)]
     Uninstall {
         /// Also delete every stored profile, backup and log under ~/.ccred.
         /// Those are the only copies of accounts that are not logged in.
@@ -227,7 +227,7 @@ pub enum Command {
     /// A scheduled run is otherwise invisible on Windows, where Task
     /// Scheduler discards its output entirely. Decisions and numbers only --
     /// never an error message, which could echo a token.
-    #[command(display_order = 11)]
+    #[command(display_order = 12)]
     Log {
         /// How many runs to show.
         #[arg(long, short = 'n', value_name = "COUNT", default_value_t = 20)]

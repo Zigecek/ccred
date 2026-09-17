@@ -1076,6 +1076,42 @@ fn a_profile_can_be_given_another_name() {
     assert!(!out.contains("does not exist"), "a dangling pointer: {out}");
 }
 
+/// The order commands are listed in is set by hand, and two of them shared a
+/// number -- so where `rename` appeared depended on declaration order rather
+/// than on anyone's intent. The list is a person's first look at what this
+/// program does.
+#[test]
+fn the_commands_are_listed_in_the_order_they_are_used() {
+    let sb = Sandbox::new();
+    let (out, err, code) = sb.run(&["--help"]);
+    assert_eq!(code, 0, "{err}");
+    let listed: Vec<&str> = out
+        .lines()
+        .skip_while(|l| l.trim() != "Commands:")
+        .skip(1)
+        .take_while(|l| !l.trim().is_empty())
+        .filter_map(|l| l.split_whitespace().next())
+        .collect();
+    assert_eq!(
+        listed,
+        vec![
+            "current",
+            "list",
+            "save",
+            "switch",
+            "rename",
+            "rm",
+            "restore",
+            "refresh",
+            "schedule",
+            "doctor",
+            "uninstall",
+            "log",
+        ],
+        "the README lists them in this order too"
+    );
+}
+
 /// `ccred rm --help` listed `<NAME>` with nothing beside it, and so did
 /// `switch` and `restore`: every flag was documented and the arguments were
 /// not. The long help is what someone reads when they are unsure, which is
