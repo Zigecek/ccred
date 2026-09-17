@@ -56,6 +56,11 @@ pub const SUFFIX: &str = "-desktop";
 
 /// The parked directory, inside the profile's own.
 pub(crate) const DATA_DIR: &str = "data";
+/// The file every Claude Desktop data directory has, and the one this
+/// tool reads an account out of. `paths` looks for it too, to tell a
+/// real directory from a path that merely could be one, so it is spelled
+/// once.
+pub(crate) const CONFIG_FILE: &str = "config.json";
 const META_FILE: &str = "meta.json";
 /// Parking places for directories that belong to no profile.
 const UNCLAIMED_PREFIX: &str = "unclaimed-";
@@ -173,7 +178,7 @@ pub fn inspect(dir: &Path) -> Inspection {
 /// Reads directory names only: `claude-code-sessions/<account>/<org>/` with
 /// a `local_*.json` inside. The files themselves are not opened.
 fn accounts_with_sessions(dir: &Path) -> Vec<String> {
-    let Ok(accounts) = std::fs::read_dir(dir.join("claude-code-sessions")) else {
+    let Ok(accounts) = std::fs::read_dir(dir.join(SESSIONS_DIR)) else {
         return Vec::new();
     };
     let mut found: Vec<String> = accounts
@@ -209,7 +214,7 @@ fn accounts_with_sessions(dir: &Path) -> Vec<String> {
 /// it" as "nobody's" is how a live login gets parked where nothing will look
 /// for it again.
 fn read_config(dir: &Path) -> crate::Result<Option<DesktopConfig>> {
-    let path = dir.join("config.json");
+    let path = dir.join(CONFIG_FILE);
     let raw = match std::fs::read(&path) {
         Ok(raw) => raw,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),

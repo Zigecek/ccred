@@ -290,10 +290,7 @@ impl Paths {
 /// The last path component of the Desktop's data directory on every platform.
 const DESKTOP_DIR_NAME: &str = "Claude";
 
-/// The file every Claude Desktop data directory has, and the one this tool
-/// reads an account out of. Its presence is what tells a real directory from
-/// a path that merely could be one.
-const DESKTOP_CONFIG_FILE: &str = "config.json";
+use crate::desktop::CONFIG_FILE as DESKTOP_CONFIG_FILE;
 
 /// Which of the two places a Windows Claude Desktop keeps its data.
 ///
