@@ -326,7 +326,7 @@ fn windows_desktop_dir(
             candidates.push((at, dir));
         }
     }
-    candidates.sort_by(|a, b| a.0.cmp(&b.0));
+    candidates.sort_by_key(|(at, _)| *at);
     candidates
         .pop()
         .map(|(_, dir)| dir)
