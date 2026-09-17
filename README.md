@@ -242,6 +242,7 @@ output always says which halves were saved and why the other was not.
 
 ```sh
 ccred save work                  # work, and work-desktop if the Desktop is logged in
+ccred switch personal-desktop    # parks work-desktop, starts Desktop fresh; log in as personal
 ccred switch work-desktop        # Claude Desktop only; quit it first
 ccred switch work                # Claude Code only; the Desktop can stay open
 ccred rm work-desktop            # the Desktop profile only; `rm work` leaves it
@@ -274,9 +275,12 @@ directory's own `lastKnownAccountUuid`, never assumed -- and puts `work`'s
 parked one in its place. When nothing is parked for `work` yet, the Desktop
 starts fresh and asks for a login: log in as that account, and the next
 switch away parks it under the right name. That is how a second Desktop
-account is brought in: `ccred switch personal-desktop` while only
-`personal` exists parks the current login, makes `personal-desktop` from
-`personal`'s identity, and leaves the Desktop for you to log in.
+account is brought in: with your current login saved (`ccred save work`),
+quit the Desktop and run `ccred switch personal-desktop`. It parks
+`work-desktop`, prepares a fresh state for `personal-desktop`, and you
+simply open the Desktop and log in -- that login belongs to
+`personal-desktop` from then on. Never sign out inside the app: signing
+out deletes the session from disk, whereas `ccred switch` parks it intact.
 
 Three things follow from moving a directory rather than writing a file:
 
