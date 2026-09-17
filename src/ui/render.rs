@@ -1236,11 +1236,7 @@ fn print_warnings(theme: &Theme, warnings: &[Warning]) {
     }
     println!();
     for w in warnings {
-        println!(
-            "{PAD}{} {}",
-            paint(WARN, theme.glyphs.warn),
-            paint(VALUE, &w.to_string())
-        );
+        warning(theme, &w.to_string());
     }
 }
 
@@ -1354,7 +1350,8 @@ pub fn uninstall_plan(theme: &Theme, p: &crate::ops::uninstall::Plan, dry_run: b
     f.add(
         "Binary",
         format!(
-            "{}   {}",
+            "{}
+{}",
             paint(style, &binary),
             paint(MUTED, &p.exe.display().to_string())
         ),
@@ -1362,7 +1359,8 @@ pub fn uninstall_plan(theme: &Theme, p: &crate::ops::uninstall::Plan, dry_run: b
     let schedule = match (&p.schedule, &p.schedule_for) {
         (true, _) => paint(OK, "will be removed"),
         (false, Some(other)) => format!(
-            "{}   {}",
+            "{}
+{}",
             paint(WARN, "left alone, it starts another copy"),
             paint(MUTED, &other.display().to_string())
         ),
@@ -1373,7 +1371,8 @@ pub fn uninstall_plan(theme: &Theme, p: &crate::ops::uninstall::Plan, dry_run: b
         f.add(
             "Receipt",
             format!(
-                "{}   {}",
+                "{}
+{}",
                 paint(OK, "will be removed"),
                 paint(MUTED, &r.display().to_string())
             ),
@@ -1389,21 +1388,26 @@ pub fn uninstall_plan(theme: &Theme, p: &crate::ops::uninstall::Plan, dry_run: b
         paint(MUTED, "none stored")
     } else if p.deletes_data() {
         format!(
-            "{}   {}",
+            "{}
+{}",
             paint(ERR, &format!("will be DELETED: {profiles}")),
             paint(MUTED, &data)
         )
     } else if let (true, Some(why)) = (p.purge, &p.purge_refused) {
         format!(
-            "{}   {}",
+            "{}
+{}
+{}",
             paint(WARN, "kept, purge refused"),
-            paint(MUTED, &format!("{data} -- {why}"))
+            paint(MUTED, &data),
+            paint(MUTED, why)
         )
     } else {
         format!(
-            "{}   {}",
-            paint(OK, &format!("kept: {profiles}")),
-            paint(MUTED, &format!("{data} -- --purge deletes them"))
+            "{}
+{}",
+            paint(OK, &format!("kept: {profiles} -- --purge deletes them")),
+            paint(MUTED, &data)
         )
     };
     f.add("Profiles", row);

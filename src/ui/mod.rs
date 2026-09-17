@@ -181,13 +181,23 @@ impl Fields {
         self.rows.is_empty()
     }
 
+    /// A value with a newline in it continues under itself rather than
+    /// beside the label again: that is how a row says one thing and then
+    /// names the file it is about, without the two running together into a
+    /// line wider than the page.
     pub fn render(&self, indent: &str) -> String {
         let w = self.rows.iter().map(|(l, _)| width(l)).max().unwrap_or(0);
         self.rows
             .iter()
             .map(|(l, v)| {
                 let pad = " ".repeat(w - width(l));
-                format!("{indent}{}{pad}   {v}", paint(LABEL, l))
+                let mut lines = v.split('\n');
+                let first = lines.next().unwrap_or_default();
+                let mut out = format!("{indent}{}{pad}   {first}", paint(LABEL, l));
+                for rest in lines {
+                    out.push_str(&format!("\n{indent}{}   {rest}", " ".repeat(w)));
+                }
+                out
             })
             .collect::<Vec<_>>()
             .join("\n")

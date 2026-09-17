@@ -199,7 +199,7 @@ fn save_list_switch_round_trip() {
 
     let (out, _, code) = sb.run(&["switch", "work"]);
     assert_eq!(code, 0, "{out}");
-    assert!(out.contains("personal -> work"), "{out}");
+    assert!(flat(&out).contains("personal -> work"), "{out}");
 
     let (out, _, _) = sb.run(&["current"]);
     assert!(out.contains("alice@example.com"), "{out}");
@@ -216,7 +216,7 @@ fn a_pointer_that_disagrees_with_the_live_account_is_reported() {
 
     let (out, _, _) = sb.run(&["current"]);
     assert!(
-        out.contains("the active profile is 'work'"),
+        flat(&out).contains("the active profile is 'work'"),
         "no mismatch warning in: {out}"
     );
     assert!(out.contains("bob@example.com"), "{out}");
@@ -224,7 +224,7 @@ fn a_pointer_that_disagrees_with_the_live_account_is_reported() {
     let (out, _, code) = sb.run(&["doctor"]);
     assert_eq!(code, 7, "doctor should fail loudly: {out}");
     assert!(
-        out.contains("the active profile is not the account that is logged in"),
+        flat(&out).contains("the active profile is not the account that is logged in"),
         "{out}"
     );
 }
@@ -238,7 +238,7 @@ fn storing_a_different_account_into_an_existing_profile_is_refused() {
     sb.login_b();
     let (_, err, code) = sb.run(&["save", "work"]);
     assert_eq!(code, 7, "expected an unsafe-write exit: {err}");
-    assert!(err.contains("belongs to"), "{err}");
+    assert!(flat(&err).contains("belongs to"), "{err}");
 
     let after = std::fs::read(sb.path().join(".ccred/profiles/work/.credentials.json")).unwrap();
     assert_eq!(before, after, "the profile must not have been touched");
@@ -337,7 +337,7 @@ fn a_bare_profile_name_suggests_switch_instead_of_guessing() {
 
     let (_, err, code) = sb.run(&["work"]);
     assert_eq!(code, 2, "{err}");
-    assert!(err.contains("ccred switch work"), "{err}");
+    assert!(flat(&err).contains("ccred switch work"), "{err}");
 }
 
 /// Switching to the profile that is already active is a resync: the live
@@ -355,8 +355,8 @@ fn switching_to_the_active_profile_says_it_was_already_active() {
 
     let (out, err, code) = sb.run(&["switch", "work"]);
     assert_eq!(code, 0, "{err}{out}");
-    assert!(out.contains("already active"), "{out}");
-    assert!(!out.contains("work -> work"), "{out}");
+    assert!(flat(&out).contains("already active"), "{out}");
+    assert!(!flat(&out).contains("work -> work"), "{out}");
     // Compared as JSON, not as bytes: the fixture is written pretty and ccred
     // writes the one-line shape Claude Code uses, so the file is reformatted
     // on the way through. What must not change is what it says.
@@ -403,7 +403,7 @@ fn guards_report_distinct_exit_codes() {
     // Path traversal is rejected by name validation.
     let (_, err, code) = sb.run(&["switch", "../../etc"]);
     assert_eq!(code, 3, "{err}");
-    assert!(err.contains("invalid profile name"), "{err}");
+    assert!(flat(&err).contains("invalid profile name"), "{err}");
 }
 
 #[test]
@@ -458,7 +458,7 @@ fn refresh_leaves_healthy_profiles_alone_and_never_spawns() {
     assert_eq!(code, 0, "{err}");
     assert!(out.contains("work"), "{out}");
     assert!(
-        out.contains("up to date") || out.contains("mirrored"),
+        flat(&out).contains("up to date") || out.contains("mirrored"),
         "nothing should have been refreshed:
 {out}"
     );
@@ -477,7 +477,7 @@ fn refresh_rate_limits_itself_so_over_firing_is_harmless() {
 
     let (out, _, code) = sb.run(&["refresh", "--if-older-than", "24"]);
     assert_eq!(code, 0, "an over-fire must not be an error");
-    assert!(out.contains("nothing to do"), "{out}");
+    assert!(flat(&out).contains("nothing to do"), "{out}");
 }
 
 #[test]
@@ -706,7 +706,7 @@ fn a_damaged_profile_can_be_restored_from_its_last_known_good_copy() {
     let (out, _, code) = sb.run(&["doctor"]);
     assert_eq!(code, 7, "a wiped profile must fail loudly: {out}");
     assert!(
-        out.contains("ccred restore work"),
+        flat(&out).contains("ccred restore work"),
         "doctor must point at the way back: {out}"
     );
 
@@ -734,7 +734,7 @@ fn restoring_a_profile_with_no_usable_copy_is_refused() {
 
     let (_, err, code) = sb.run(&["restore", "work"]);
     assert_eq!(code, 7, "{err}");
-    assert!(err.contains("no usable earlier copy"), "{err}");
+    assert!(flat(&err).contains("no usable earlier copy"), "{err}");
 }
 
 /// The crash-safety rule, driven through the real recovery rather than the
@@ -822,7 +822,7 @@ fn switching_to_a_profile_with_no_stored_account_details_still_works() {
     let (out, err, code) = sb.run(&["switch", "work"]);
     assert_eq!(code, 0, "{err}{out}");
     assert!(
-        out.contains("account details were not restored"),
+        flat(&out).contains("account details were not restored"),
         "the degradation must be stated: {out}"
     );
 
@@ -849,7 +849,7 @@ fn switching_away_from_a_deleted_profile_is_reported_not_fatal() {
     let (out, err, code) = sb.run(&["switch", "work"]);
     assert_eq!(code, 0, "{err}{out}");
     assert!(
-        out.contains("no longer exists"),
+        flat(&out).contains("no longer exists"),
         "the skipped mirror must be explained: {out}"
     );
     assert_eq!(
@@ -880,7 +880,7 @@ fn nothing_is_written_outside_the_home_it_was_given() {
     let (out, err, code) = sb.run(&["log"]);
     assert_eq!(code, 0, "{err}{out}");
     assert!(
-        out.contains("mirror active") || out.contains("skip"),
+        flat(&out).contains("mirror active") || out.contains("skip"),
         "{out}"
     );
 }
@@ -915,7 +915,7 @@ fn doctor_reports_credentials_other_users_can_read() {
 
     let (out, _, code) = sb.run(&["doctor"]);
     assert_ne!(code, 7, "a freshly saved profile must be private: {out}");
-    assert!(out.contains("none readable by anyone else"), "{out}");
+    assert!(flat(&out).contains("none readable by anyone else"), "{out}");
 
     let creds = sb.path().join(".ccred/profiles/work/.credentials.json");
     std::fs::set_permissions(&creds, std::fs::Permissions::from_mode(0o644)).unwrap();
@@ -925,7 +925,7 @@ fn doctor_reports_credentials_other_users_can_read() {
         code, 7,
         "a world-readable credential file must fail loudly: {out}"
     );
-    assert!(out.contains("readable by other users"), "{out}");
+    assert!(flat(&out).contains("readable by other users"), "{out}");
     assert!(out.contains("644"), "the mode found must be named: {out}");
 }
 
@@ -943,7 +943,10 @@ fn doctor_checks_the_copies_of_credentials_too() {
     let (out, err, code) = sb.run(&["rm", "work"]); // leaves a backup
     assert_eq!(code, 0, "{out}{err}");
     let (out, _, code) = sb.run(&["doctor"]);
-    assert!(out.contains("none readable by anyone else"), "{code} {out}");
+    assert!(
+        flat(&out).contains("none readable by anyone else"),
+        "{code} {out}"
+    );
 
     let backup = walk(&sb.path().join(".ccred/backups"))
         .into_iter()
@@ -1017,11 +1020,11 @@ fn doctor_still_reports_when_the_profiles_directory_is_unreadable() {
 
     assert_eq!(code, 7, "it must fail loudly: {err}{out}");
     assert!(
-        out.contains("config directory"),
+        flat(&out).contains("config directory"),
         "the rest of the report must still be there: {out}"
     );
     assert!(
-        out.contains("cannot be read") || out.contains("unreadable"),
+        flat(&out).contains("cannot be read") || out.contains("unreadable"),
         "and it must say what it could not read: {out}"
     );
 }
@@ -1049,7 +1052,7 @@ fn list_shows_a_profile_whose_metadata_will_not_parse() {
     // The count and the warning are two styled runs joined by hand, and the
     // join once put two spaces after a comma.
     assert!(
-        out.contains("2 profiles, 1 needs attention"),
+        flat(&out).contains("2 profiles, 1 needs attention"),
         "the summary spacing: {out}"
     );
 }
@@ -1072,7 +1075,7 @@ fn a_removed_profile_can_be_put_back_from_the_copy_rm_kept() {
 
     let (out, err, code) = sb.run(&["restore", "work"]);
     assert_eq!(code, 0, "{err}{out}");
-    assert!(out.contains("put work back"), "{out}");
+    assert!(flat(&out).contains("put work back"), "{out}");
     let after: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&creds).unwrap()).unwrap();
     let was: serde_json::Value = serde_json::from_str(&before).unwrap();
@@ -1083,7 +1086,7 @@ fn a_removed_profile_can_be_put_back_from_the_copy_rm_kept() {
 
     // What did not come back is said outright: the account details a switch
     // restores are not in the copy.
-    assert!(out.contains("credentials only"), "{out}");
+    assert!(flat(&out).contains("credentials only"), "{out}");
     let (list, _, _) = sb.run(&["list"]);
     assert!(list.contains("unknown account"), "{list}");
 
@@ -1180,8 +1183,11 @@ fn a_restored_sidebar_counts_what_actually_went_in() {
 
     let (out, err, code) = sb.run(&["switch", "work-desktop"]);
     assert_eq!(code, 0, "{err}{out}");
-    assert!(out.contains("1 session"), "one of the two moved: {out}");
-    assert!(!out.contains("2 sessions"), "{out}");
+    assert!(
+        flat(&out).contains("1 session"),
+        "one of the two moved: {out}"
+    );
+    assert!(!flat(&out).contains("2 sessions"), "{out}");
 
     // And the one that was already there is untouched.
     let kept = std::fs::read_to_string(live.join("local_1.json")).unwrap();
@@ -1227,7 +1233,7 @@ fn groups_that_cannot_be_put_back_are_kept_not_dropped() {
         carry.join("groups.json").is_file(),
         "the groups are kept for the next switch: {out}"
     );
-    assert!(out.contains("stayed with the profile"), "{out}");
+    assert!(flat(&out).contains("stayed with the profile"), "{out}");
 }
 
 /// The most destructive command in the program, read before answering it:
@@ -1246,12 +1252,12 @@ fn the_uninstall_plan_says_a_parked_desktop_login_would_go() {
     let (out, err, code) = sb.run(&["uninstall", "--dry-run"]);
     assert_eq!(code, 0, "{err}{out}");
     assert!(out.contains("Desktop"), "{out}");
-    assert!(out.contains("1 login"), "{out}");
-    assert!(out.contains("--purge deletes them"), "{out}");
+    assert!(flat(&out).contains("1 login"), "{out}");
+    assert!(flat(&out).contains("--purge deletes them"), "{out}");
 
     let (out, _, code) = sb.run(&["uninstall", "--purge", "--dry-run"]);
     assert_eq!(code, 0, "{out}");
-    assert!(out.contains("will be DELETED: 1 login"), "{out}");
+    assert!(flat(&out).contains("will be DELETED: 1 login"), "{out}");
 }
 
 /// `work` and `work-desktop` are one profile under two roofs, so a rename
@@ -1358,7 +1364,7 @@ fn a_profile_can_be_given_another_name() {
     // The active one: the pointer has to follow.
     let (out, err, code) = sb.run(&["rename", "personal", "main"]);
     assert_eq!(code, 0, "{err}{out}");
-    assert!(out.contains("still is"), "{out}");
+    assert!(flat(&out).contains("still is"), "{out}");
     assert_eq!(
         std::fs::read_to_string(sb.path().join(".ccred/state/current"))
             .unwrap()
@@ -1371,7 +1377,7 @@ fn a_profile_can_be_given_another_name() {
     // Onto a name already in use, and from a name that is not there.
     let (_, err, code) = sb.run(&["rename", "job", "main"]);
     assert_eq!(code, 7, "{err}");
-    assert!(err.contains("already exists"), "{err}");
+    assert!(flat(&err).contains("already exists"), "{err}");
     let (_, err, code) = sb.run(&["rename", "ghost", "whatever"]);
     assert_eq!(code, 3, "{err}");
 
@@ -1389,7 +1395,7 @@ fn a_profile_can_be_given_another_name() {
     // file system that does tell them apart.
     let (out, err, code) = sb.run(&["rename", "main", "MAIN"]);
     assert_eq!(code, 0, "{err}{out}");
-    assert!(out.contains("still is"), "{out}");
+    assert!(flat(&out).contains("still is"), "{out}");
     assert_eq!(
         std::fs::read_to_string(sb.path().join(".ccred/state/current"))
             .unwrap()
@@ -1398,7 +1404,10 @@ fn a_profile_can_be_given_another_name() {
     );
     let (out, _, _) = sb.run(&["list"]);
     assert!(out.contains("MAIN"), "{out}");
-    assert!(!out.contains("does not exist"), "a dangling pointer: {out}");
+    assert!(
+        !flat(&out).contains("does not exist"),
+        "a dangling pointer: {out}"
+    );
 }
 
 /// The order commands are listed in is set by hand, and two of them shared a
@@ -1486,7 +1495,7 @@ fn rm_purge_leaves_none_of_that_account_behind() {
 
     let (out, err, code) = sb.run(&["rm", "work", "--purge"]);
     assert_eq!(code, 0, "{err}{out}");
-    assert!(out.contains("deleted the copies"), "{out}");
+    assert!(flat(&out).contains("deleted the copies"), "{out}");
     assert!(!copies.exists(), "the copies outlived the purge: {out}");
     assert!(
         !sb.path().join(".ccred/profiles/work").exists(),
@@ -1506,7 +1515,7 @@ fn rm_purge_leaves_none_of_that_account_behind() {
     sb.run(&["switch", "personal"]);
     let (out, _, code) = sb.run(&["rm", "spare", "--purge"]);
     assert_eq!(code, 0, "{out}");
-    assert!(out.contains("no earlier copies"), "{out}");
+    assert!(flat(&out).contains("no earlier copies"), "{out}");
 }
 
 /// The account blob is a cached copy of something Claude Code refetches. The
@@ -1553,9 +1562,9 @@ fn a_profile_that_cannot_be_written_is_not_a_prison() {
 
     let (out, err, code) = sb.run(&["switch", "work"]);
     assert_eq!(code, 0, "{err}{out}");
-    assert!(out.contains("did not update 'personal'"), "{out}");
+    assert!(flat(&out).contains("did not update 'personal'"), "{out}");
     assert!(
-        out.contains("not in any profile"),
+        flat(&out).contains("not in any profile"),
         "the copy is named: {out}"
     );
 
@@ -1658,7 +1667,7 @@ fn a_scheduled_job_can_be_told_where_claude_is() {
         &sb.path().join("nowhere").join("claude").to_string_lossy(),
     ]);
     assert_eq!(code, 8, "a path that is not there is refused: {err}");
-    assert!(err.contains("does not exist"), "{err}");
+    assert!(flat(&err).contains("does not exist"), "{err}");
 }
 
 /// Six bytes decide which profile is live. When they turn to nonsense, the
@@ -1675,7 +1684,7 @@ fn a_pointer_that_cannot_be_read_is_reported_not_fatal() {
         let (out, err, code) = sb.run(args);
         assert_eq!(code, 0, "{args:?} must still answer: {err}{out}");
         assert!(
-            out.contains("pointer cannot be read") || out.contains("pointer at"),
+            flat(&out).contains("pointer cannot be read") || flat(&out).contains("pointer at"),
             "{args:?}: {out}"
         );
     }
@@ -1712,7 +1721,7 @@ fn switching_with_no_active_profile_keeps_the_live_credentials() {
 
     let (out, err, code) = sb.run(&["switch", "work"]);
     assert_eq!(code, 0, "{err}{out}");
-    assert!(out.contains("not in any profile"), "{out}");
+    assert!(flat(&out).contains("not in any profile"), "{out}");
 
     let kept: Vec<_> = std::fs::read_dir(
         sb.path()
@@ -1741,7 +1750,7 @@ fn list_says_so_when_the_active_profile_is_not_there() {
     let (out, err, code) = sb.run(&["list"]);
     assert_eq!(code, 0, "{err}{out}");
     assert!(
-        out.contains("the active profile 'ghost' does not exist"),
+        flat(&out).contains("the active profile 'ghost' does not exist"),
         "{out}"
     );
 
@@ -1768,7 +1777,7 @@ fn current_reports_an_unreadable_live_store_instead_of_refusing() {
 
     let (out, err, code) = sb.run(&["current"]);
     assert_eq!(code, 0, "{err}{out}");
-    assert!(out.contains("cannot be read"), "{out}");
+    assert!(flat(&out).contains("cannot be read"), "{out}");
 
     // And doctor is where it is an error.
     let (dout, _, dcode) = sb.run(&["doctor"]);
@@ -1827,7 +1836,7 @@ fn corrupt_metadata_on_the_active_profile_does_not_silence_any_command() {
     let (out, _, code) = sb.run(&["doctor"]);
     assert_eq!(code, 7, "doctor must fail loudly: {out}");
     assert!(
-        out.contains("config directory"),
+        flat(&out).contains("config directory"),
         "the rest of the report must survive: {out}"
     );
 
@@ -1873,9 +1882,9 @@ fn uninstall_dry_run_names_what_it_would_delete_and_removes_nothing() {
 
     let (out, err, code) = sb.run(&["uninstall", "--purge", "--dry-run"]);
     assert_eq!(code, 0, "{err}");
-    assert!(out.contains("DELETED: work"), "{out}");
-    assert!(out.contains("dry run"), "{out}");
-    assert!(out.contains("not touched"), "{out}");
+    assert!(flat(&out).contains("DELETED: work"), "{out}");
+    assert!(flat(&out).contains("dry run"), "{out}");
+    assert!(flat(&out).contains("not touched"), "{out}");
 
     let (out, err, code) = sb.run(&["uninstall", "--dry-run", "--json"]);
     assert_eq!(code, 0, "{err}");
@@ -2162,7 +2171,7 @@ fn a_due_profile_is_renewed_through_the_first_rung_that_works() {
     assert!(calls[2].starts_with("mcp list|"), "{calls:?}");
 
     let (out, _, _) = sb.run(&["log"]);
-    assert!(out.contains("work refresh"), "{out}");
+    assert!(flat(&out).contains("work refresh"), "{out}");
 }
 
 /// "Why did the schedule leave that profile alone" should not cost an
@@ -2175,8 +2184,8 @@ fn a_dry_run_refresh_decides_and_touches_nothing() {
 
     let (out, err, code) = sb.run(&["refresh", "--dry-run"]);
     assert_eq!(code, 0, "{err}{out}");
-    assert!(out.contains("would refresh"), "{out}");
-    assert!(out.contains("dry run"), "{out}");
+    assert!(flat(&out).contains("would refresh"), "{out}");
+    assert!(flat(&out).contains("dry run"), "{out}");
     assert!(!out.contains("refreshed"), "nothing happened: {out}");
 
     assert_eq!(
@@ -2211,9 +2220,9 @@ fn a_dry_run_refresh_decides_and_touches_nothing() {
     probe.refresh(&sb, "", &[]); // records a run
     let (out, _, code) = sb.run(&["refresh", "--if-older-than", "48", "--dry-run"]);
     assert_eq!(code, 0, "{out}");
-    assert!(out.contains("nothing to do"), "{out}");
-    assert!(out.contains("last run was recent"), "{out}");
-    assert!(out.contains("dry run"), "still a preview: {out}");
+    assert!(flat(&out).contains("nothing to do"), "{out}");
+    assert!(flat(&out).contains("last run was recent"), "{out}");
+    assert!(flat(&out).contains("dry run"), "still a preview: {out}");
 }
 
 /// A firing that found nothing to do left no trace at all, so `ccred log`
@@ -2419,7 +2428,7 @@ fn switching_is_refused_while_claude_code_runs() {
 
     let (out, err, code) = sb.run(&["switch", "work"]);
     assert_eq!(code, 7, "a live session must block the switch:\n{out}{err}");
-    assert!(err.contains("Claude Code is running"), "{err}");
+    assert!(flat(&err).contains("Claude Code is running"), "{err}");
     let (out, _, _) = sb.run(&["current"]);
     assert!(
         out.contains("bob@example.com"),
@@ -2461,8 +2470,8 @@ fn a_claude_desktop_session_neither_blocks_a_switch_nor_follows_it() {
     .unwrap();
 
     let (out, _, _) = sb.run(&["current"]);
-    assert!(out.contains("Claude Desktop is running"), "{out}");
-    assert!(!out.contains("Claude Code is running"), "{out}");
+    assert!(flat(&out).contains("Claude Desktop is running"), "{out}");
+    assert!(!flat(&out).contains("Claude Code is running"), "{out}");
 
     let (out, err, code) = sb.run(&["switch", "work"]);
     assert_eq!(code, 0, "a Desktop session must not block:\n{out}{err}");
@@ -2489,7 +2498,7 @@ fn a_claude_desktop_session_neither_blocks_a_switch_nor_follows_it() {
     .unwrap();
     let (_, err, code) = sb.run(&["switch", "personal"]);
     assert_eq!(code, 7, "{err}");
-    assert!(err.contains("Claude Code is running"), "{err}");
+    assert!(flat(&err).contains("Claude Code is running"), "{err}");
 }
 
 // --- Claude Desktop's own login --------------------------------------------
@@ -2569,13 +2578,16 @@ fn save_records_the_desktop_login_beside_the_profile_and_says_so() {
     assert_eq!(code, 0, "{out}{err}");
     assert!(out.contains("alice@example.com"), "{out}");
     assert!(out.contains("work-desktop"), "{out}");
-    assert!(out.contains("not saved: no Claude Desktop here"), "{out}");
+    assert!(
+        flat(&out).contains("not saved: no Claude Desktop here"),
+        "{out}"
+    );
 
     // Now the Desktop is logged in as the same account.
     sb.desktop_login("uuid-a", "A");
     let (out, err, code) = sb.run(&["save", "work"]);
     assert_eq!(code, 0, "{out}{err}");
-    assert!(out.contains("already up to date"), "{out}");
+    assert!(flat(&out).contains("already up to date"), "{out}");
     assert!(out.contains("work-desktop"), "{out}");
     assert!(out.contains("created"), "{out}");
     assert!(sb.parked_desktop("work").join("meta.json").is_file());
@@ -2604,7 +2616,7 @@ fn save_records_the_desktop_login_beside_the_profile_and_says_so() {
     let (out, _, code) = sb.run(&["save", "work", "--only-code"]);
     assert_eq!(code, 0);
     assert!(
-        out.contains("work") && out.contains("already up to date"),
+        out.contains("work") && flat(&out).contains("already up to date"),
         "{out}"
     );
     assert!(!out.contains("work-desktop"), "{out}");
@@ -2638,12 +2650,12 @@ fn save_records_the_desktop_login_beside_the_profile_and_says_so() {
     let (out, err, code) = sb.run(&["save", "personal"]);
     assert_eq!(code, 0, "{out}{err}");
     assert!(
-        out.contains("personal") && out.contains("already up to date"),
+        out.contains("personal") && flat(&out).contains("already up to date"),
         "{out}"
     );
     assert!(
         out.contains("personal-desktop")
-            && out.contains("not saved: 'personal-desktop' belongs to alice@example.com"),
+            && flat(&out).contains("not saved: 'personal-desktop' belongs to alice@example.com"),
         "{out}"
     );
 }
@@ -2660,10 +2672,10 @@ fn save_takes_whichever_half_is_there() {
     assert_eq!(code, 0, "{out}{err}");
     // A table now, so the two halves line up however long their names are.
     assert!(
-        out.contains("not saved: Claude Code is not logged in"),
+        flat(&out).contains("not saved: Claude Code is not logged in"),
         "{out}"
     );
-    assert!(out.contains("work "), "{out}");
+    assert!(flat(&out).contains("work "), "{out}");
     // The email comes from `.claude.json`, which still names the account
     // whose credentials were removed.
     assert!(
@@ -2675,12 +2687,12 @@ fn save_takes_whichever_half_is_there() {
     // Asked for the half that is not there: the failure it always was.
     let (_, err, code) = sb.run(&["save", "work", "--only-code"]);
     assert_eq!(code, 7, "{err}");
-    assert!(err.contains("holds no credentials"), "{err}");
+    assert!(flat(&err).contains("holds no credentials"), "{err}");
 
     std::fs::remove_dir_all(sb.desktop_dir()).unwrap();
     let (_, err, code) = sb.run(&["save", "other"]);
     assert_eq!(code, 7, "{err}");
-    assert!(err.contains("nothing to save"), "{err}");
+    assert!(flat(&err).contains("nothing to save"), "{err}");
 }
 
 /// The Desktop logs in on its own, so its login is a directory to move, not
@@ -2701,10 +2713,10 @@ fn switching_a_desktop_profile_parks_the_login_by_its_account() {
     let (out, err, code) = sb.run(&["switch", "personal-desktop"]);
     assert_eq!(code, 0, "{out}{err}");
     assert!(
-        out.contains("work-desktop was parked in its place"),
+        flat(&out).contains("work-desktop was parked in its place"),
         "{out}"
     );
-    assert!(out.contains("log in as personal-desktop"), "{out}");
+    assert!(flat(&out).contains("log in as personal-desktop"), "{out}");
     assert!(
         !sb.desktop_dir().exists(),
         "the live directory must be gone"
@@ -2721,7 +2733,7 @@ fn switching_a_desktop_profile_parks_the_login_by_its_account() {
     sb.desktop_login("uuid-b", "B");
     let (out, _, _) = sb.run(&["list"]);
     assert!(out.contains("personal-desktop"), "{out}");
-    assert!(out.contains("logged in"), "{out}");
+    assert!(flat(&out).contains("logged in"), "{out}");
     assert!(out.contains("parked"), "{out}");
 
     let (json, err, code) = sb.run(&["switch", "work-desktop", "--json"]);
@@ -2743,7 +2755,10 @@ fn switching_a_desktop_profile_parks_the_login_by_its_account() {
     // the active profile's.
     let (out, _, _) = sb.run(&["current"]);
     assert!(out.contains("work-desktop"), "{out}");
-    assert!(out.contains("not the active profile's account"), "{out}");
+    assert!(
+        flat(&out).contains("not the active profile's account"),
+        "{out}"
+    );
     let (json, _, _) = sb.run(&["current", "--json"]);
     let v: serde_json::Value = serde_json::from_str(&json).expect(&json);
     assert_eq!(v["desktop"]["profile"], "work-desktop", "{json}");
@@ -2782,7 +2797,7 @@ fn a_desktop_switch_is_refused_while_the_desktop_runs_and_a_code_switch_is_not()
 
     let (out, err, code) = sb.run(&["switch", "work-desktop"]);
     assert_eq!(code, 7, "{out}{err}");
-    assert!(err.contains("Claude Desktop is running"), "{err}");
+    assert!(flat(&err).contains("Claude Desktop is running"), "{err}");
     assert_eq!(marker(&sb.desktop_dir()), "B");
     assert!(!sb.parked_desktop("personal").join("data").exists());
     assert!(
@@ -2846,7 +2861,7 @@ fn a_foreign_desktop_login_is_left_alone_until_the_target_has_one_parked() {
         "X"
     );
     let (out, _, _) = sb.run(&["doctor"]);
-    assert!(out.contains("belongs to no profile"), "{out}");
+    assert!(flat(&out).contains("belongs to no profile"), "{out}");
 }
 
 /// A name removes exactly what it names: `rm work-desktop` takes the
@@ -2872,8 +2887,8 @@ fn rm_of_a_desktop_name_removes_the_desktop_profile_only() {
 
     let (out, err, code) = sb.run(&["rm", "work-desktop", "--purge"]);
     assert_eq!(code, 0, "{out}{err}");
-    assert!(out.contains("removed work-desktop"), "{out}");
-    assert!(out.contains("parked login was deleted"), "{out}");
+    assert!(flat(&out).contains("removed work-desktop"), "{out}");
+    assert!(flat(&out).contains("parked login was deleted"), "{out}");
     assert!(!sb.parked_desktop("work").exists());
     assert!(
         sb.path().join(".ccred/profiles/work").is_dir(),
@@ -2946,7 +2961,7 @@ fn chats_left_behind_by_a_sign_out_inside_the_app_are_put_back() {
     assert!(out.contains("personal-desktop"), "{out}");
     let (out, _, _) = sb.run(&["doctor"]);
     assert!(
-        out.contains("session lists of other accounts"),
+        flat(&out).contains("session lists of other accounts"),
         "doctor must point at the mixed directory:\n{out}"
     );
 
@@ -2956,7 +2971,7 @@ fn chats_left_behind_by_a_sign_out_inside_the_app_are_put_back() {
     assert_eq!(code, 0, "{out}{err}");
     assert!(out.contains("personal-desktop"), "{out}");
     assert!(
-        out.contains("3 sessions and 1 sidebar group from a sign-out are waiting"),
+        flat(&out).contains("3 sessions and 1 sidebar group from a sign-out are waiting"),
         "{out}"
     );
     assert!(
@@ -2969,7 +2984,7 @@ fn chats_left_behind_by_a_sign_out_inside_the_app_are_put_back() {
     );
     let (out, _, _) = sb.run(&["list"]);
     assert!(
-        out.contains("3 sessions and 1 sidebar group from a sign-out are waiting"),
+        flat(&out).contains("3 sessions and 1 sidebar group from a sign-out are waiting"),
         "{out}"
     );
 
@@ -2987,16 +3002,19 @@ fn chats_left_behind_by_a_sign_out_inside_the_app_are_put_back() {
     let lock = DesktopLock::hold(&sb.desktop_dir());
     let (_, err, code) = sb.run(&["switch", "work-desktop"]);
     assert_eq!(code, 7, "{err}");
-    assert!(err.contains("put back into its sidebar"), "{err}");
+    assert!(flat(&err).contains("put back into its sidebar"), "{err}");
     drop(lock);
 
     // Closed: the same switch puts them back, and nothing of the fresh
     // directory is overwritten.
     let (out, err, code) = sb.run(&["switch", "work-desktop"]);
     assert_eq!(code, 0, "{out}{err}");
-    assert!(out.contains("already logged in as work-desktop"), "{out}");
     assert!(
-        out.contains("3 sessions and 1 sidebar group put back into its sidebar"),
+        flat(&out).contains("already logged in as work-desktop"),
+        "{out}"
+    );
+    assert!(
+        flat(&out).contains("3 sessions and 1 sidebar group put back into its sidebar"),
         "{out}"
     );
     for id in ["1", "2", "3"] {
@@ -3031,7 +3049,7 @@ fn chats_left_behind_by_a_sign_out_inside_the_app_are_put_back() {
     assert!(!out.contains("waiting"), "{out}");
     let (out, _, code) = sb.run(&["switch", "work-desktop"]);
     assert_eq!(code, 0);
-    assert!(!out.contains("put back"), "{out}");
+    assert!(!flat(&out).contains("put back"), "{out}");
 }
 
 /// A `-desktop` name that exists nowhere is an account the Desktop has
@@ -3047,7 +3065,7 @@ fn switching_to_a_desktop_name_that_exists_nowhere_makes_room_for_a_new_account(
     // The current login is nobody's yet: refused, with the way out.
     let (_, err, code) = sb.run(&["switch", "pepa-desktop"]);
     assert_eq!(code, 7, "{err}");
-    assert!(err.contains("not a saved profile"), "{err}");
+    assert!(flat(&err).contains("not a saved profile"), "{err}");
     assert!(err.contains("--only-desktop"), "{err}");
     assert!(
         !sb.parked_desktop("pepa").exists(),
@@ -3059,15 +3077,15 @@ fn switching_to_a_desktop_name_that_exists_nowhere_makes_room_for_a_new_account(
     let (out, err, code) = sb.run(&["switch", "pepa-desktop"]);
     assert_eq!(code, 0, "{out}{err}");
     assert!(
-        out.contains("work-desktop was parked in its place"),
+        flat(&out).contains("work-desktop was parked in its place"),
         "{out}"
     );
-    assert!(out.contains("log in as pepa-desktop"), "{out}");
+    assert!(flat(&out).contains("log in as pepa-desktop"), "{out}");
     assert!(!sb.desktop_dir().exists());
     assert_eq!(marker(&sb.parked_desktop("work").join("data")), "A");
     let (out, _, _) = sb.run(&["list"]);
     assert!(out.contains("pepa-desktop"), "{out}");
-    assert!(out.contains("no login"), "{out}");
+    assert!(flat(&out).contains("no login"), "{out}");
 
     // The user logs in as pepa in the fresh Desktop. That is pepa-desktop's
     // account now -- shown as such before anything is written, and written
@@ -3075,7 +3093,7 @@ fn switching_to_a_desktop_name_that_exists_nowhere_makes_room_for_a_new_account(
     sb.desktop_login("uuid-p", "P");
     let (out, _, _) = sb.run(&["list"]);
     assert!(out.contains("pepa-desktop"), "{out}");
-    assert!(out.contains("logged in"), "{out}");
+    assert!(flat(&out).contains("logged in"), "{out}");
     let (json, _, _) = sb.run(&["current", "--json"]);
     let v: serde_json::Value = serde_json::from_str(&json).expect(&json);
     assert_eq!(v["desktop"]["profile"], "pepa-desktop", "{json}");
@@ -3084,7 +3102,7 @@ fn switching_to_a_desktop_name_that_exists_nowhere_makes_room_for_a_new_account(
     assert_eq!(code, 0, "{out}{err}");
     // The arrow form `switch` uses for Claude Code, since this is the same
     // thing happening to the other half of the same profile.
-    assert!(out.contains("pepa-desktop -> work-desktop"), "{out}");
+    assert!(flat(&out).contains("pepa-desktop -> work-desktop"), "{out}");
     assert_eq!(marker(&sb.desktop_dir()), "A");
     assert_eq!(marker(&sb.parked_desktop("pepa").join("data")), "P");
     let meta: serde_json::Value = serde_json::from_str(
@@ -3161,8 +3179,14 @@ fn every_account_gets_the_same_sidebar() {
     // A Fields block, one fact per row, rather than three counts joined by
     // commas into one line.
     assert!(out.contains("Sidebar"), "{out}");
-    assert!(out.contains("Added") && out.contains("2 sessions"), "{out}");
-    assert!(out.contains("Groups") && out.contains("1 added"), "{out}");
+    assert!(
+        out.contains("Added") && flat(&out).contains("2 sessions"),
+        "{out}"
+    );
+    assert!(
+        out.contains("Groups") && flat(&out).contains("1 added"),
+        "{out}"
+    );
     let one: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(p_list.join("local_1.json")).unwrap())
             .unwrap();
@@ -3200,9 +3224,12 @@ fn every_account_gets_the_same_sidebar() {
     // fields on `one` survive the title change.
     let (out, err, code) = sb.run(&["switch", "work-desktop"]);
     assert_eq!(code, 0, "{out}{err}");
-    assert!(out.contains("Added") && out.contains("2 sessions"), "{out}");
     assert!(
-        out.contains("Removed") && out.contains("1 session, deleted under another account"),
+        out.contains("Added") && flat(&out).contains("2 sessions"),
+        "{out}"
+    );
+    assert!(
+        out.contains("Removed") && flat(&out).contains("1 session, deleted under another account"),
         "{out}"
     );
     let one: serde_json::Value =
@@ -3237,7 +3264,7 @@ fn an_unreadable_journal_is_set_aside_and_stops_that_command_only() {
     let (out, err, code) = sb.run(&["save", "work"]);
     assert_eq!(code, 7, "{out}{err}");
     assert!(
-        err.contains("ccred current"),
+        flat(&err).contains("ccred current"),
         "the way out must be named: {err}"
     );
     assert!(!journal.exists(), "the journal is still in the way");
@@ -3457,18 +3484,21 @@ fn a_mirror_that_is_refused_is_not_reported_as_done() {
     assert_eq!(code, 4, "a person is needed:\n{out}{err}");
     assert!(out.contains("blocked"), "{out}");
     assert!(
-        out.contains("not mirrored"),
+        flat(&out).contains("not mirrored"),
         "the reason must be given: {out}"
     );
-    assert!(out.contains("1 needs attention"), "{out}");
+    assert!(flat(&out).contains("1 needs attention"), "{out}");
 
     // Nothing a retry can change, so it must not lift the over-fire limit:
     // every scheduler firing used to become a full run.
     let (out, _, code) = sb.run(&["refresh", "--if-older-than", "12"]);
     assert_eq!(code, 0, "{out}");
-    assert!(out.contains("nothing to do"), "the limit was lifted: {out}");
     assert!(
-        !out.contains("need a login"),
+        flat(&out).contains("nothing to do"),
+        "the limit was lifted: {out}"
+    );
+    assert!(
+        !flat(&out).contains("need a login"),
         "logging in is not the fix: {out}"
     );
 }
@@ -3506,7 +3536,7 @@ fn a_switch_that_meets_an_unreadable_journal_stops() {
     let (sb, work, before) = sandbox_after_a_killed_switch(b"{ unreadable");
     let (out, err, code) = sb.run(&["switch", "personal"]);
     assert_eq!(code, 7, "{out}{err}");
-    assert!(err.contains("ccred current"), "{err}");
+    assert!(flat(&err).contains("ccred current"), "{err}");
     assert_eq!(std::fs::read(&work).unwrap(), before);
 }
 
@@ -3519,12 +3549,12 @@ fn live_tokens_that_are_another_profiles_are_pointed_out() {
 
     let (out, _, _) = sb.run(&["current"]);
     assert!(
-        out.contains("stored as profile 'personal'"),
+        flat(&out).contains("stored as profile 'personal'"),
         "current trusted the name: {out}"
     );
     let (out, _, code) = sb.run(&["doctor"]);
     assert_eq!(code, 7, "{out}");
-    assert!(out.contains("stored as profile 'personal'"), "{out}");
+    assert!(flat(&out).contains("stored as profile 'personal'"), "{out}");
 }
 
 /// Two profiles with one refresh token -- possible before `save` refused it
@@ -3546,7 +3576,7 @@ fn profiles_sharing_a_token_are_reported_and_not_broken() {
     std::fs::write(to.join("ccred.json"), meta).unwrap();
 
     let (out, _, _) = sb.run(&["doctor"]);
-    assert!(out.contains("hold the same refresh token"), "{out}");
+    assert!(flat(&out).contains("hold the same refresh token"), "{out}");
 
     // The active one still mirrors: nothing new is written, so nothing is
     // refused.
@@ -3612,11 +3642,11 @@ fn a_switch_and_a_refresh_never_work_on_the_profiles_at_once() {
 
     let (out, err, code) = sb.run(&["switch", "work"]);
     assert_eq!(code, 6, "a busy lock is Busy:\n{out}{err}");
-    assert!(err.contains("try again shortly"), "{err}");
+    assert!(flat(&err).contains("try again shortly"), "{err}");
 
     let (out, _, code) = sb.run(&["refresh"]);
     assert_eq!(code, 0, "{out}");
-    assert!(out.contains("left for the next run"), "{out}");
+    assert!(flat(&out).contains("left for the next run"), "{out}");
 
     drop(held);
     let (out, err, code) = sb.run(&["switch", "work"]);
@@ -3878,7 +3908,8 @@ fn a_profile_named_like_a_parking_place_is_not_reported_as_stray() {
 
     let (out, err, _) = sb.run(&["doctor"]);
     assert!(
-        !out.contains("belongs to no profile") && !out.contains("belong to no profile"),
+        !flat(&out).contains("belongs to no profile")
+            && !flat(&out).contains("belong to no profile"),
         "{err}{out}"
     );
 }
@@ -3918,7 +3949,7 @@ fn a_sidebar_that_cannot_be_written_does_not_fail_the_switch() {
 
     let (out, err, code) = sb.run(&["switch", "work-desktop"]);
     assert_eq!(code, 0, "the switch itself is fine: {err}{out}");
-    assert!(out.contains("shared sidebar"), "said so: {out}");
+    assert!(flat(&out).contains("shared sidebar"), "said so: {out}");
     // And the login is where the output says it is.
     assert_eq!(
         std::fs::read_to_string(sb.desktop_dir().join("marker")).unwrap(),
@@ -4079,7 +4110,7 @@ fn the_uninstall_plan_counts_logins_not_directories() {
     let (out, err, code) = sb.run(&["uninstall", "--purge", "--dry-run", "--yes"]);
     assert_eq!(code, 0, "{err}{out}");
     assert!(
-        !out.contains("parked here"),
+        !flat(&out).contains("parked here"),
         "and the plan a person reads says nothing about logins: {out}"
     );
 }
@@ -4115,7 +4146,7 @@ fn a_refused_switch_takes_back_its_metadata_and_nothing_else() {
 
     let (out, err, code) = sb.run(&["switch", "work-desktop"]);
     assert_eq!(code, 7, "refused: {err}{out}");
-    assert!(err.contains("already has a parked login"), "{err}");
+    assert!(flat(&err).contains("already has a parked login"), "{err}");
     assert_eq!(
         std::fs::read_to_string(parked.join("marker")).unwrap(),
         "A",
@@ -4175,7 +4206,7 @@ fn groups_with_nowhere_to_go_do_not_hide_the_chats_that_went() {
     let (out, err, code) = sb.run(&["switch", "personal-desktop"]);
     assert_eq!(code, 0, "{err}{out}");
     assert!(
-        out.contains("2 sessions"),
+        flat(&out).contains("2 sessions"),
         "the chats went in, and the report says so: {out}"
     );
     assert!(
@@ -4232,6 +4263,9 @@ fn no_message_runs_off_the_page() {
         &["save", "work", "--only-desktop"],
         &["switch", "nothing-here"],
         &["uninstall", "--purge", "--dry-run", "--yes"],
+        &["schedule", "status"],
+        &["schedule", "install", "--dry-run"],
+        &["switch", "work-desktop"],
     ];
     for args in commands {
         let out = sb.cmd(args);
@@ -4241,13 +4275,12 @@ fn no_message_runs_off_the_page() {
             String::from_utf8_lossy(&out.stderr)
         );
         for line in text.lines() {
-            let longest = line
-                .split_whitespace()
-                .map(|w| w.chars().count())
-                .max()
-                .unwrap_or(0);
+            // Long is allowed only when the line is one word: a path, the
+            // one thing here that must not be broken.
+            let words: Vec<&str> = line.split_whitespace().collect();
+            let unbreakable = words.len() == 1 && words[0].chars().count() > 76;
             assert!(
-                line.chars().count() <= 100 || longest > 76,
+                line.chars().count() <= 100 || unbreakable,
                 "`ccred {}` printed a {}-column line that could have been wrapped:\n{line}",
                 args.join(" "),
                 line.chars().count()
