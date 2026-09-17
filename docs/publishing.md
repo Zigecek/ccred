@@ -61,7 +61,7 @@ which is also the entry workflow, so `release.yml` is right in both places.
 Reserve the `@ccred` organisation on npm first, so the scope cannot be taken.
 
 The packages themselves are already known to work: the eight were generated
-from the real 0.3.0 artifacts, packed with `npm pack`, installed from the
+from the real 0.3.1 artifacts, packed with `npm pack`, installed from the
 tarballs into an empty project, and run. The wrapper resolved the platform
 binary and passed its exit codes through -- `switch <missing>` came back as 3.
 To repeat it for a later release:
@@ -166,7 +166,7 @@ was checked this way and reported `ccred 0.1.0` correctly.
 ```sh
 # bump the version in Cargo.toml and CHANGELOG.md, commit, push, let CI go
 # green -- and then:
-scripts/tag-release.sh v0.3.0
+scripts/tag-release.sh v0.3.1
 ```
 
 The script refuses to tag unless HEAD is `origin/main`, the tree is clean, and

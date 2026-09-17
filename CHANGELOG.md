@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.3.1
+
+Three things the Desktop support was still missing, found by fuzzing the new
+paths and by reading `rename`'s own help against what it does.
+
+- **A rename takes the Desktop login with it.** `work` and `work-desktop`
+  are one profile under two roofs, and 0.3.0 said so in the help while
+  moving only the Claude Code half -- so a rename broke the pair, leaving
+  `work-desktop` and its parked login belonging to a profile that no longer
+  existed.
+- **The refusal to switch a running Desktop names the lock file.** On
+  Windows anything but a clean open counts as held, which is the safe answer
+  and sometimes the wrong one; someone whose Desktop is closed had nothing
+  to go and look at.
+- Two regression tests for moves that would lose a login quietly: parking
+  over a place already taken, and a move whose second rename fails, which
+  must report a failure and say where the live login was parked.
+
+288 invocations over damaged Desktop state -- an empty, truncated, UTF-16,
+binary or missing `config.json`, a lock file held, the directory replaced --
+produced no panic and lost no login.
+
 ## 0.3.0
 
 **Claude Desktop.** The Desktop app logs in on its own, and a session it
