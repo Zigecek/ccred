@@ -133,7 +133,7 @@ pub fn switch(ctx: &Ctx, target: &ProfileName) -> crate::Result<DesktopReport> {
         });
     if let Some(e) = refused {
         if created_now {
-            let _ = repo.remove(target);
+            let _ = repo.forget_meta(target);
         }
         return Err(e);
     }

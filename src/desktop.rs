@@ -421,6 +421,25 @@ impl<'a> DesktopRepo<'a> {
         Ok(true)
     }
 
+    /// Take back a metadata file this run wrote, and the directory if that
+    /// was all it held.
+    ///
+    /// Never `remove`: what is created before a switch is a file, but the
+    /// directory it goes in can already hold a parked login -- a metadata
+    /// file lost to a crash or deleted by hand is enough -- and deleting
+    /// that on the way out of a refusal destroys a token nothing can put
+    /// back. `remove_dir` is the guard: it only succeeds on an empty one.
+    pub fn forget_meta(&self, name: &ProfileName) -> crate::Result<()> {
+        let path = self.meta_path(name)?;
+        match std::fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(source) => return Err(CcredError::Io { path, source }),
+        }
+        let _ = std::fs::remove_dir(self.dir(name)?);
+        Ok(())
+    }
+
     /// Which profile holds the account the live directory is logged in as.
     ///
     /// An account can be saved under more than one name. `prefer` breaks

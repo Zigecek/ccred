@@ -4073,3 +4073,46 @@ fn the_uninstall_plan_counts_logins_not_directories() {
         "and the plan a person reads says nothing about logins: {out}"
     );
 }
+
+/// A switch writes the target's metadata before it plans, and takes it back
+/// when the plan is refused. Taking it back used to delete the directory it
+/// sits in -- and that directory is where a parked login lives, so a
+/// profile whose metadata had gone missing (a crash between the two writes,
+/// a file deleted by hand) lost its Desktop login to a refusal that said
+/// nothing was moved.
+#[test]
+fn a_refused_switch_takes_back_its_metadata_and_nothing_else() {
+    let sb = Sandbox::new();
+    sb.desktop_login("uuid-b", "B");
+    sb.login_b();
+    sb.run(&["save", "personal"]);
+    sb.login_a();
+    sb.run(&["save", "work", "--only-code"]);
+
+    // work's Desktop login, parked, with no metadata beside it.
+    let parked = sb.parked_desktop("work").join("data");
+    std::fs::create_dir_all(&parked).unwrap();
+    std::fs::write(parked.join("marker"), "A").unwrap();
+    std::fs::write(
+        parked.join("config.json"),
+        br#"{"oauth:tokenCache":"djExopaque","lastKnownAccountUuid":"uuid-a"}"#,
+    )
+    .unwrap();
+    assert!(!sb.parked_desktop("work").join("meta.json").exists());
+    // And a parking place for the live login that is already taken, which
+    // is what the switch will refuse over.
+    std::fs::create_dir_all(sb.parked_desktop("personal").join("data")).unwrap();
+
+    let (out, err, code) = sb.run(&["switch", "work-desktop"]);
+    assert_eq!(code, 7, "refused: {err}{out}");
+    assert!(err.contains("already has a parked login"), "{err}");
+    assert_eq!(
+        std::fs::read_to_string(parked.join("marker")).unwrap(),
+        "A",
+        "the login that was parked there is still parked there"
+    );
+    assert!(
+        !sb.parked_desktop("work").join("meta.json").exists(),
+        "and the metadata the refused switch wrote is gone again"
+    );
+}

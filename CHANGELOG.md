@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.5
+
+- **A refused switch no longer deletes a parked Desktop login.** The
+  target's metadata is written before the plan is made, so the plan can
+  see the Desktop is already on that account, and taken back when the
+  plan is refused -- by deleting the directory it sits in. That
+  directory is also where the parked login lives, so a profile whose
+  metadata had gone missing lost its login to a refusal whose own
+  message said nothing had been moved. It takes back the file it wrote,
+  and the directory only if that was all it held.
+
 ## 0.3.4
 
 Names people choose and names this tool uses, which turned out to share a
