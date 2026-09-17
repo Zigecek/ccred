@@ -2626,12 +2626,25 @@ fn save_records_the_desktop_login_beside_the_profile_and_says_so() {
     assert_ne!(code, 0);
     assert!(err.contains("-desktop"), "{err}");
 
-    // The Desktop on another account than Claude Code: both are saved,
-    // each as what it is.
+    // Claude Code on bob, the Desktop still on alice -- who is already
+    // saved as `work-desktop`. The Claude Code half is bob's and is saved;
+    // the Desktop half would be a second name for one login, which is a
+    // row that says it is live next to another row that says the same, and
+    // a switch between the two with nothing to move.
     sb.login_b();
     let (out, err, code) = sb.run(&["save", "personal"]);
     assert_eq!(code, 0, "{out}{err}");
     assert!(out.contains("personal") && out.contains("created"), "{out}");
+    assert!(
+        flat(&out).contains("not saved: that account is already saved as 'work-desktop'"),
+        "{out}"
+    );
+    assert!(!sb.parked_desktop("personal").exists(), "{out}");
+
+    // Signed in to the Desktop as bob, it is personal's to record.
+    sb.desktop_login("uuid-b", "B");
+    let (out, err, code) = sb.run(&["save", "personal"]);
+    assert_eq!(code, 0, "{out}{err}");
     assert!(
         out.contains("personal-desktop") && out.contains("created"),
         "{out}"
@@ -2640,11 +2653,11 @@ fn save_records_the_desktop_login_beside_the_profile_and_says_so() {
     // A name that already holds another Desktop account is refused. On
     // its own that is a failure; beside a Claude Code half that was saved
     // it is a line in the output.
-    sb.desktop_login("uuid-b", "B");
+    sb.desktop_login("uuid-a", "A");
     let (_, err, code) = sb.run(&["save", "personal", "--only-desktop"]);
     assert_eq!(code, 7, "{err}");
     assert!(
-        flat(&err).contains("'personal-desktop' belongs to alice@example.com"),
+        flat(&err).contains("'personal-desktop' belongs to bob@example.com"),
         "{err}"
     );
     let (out, err, code) = sb.run(&["save", "personal"]);
@@ -2655,7 +2668,7 @@ fn save_records_the_desktop_login_beside_the_profile_and_says_so() {
     );
     assert!(
         out.contains("personal-desktop")
-            && flat(&out).contains("not saved: 'personal-desktop' belongs to alice@example.com"),
+            && flat(&out).contains("not saved: 'personal-desktop' belongs to bob@example.com"),
         "{out}"
     );
 }
@@ -2873,6 +2886,8 @@ fn rm_of_a_desktop_name_removes_the_desktop_profile_only() {
     sb.desktop_login("uuid-a", "A");
     sb.run(&["save", "work"]);
     sb.login_b();
+    // Signed in to the Desktop as bob too: one account, one Desktop name.
+    sb.desktop_login("uuid-b", "B");
     sb.run(&["save", "personal"]);
     let parked = sb.parked_desktop("work").join("data");
     std::fs::create_dir_all(&parked).unwrap();
@@ -4264,8 +4279,10 @@ fn no_message_runs_off_the_page() {
         &["switch", "nothing-here"],
         &["uninstall", "--purge", "--dry-run", "--yes"],
         &["schedule", "status"],
-        &["schedule", "install", "--dry-run"],
         &["switch", "work-desktop"],
+        // Not `schedule install --dry-run`: that prints the unit file
+        // itself, and a launchd plist has a 104-column DOCTYPE line in it.
+        // What a file says is not ours to rewrap.
     ];
     for args in commands {
         let out = sb.cmd(args);

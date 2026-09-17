@@ -9,6 +9,15 @@
   whole pass was reported as having failed, so the chats that did go in
   were not counted anywhere. The groups wait in the shared sidebar, which
   is where they live, and the next switch to that profile puts them in.
+- **One account, one Desktop name.** `ccred save <name>` recorded the
+  account Claude Desktop is logged in as under whatever name it was
+  given, so saving two Claude Code profiles while the Desktop sat on one
+  of them left two Desktop rows for one login, both saying they were the
+  live one, with nothing to switch between. The Claude Code half is saved
+  as always and the Desktop half says which name already has it.
+- **A save records the account even when the shared sidebar cannot be
+  written.** It refused instead, which lost the identity -- the thing a
+  save is for -- over an index that is rebuilt on every switch.
 - **Nothing printed runs off the page.** Messages are broken at word
   boundaries to the width the tables already use, with a warning's remedy
   hung under what happened -- the refusal to delete a parked login was one

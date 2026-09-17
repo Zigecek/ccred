@@ -344,34 +344,50 @@ impl DesktopSave {
 /// is not in the Desktop's files in plain text; it is taken from Claude
 /// Code's side when that is the same account, or from a Claude Code
 /// profile that is.
-pub fn save(ctx: &Ctx, name: &ProfileName, live_code: &AccountIdentity) -> DesktopSave {
+pub fn save(
+    ctx: &Ctx,
+    name: &ProfileName,
+    live_code: &AccountIdentity,
+) -> (DesktopSave, Option<String>) {
     // Under the profiles lock, like `switch` and `remove`: this writes the
     // profile's record and collects its sidebar, and the Claude Code half of
     // the same save has already let its own lock go by the time this runs.
     let _profiles = match ctx.lock_profiles(LOCK_TIMEOUT) {
         Ok(guard) => guard,
         Err(e) => {
-            return DesktopSave::Refused {
-                reason: e.to_string(),
-            };
+            return (
+                DesktopSave::Refused {
+                    reason: e.to_string(),
+                },
+                None,
+            );
         }
     };
     let inspection = desktop::inspect(ctx.paths().desktop_dir());
     if !inspection.installed {
-        return DesktopSave::Nothing {
-            reason: "no Claude Desktop here".into(),
-        };
+        return (
+            DesktopSave::Nothing {
+                reason: "no Claude Desktop here".into(),
+            },
+            None,
+        );
     }
     let Some(uuid) = inspection.account_uuid.clone() else {
-        return DesktopSave::Nothing {
-            reason: "Claude Desktop is not logged in".into(),
-        };
+        return (
+            DesktopSave::Nothing {
+                reason: "Claude Desktop is not logged in".into(),
+            },
+            None,
+        );
     };
     let repo = DesktopRepo::new(ctx.paths());
     if let Err(e) = claim_first_login(&repo, &inspection, now_ms()) {
-        return DesktopSave::Refused {
-            reason: e.to_string(),
-        };
+        return (
+            DesktopSave::Refused {
+                reason: e.to_string(),
+            },
+            None,
+        );
     }
     match repo.meta(name) {
         Ok(Some(existing))
@@ -381,31 +397,62 @@ pub fn save(ctx: &Ctx, name: &ProfileName, live_code: &AccountIdentity) -> Deskt
                 .as_ref()
                 .is_some_and(|u| u != &uuid) =>
         {
-            return DesktopSave::Refused {
-                reason: format!(
-                    "'{}' belongs to {}, and Claude Desktop is logged in as another account",
-                    display_name(name),
-                    existing.account.label()
-                ),
-            };
+            return (
+                DesktopSave::Refused {
+                    reason: format!(
+                        "'{}' belongs to {}, and Claude Desktop is logged in as another account",
+                        display_name(name),
+                        existing.account.label()
+                    ),
+                },
+                None,
+            );
         }
         Ok(_) => {}
         Err(e) => {
-            return DesktopSave::Refused {
-                reason: e.to_string(),
-            };
+            return (
+                DesktopSave::Refused {
+                    reason: e.to_string(),
+                },
+                None,
+            );
         }
+    }
+    // One account, one Desktop name. Two records of the same login are two
+    // rows that both say they are the live one, and a switch between them
+    // has nothing to move: the login is a directory, and there is one of
+    // it. The Claude Code half of a save is unaffected -- that one really
+    // can be saved under two names.
+    if let Some(held_by) = repo.profile_for(&uuid)
+        && &held_by != name
+    {
+        return (
+            DesktopSave::Refused {
+                reason: format!(
+                    "that account is already saved as '{}'",
+                    display_name(&held_by)
+                ),
+            },
+            None,
+        );
     }
     let account = identity_for(ctx, &uuid, live_code);
     let existed = repo.exists(name);
     // A save is a moment the account's list is certainly current. Reading
     // it is safe with the Desktop open; it is the writes that are not.
+    //
+    // Not a refusal when it fails: what a save records is the identity, and
+    // the shared sidebar is an index rebuilt on every switch. Refusing here
+    // left the account unrecorded because a list of chat titles could not
+    // be written.
+    let mut note = None;
     if let Err(e) = desktop::sidebar_collect(ctx.paths(), ctx.paths().desktop_dir(), &uuid) {
-        return DesktopSave::Refused {
-            reason: e.to_string(),
-        };
+        note = Some(format!(
+            "this account's chats were not added to the shared sidebar ({e}); \
+             switching to this profile does it"
+        ));
     }
-    match repo.write(name, account.clone(), now_ms()) {
+    let outcome = match repo.write(name, account.clone(), now_ms()) {
         Ok(_) if existed => DesktopSave::Updated {
             account: account.label(),
         },
@@ -415,7 +462,8 @@ pub fn save(ctx: &Ctx, name: &ProfileName, live_code: &AccountIdentity) -> Deskt
         Err(e) => DesktopSave::Refused {
             reason: e.to_string(),
         },
-    }
+    };
+    (outcome, note)
 }
 
 /// The fullest identity on record for an account id.

@@ -500,9 +500,13 @@ pub fn save(ctx: &Ctx, name: &ProfileName, scope: SaveScope) -> crate::Result<Sa
         (None, None, ctx.live_account().identity)
     };
 
-    let desktop = scope
-        .desktop()
-        .then(|| super::desktop::save(ctx, name, &live_account));
+    let desktop = scope.desktop().then(|| {
+        let (outcome, note) = super::desktop::save(ctx, name, &live_account);
+        if let Some(note) = note {
+            warnings.push(note);
+        }
+        outcome
+    });
 
     if code.is_none() && !desktop.as_ref().is_some_and(|d| d.saved()) {
         let why = match (&code_skipped, &desktop) {
