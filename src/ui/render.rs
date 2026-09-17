@@ -515,56 +515,74 @@ fn pointer_note(theme: &Theme, note: Option<&PointerNote>) {
 pub fn save(theme: &Theme, r: &SaveReport) {
     let g = theme.glyphs;
     println!();
-    // One line per half, always, so what was and was not saved is never a
-    // matter of what is missing from the output.
+    // One row per half, always, so what was and was not saved is never a
+    // matter of what is missing from the output. A table rather than hand-laid
+    // columns: the two names differ by the eight characters of the Desktop
+    // suffix, so two spaces between them line up nowhere.
+    let mut t = Table::new(&[
+        ("", Align::Left),
+        ("PROFILE", Align::Left),
+        ("ACCOUNT", Align::Left),
+        ("RESULT", Align::Left),
+    ]);
     match (&r.code, &r.code_skipped) {
-        (Some(c), _) => println!(
-            "{PAD}{} {}  {}  {}",
-            paint(OK, g.ok),
-            paint(NAME, &r.name),
-            paint(VALUE, &c.account),
-            paint(MUTED, &c.outcome)
-        ),
-        (None, Some(why)) => println!(
-            "{PAD}{} {}  {}",
-            paint(MUTED, g.bullet),
-            paint(MUTED, &r.name),
-            paint(MUTED, &format!("not saved: {why}"))
-        ),
+        (Some(c), _) => {
+            t.row(vec![
+                Cell::new(g.ok, OK),
+                Cell::new(&r.name, NAME),
+                Cell::new(&c.account, VALUE),
+                Cell::new(&c.outcome, MUTED),
+            ]);
+        }
+        (None, Some(why)) => {
+            t.row(vec![
+                Cell::new(g.bullet, MUTED),
+                Cell::new(&r.name, MUTED),
+                Cell::new("-", MUTED),
+                Cell::new(format!("not saved: {why}"), MUTED),
+            ]);
+        }
         (None, None) => {}
     }
     let desktop_name = format!("{}{}", r.name, crate::desktop::SUFFIX);
     match &r.desktop {
-        Some(DesktopSave::Created { account }) => println!(
-            "{PAD}{} {}  {}  {}",
-            paint(OK, g.ok),
-            paint(NAME, &desktop_name),
-            paint(VALUE, account),
-            paint(MUTED, "created")
-        ),
-        Some(DesktopSave::Updated { account }) => println!(
-            "{PAD}{} {}  {}  {}",
-            paint(OK, g.ok),
-            paint(NAME, &desktop_name),
-            paint(VALUE, account),
-            paint(MUTED, "updated")
-        ),
-        Some(DesktopSave::Nothing { reason }) => println!(
-            "{PAD}{} {}  {}",
-            paint(MUTED, g.bullet),
-            paint(MUTED, &desktop_name),
-            paint(MUTED, &format!("not saved: {reason}"))
-        ),
-        Some(DesktopSave::Refused { reason }) => println!(
-            "{PAD}{} {}  {}",
-            paint(WARN, g.warn),
-            paint(NAME, &desktop_name),
-            paint(VALUE, &format!("not saved: {reason}"))
-        ),
+        Some(DesktopSave::Created { account }) => {
+            t.row(vec![
+                Cell::new(g.ok, OK),
+                Cell::new(&desktop_name, NAME),
+                Cell::new(account, VALUE),
+                Cell::new("created", MUTED),
+            ]);
+        }
+        Some(DesktopSave::Updated { account }) => {
+            t.row(vec![
+                Cell::new(g.ok, OK),
+                Cell::new(&desktop_name, NAME),
+                Cell::new(account, VALUE),
+                Cell::new("updated", MUTED),
+            ]);
+        }
+        Some(DesktopSave::Nothing { reason }) => {
+            t.row(vec![
+                Cell::new(g.bullet, MUTED),
+                Cell::new(&desktop_name, MUTED),
+                Cell::new("-", MUTED),
+                Cell::new(format!("not saved: {reason}"), MUTED),
+            ]);
+        }
+        Some(DesktopSave::Refused { reason }) => {
+            t.row(vec![
+                Cell::new(g.warn, WARN),
+                Cell::new(&desktop_name, NAME),
+                Cell::new("-", MUTED),
+                Cell::new(format!("not saved: {reason}"), WARN),
+            ]);
+        }
         None => {}
     }
+    println!("{}", t.render(theme, PAD));
     for w in &r.warnings {
-        println!("{PAD}{} {}", paint(WARN, g.warn), paint(VALUE, w));
+        callout(WARN, g.warn, w, &[]);
     }
     let Some(code) = &r.code else {
         println!();
@@ -851,58 +869,62 @@ pub fn desktop_switch(theme: &Theme, r: &crate::ops::desktop::DesktopReport) {
     let body: Vec<&str> = body.iter().map(String::as_str).collect();
     callout(style, glyph, &headline, &body);
     if !r.restored_to_sidebar.is_empty() {
-        println!(
-            "{PAD}{} {}",
-            paint(OK, g.ok),
-            paint(
-                VALUE,
-                &format!(
-                    "{} put back into its sidebar",
-                    carried(&r.restored_to_sidebar)
-                )
-            )
+        callout(
+            OK,
+            g.ok,
+            &format!(
+                "{} put back into its sidebar",
+                carried(&r.restored_to_sidebar)
+            ),
+            &[],
         );
     }
     if !r.waiting.is_empty() {
-        println!(
-            "{PAD}{} {}",
-            paint(WARN, g.warn),
-            paint(
-                VALUE,
-                &format!(
-                    "{} from a sign-out are waiting; once logged in, quit Claude Desktop and run \
-                     `ccred switch {}` again to put them back",
-                    carried(&r.waiting),
-                    r.to
-                )
-            )
+        callout(
+            WARN,
+            g.warn,
+            &format!("{} from a sign-out are waiting", carried(&r.waiting)),
+            &[
+                "log in as that account, then quit Claude Desktop",
+                &format!("`ccred switch {}` again puts them back", r.to),
+            ],
         );
     }
+    // One fact per row. This was three independent counts joined by commas
+    // into a single 118-column line -- the shape `Fields` exists to replace,
+    // and the one `schedule status` and `uninstall` already use.
     if !r.sidebar.is_empty() {
-        let mut parts = Vec::new();
+        println!();
+        println!("{}", heading(theme, PAD, "Sidebar"));
+        let mut f = Fields::new();
         if r.sidebar.written > 0 {
-            parts.push(format!(
-                "{} added or brought up to date",
-                plural(r.sidebar.written, "session", "sessions")
-            ));
+            f.add(
+                "Added",
+                paint(VALUE, &plural(r.sidebar.written, "session", "sessions")),
+            );
         }
         if r.sidebar.removed > 0 {
-            parts.push(format!(
-                "{} removed (deleted under another account)",
-                plural(r.sidebar.removed, "session", "sessions")
-            ));
+            f.add(
+                "Removed",
+                paint(
+                    VALUE,
+                    &format!(
+                        "{}, deleted under another account",
+                        plural(r.sidebar.removed, "session", "sessions")
+                    ),
+                ),
+            );
         }
         if r.sidebar.groups > 0 {
-            parts.push(plural(r.sidebar.groups, "group added", "groups added"));
+            f.add(
+                "Groups",
+                paint(VALUE, &plural(r.sidebar.groups, "added", "added")),
+            );
         }
-        println!(
-            "{PAD}{} {}",
-            paint(OK, g.ok),
-            paint(VALUE, &format!("sidebar: {}", parts.join(", ")))
-        );
+        println!("{}", f.render(PAD));
     }
     for w in &r.warnings {
-        println!("{PAD}{} {}", paint(WARN, g.warn), paint(VALUE, w));
+        callout(WARN, g.warn, w, &[]);
     }
     println!();
 }

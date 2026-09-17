@@ -2316,24 +2316,17 @@ fn save_records_the_desktop_login_beside_the_profile_and_says_so() {
     // half is reported as not there.
     let (out, err, code) = sb.run(&["save", "work"]);
     assert_eq!(code, 0, "{out}{err}");
-    assert!(out.contains("work  alice@example.com  created"), "{out}");
-    assert!(
-        out.contains("work-desktop  not saved: no Claude Desktop here"),
-        "{out}"
-    );
+    assert!(out.contains("alice@example.com"), "{out}");
+    assert!(out.contains("work-desktop"), "{out}");
+    assert!(out.contains("not saved: no Claude Desktop here"), "{out}");
 
     // Now the Desktop is logged in as the same account.
     sb.desktop_login("uuid-a", "A");
     let (out, err, code) = sb.run(&["save", "work"]);
     assert_eq!(code, 0, "{out}{err}");
-    assert!(
-        out.contains("work  alice@example.com  already up to date"),
-        "{out}"
-    );
-    assert!(
-        out.contains("work-desktop  alice@example.com  created"),
-        "{out}"
-    );
+    assert!(out.contains("already up to date"), "{out}");
+    assert!(out.contains("work-desktop"), "{out}");
+    assert!(out.contains("created"), "{out}");
     assert!(sb.parked_desktop("work").join("meta.json").is_file());
     assert!(
         !sb.parked_desktop("work").join("data").exists(),
@@ -2353,14 +2346,14 @@ fn save_records_the_desktop_login_beside_the_profile_and_says_so() {
     let (out, _, code) = sb.run(&["save", "work", "--only-desktop"]);
     assert_eq!(code, 0);
     assert!(
-        out.contains("work-desktop  alice@example.com  updated"),
+        out.contains("work-desktop") && out.contains("updated"),
         "{out}"
     );
     assert!(!out.contains("work  alice"), "{out}");
     let (out, _, code) = sb.run(&["save", "work", "--only-code"]);
     assert_eq!(code, 0);
     assert!(
-        out.contains("work  alice@example.com  already up to date"),
+        out.contains("work") && out.contains("already up to date"),
         "{out}"
     );
     assert!(!out.contains("work-desktop"), "{out}");
@@ -2375,9 +2368,9 @@ fn save_records_the_desktop_login_beside_the_profile_and_says_so() {
     sb.login_b();
     let (out, err, code) = sb.run(&["save", "personal"]);
     assert_eq!(code, 0, "{out}{err}");
-    assert!(out.contains("personal  bob@example.com  created"), "{out}");
+    assert!(out.contains("personal") && out.contains("created"), "{out}");
     assert!(
-        out.contains("personal-desktop  alice@example.com  created"),
+        out.contains("personal-desktop") && out.contains("created"),
         "{out}"
     );
 
@@ -2394,13 +2387,12 @@ fn save_records_the_desktop_login_beside_the_profile_and_says_so() {
     let (out, err, code) = sb.run(&["save", "personal"]);
     assert_eq!(code, 0, "{out}{err}");
     assert!(
-        out.contains("personal  bob@example.com  already up to date"),
+        out.contains("personal") && out.contains("already up to date"),
         "{out}"
     );
     assert!(
-        out.contains(
-            "personal-desktop  not saved: 'personal-desktop' belongs to alice@example.com"
-        ),
+        out.contains("personal-desktop")
+            && out.contains("not saved: 'personal-desktop' belongs to alice@example.com"),
         "{out}"
     );
 }
@@ -2415,14 +2407,16 @@ fn save_takes_whichever_half_is_there() {
 
     let (out, err, code) = sb.run(&["save", "work"]);
     assert_eq!(code, 0, "{out}{err}");
+    // A table now, so the two halves line up however long their names are.
     assert!(
-        out.contains("work  not saved: Claude Code is not logged in"),
+        out.contains("not saved: Claude Code is not logged in"),
         "{out}"
     );
+    assert!(out.contains("work "), "{out}");
     // The email comes from `.claude.json`, which still names the account
     // whose credentials were removed.
     assert!(
-        out.contains("work-desktop  alice@example.com  created"),
+        out.contains("work-desktop") && out.contains("created"),
         "{out}"
     );
     assert!(!sb.path().join(".ccred/profiles/work").exists());
@@ -2896,8 +2890,11 @@ fn every_account_gets_the_same_sidebar() {
     // Logged in as pepa, the Desktop closed: the same switch fills the list.
     let (out, err, code) = sb.run(&["switch", "pepa-desktop"]);
     assert_eq!(code, 0, "{out}{err}");
-    assert!(out.contains("sidebar: 2 sessions added"), "{out}");
-    assert!(out.contains("1 group added"), "{out}");
+    // A Fields block, one fact per row, rather than three counts joined by
+    // commas into one line.
+    assert!(out.contains("Sidebar"), "{out}");
+    assert!(out.contains("Added") && out.contains("2 sessions"), "{out}");
+    assert!(out.contains("Groups") && out.contains("1 added"), "{out}");
     let one: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(p_list.join("local_1.json")).unwrap())
             .unwrap();
@@ -2935,11 +2932,11 @@ fn every_account_gets_the_same_sidebar() {
     // fields on `one` survive the title change.
     let (out, err, code) = sb.run(&["switch", "work-desktop"]);
     assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("Added") && out.contains("2 sessions"), "{out}");
     assert!(
-        out.contains("2 sessions added or brought up to date"),
+        out.contains("Removed") && out.contains("1 session, deleted under another account"),
         "{out}"
     );
-    assert!(out.contains("1 session removed"), "{out}");
     let one: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(a_list.join("local_1.json")).unwrap())
             .unwrap();
