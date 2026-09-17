@@ -4399,3 +4399,109 @@ fn a_session_entry_is_known_by_what_is_in_it() {
     let entry = std::fs::read_to_string(bob.join("session-9.json")).unwrap();
     assert!(entry.contains("named some other way"), "{entry}");
 }
+
+/// The Desktop draws its sidebar from two lists, not one:
+/// `claude-code-sessions` and `local-agent-mode-sessions`, both per account
+/// and both of the same shape. Sharing only the first left half a sidebar
+/// behind, and a sign-out stranded the other half where nothing looked.
+#[test]
+fn both_of_the_desktops_session_lists_are_shared() {
+    let sb = Sandbox::new();
+    sb.desktop_login("uuid-a", "A");
+    let entry = |id: &str, at: i64| {
+        format!(r#"{{"sessionId":"{id}","title":"a {id}","lastActivityAt":{at}}}"#)
+    };
+    for (root, id) in [
+        ("claude-code-sessions", "local_code"),
+        ("local-agent-mode-sessions", "local_agent"),
+    ] {
+        let dir = sb.desktop_dir().join(root).join("uuid-a").join("org-a");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(format!("{id}.json")), entry(id, 5)).unwrap();
+    }
+    sb.run(&["save", "work"]);
+    sb.login_b();
+    sb.run(&["save", "personal", "--only-code"]);
+    sb.run(&["switch", "personal-desktop"]);
+    sb.desktop_login("uuid-b", "B");
+    for root in ["claude-code-sessions", "local-agent-mode-sessions"] {
+        std::fs::create_dir_all(sb.desktop_dir().join(root).join("uuid-b").join("org-b")).unwrap();
+    }
+    sb.run(&["save", "personal"]);
+    sb.run(&["switch", "work-desktop"]);
+
+    let (out, err, code) = sb.run(&["switch", "personal-desktop"]);
+    assert_eq!(code, 0, "{err}{out}");
+    for (root, id) in [
+        ("claude-code-sessions", "local_code"),
+        ("local-agent-mode-sessions", "local_agent"),
+    ] {
+        let path = sb
+            .desktop_dir()
+            .join(root)
+            .join("uuid-b")
+            .join("org-b")
+            .join(format!("{id}.json"));
+        assert!(path.is_file(), "{id} did not reach {root}: {out}");
+    }
+    // And neither list got the other's entry.
+    assert!(
+        !sb.desktop_dir()
+            .join("claude-code-sessions")
+            .join("uuid-b")
+            .join("org-b")
+            .join("local_agent.json")
+            .exists(),
+        "an agent-mode session was written into the Claude Code list"
+    );
+    assert!(flat(&out).contains("2 sessions"), "{out}");
+}
+
+/// A sign-out inside the app leaves both lists behind, and a switch brings
+/// both back.
+#[test]
+fn a_sign_out_strands_both_lists_and_a_switch_returns_both() {
+    let sb = Sandbox::new();
+    sb.desktop_login("uuid-a", "A");
+    sb.run(&["save", "work"]);
+    sb.login_b();
+    sb.run(&["save", "personal", "--only-code"]);
+
+    // Signed out inside the app and in as bob: alice's two lists are still
+    // in the live directory.
+    sb.desktop_login("uuid-b", "B");
+    for root in ["claude-code-sessions", "local-agent-mode-sessions"] {
+        let dir = sb.desktop_dir().join(root).join("uuid-a").join("org-a");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("local_1.json"),
+            br#"{"sessionId":"local_1","lastActivityAt":5}"#,
+        )
+        .unwrap();
+    }
+    let (out, err, code) = sb.run(&["save", "personal"]);
+    assert_eq!(code, 0, "{err}{out}");
+
+    // Switching to work gathers both lists for work; work has no login of
+    // its own yet, so they wait until the Desktop is logged in as alice.
+    let (out, err, code) = sb.run(&["switch", "work-desktop"]);
+    assert_eq!(code, 0, "{err}{out}");
+    assert!(
+        flat(&out).contains("2 sessions"),
+        "both were gathered: {out}"
+    );
+    sb.desktop_login("uuid-a", "A");
+    let (out, err, code) = sb.run(&["switch", "work-desktop"]);
+    assert_eq!(code, 0, "{err}{out}");
+    for root in ["claude-code-sessions", "local-agent-mode-sessions"] {
+        assert!(
+            sb.desktop_dir()
+                .join(root)
+                .join("uuid-a")
+                .join("org-a")
+                .join("local_1.json")
+                .is_file(),
+            "{root} was not put back: {out}"
+        );
+    }
+}

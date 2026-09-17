@@ -439,9 +439,8 @@ fn desktop_table(theme: &Theme, rows: &[DesktopRow]) {
         // had the same phrase a few lines further down.
         if !r.waiting.is_empty() {
             t.note(format!(
-                "{} and {} from a sign-out are waiting; `ccred switch {}` puts them back",
-                plural(r.waiting.sessions, "session", "sessions"),
-                plural(r.waiting.groups, "sidebar group", "sidebar groups"),
+                "{} from a sign-out are waiting; `ccred switch {}` puts them back",
+                carried(&r.waiting),
                 r.name
             ));
         }
@@ -924,18 +923,29 @@ pub fn switch(theme: &Theme, r: &SwitchReport) {
     println!();
 }
 
+/// "3 sessions", "1 sidebar group", or both -- and never a count of zero.
+///
+/// A carry usually holds one kind or the other, and "2 sessions and 0
+/// sidebar groups" reads as a tally rather than as news.
+fn carried(c: &crate::desktop::Carried) -> String {
+    let mut parts = Vec::new();
+    if c.sessions > 0 {
+        parts.push(plural(c.sessions, "session", "sessions"));
+    }
+    if c.groups > 0 {
+        parts.push(plural(c.groups, "sidebar group", "sidebar groups"));
+    }
+    if parts.is_empty() {
+        parts.push(plural(0, "session", "sessions"));
+    }
+    parts.join(" and ")
+}
+
 // --- desktop switch -------------------------------------------------------
 
 pub fn desktop_switch(theme: &Theme, r: &crate::ops::desktop::DesktopReport) {
     let g = theme.glyphs;
     println!();
-    let carried = |c: &crate::desktop::Carried| {
-        format!(
-            "{} and {}",
-            plural(c.sessions, "session", "sessions"),
-            plural(c.groups, "sidebar group", "sidebar groups")
-        )
-    };
     let (style, headline, body) = desktop_switch_note(&r.desktop, &r.to, g.arrow);
     let glyph = match style {
         s if s == OK => g.ok,

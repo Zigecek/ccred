@@ -317,11 +317,12 @@ the target has a parked login to bring in -- then it is parked under an
 `unclaimed-<timestamp>` name that nothing switches back to, and `doctor`
 says where. `ccred current` shows which account the Desktop is on.
 
-**One sidebar for every account -- of Claude Code sessions.** This is about
-the Claude Code sessions the Desktop lists, the ones started from inside the
-app: it keeps that list per account, under
-`claude-code-sessions/<account>/<organization>/`, as one small JSON file per
-session. Your conversations with Claude are not in there and are not what
+**One sidebar for every account -- of local sessions.** This is about the
+sessions the Desktop lists because they ran on this machine: the Claude Code
+ones under `claude-code-sessions/<account>/<organization>/` and the
+agent-mode ones under `local-agent-mode-sessions/<account>/<organization>/`,
+each one small JSON file, both per account, and the app draws its sidebar
+from both. Your conversations with Claude are not in there and are not what
 this moves -- they belong to the account on Anthropic's side, the Desktop
 reads them from the server, and switching accounts shows that account's own.
 Nothing local can, or should, carry those across.
@@ -336,10 +337,12 @@ everywhere, and the sidebar groups follow. Only the part of an entry that
 is the session's travels -- which transcript, where, what it is called,
 when; what the Desktop wrote for the account (connector configuration,
 bridge ids) stays with that account and is filled in for the new one when
-the session is opened. What counts as a session entry is a file with a
-`sessionId` in it, read rather than assumed from the name, so a Desktop that
-renames them still works -- and `scheduled-tasks.json`, which lives in the
-same directory, is not one. The list is read whenever a profile is saved or
+the session is opened. Each list is brought up to the shared one for its own
+kind, so an agent-mode session is never written into the Claude Code list.
+What counts as a session entry is a file with a `sessionId` in it, read
+rather than assumed from the name, so a Desktop that renames them still
+works -- and `scheduled-tasks.json`, which lives in the same directory, is
+not one. The list is read whenever a profile is saved or
 parked, so a running Desktop still feeds it; writing into it needs the
 Desktop closed, and a switch says so when it could not. A switch that finds
 nothing to share says that too: someone who has never started a Claude Code

@@ -175,13 +175,13 @@ pub fn inspect(dir: &Path) -> Inspection {
 
 /// Accounts with at least one Code session listed in this directory.
 ///
-/// Reads directory names only: `claude-code-sessions/<account>/<org>/` with
-/// a `local_*.json` inside. The files themselves are not opened.
+/// Both places the Desktop keeps them are read, and an account counts when
+/// a file under `<account>/<org>/` says it is a session.
 fn accounts_with_sessions(dir: &Path) -> Vec<String> {
-    let Ok(accounts) = std::fs::read_dir(dir.join(SESSIONS_DIR)) else {
-        return Vec::new();
-    };
-    let mut found: Vec<String> = accounts
+    let mut found: Vec<String> = SESSION_DIRS
+        .iter()
+        .filter_map(|root| std::fs::read_dir(dir.join(root)).ok())
+        .flatten()
         .flatten()
         .filter(|a| a.path().is_dir())
         .filter(|a| {
@@ -198,6 +198,7 @@ fn accounts_with_sessions(dir: &Path) -> Vec<String> {
         .map(|a| a.file_name().to_string_lossy().into_owned())
         .collect();
     found.sort();
+    found.dedup();
     found
 }
 
@@ -756,11 +757,35 @@ pub fn unclaimed(paths: &Paths) -> Vec<PathBuf> {
 // per-account list directory is moved as a whole, and one key in the
 // config is filled in where it is empty.
 
-const SESSIONS_DIR: &str = "claude-code-sessions";
+/// The two places the Desktop keeps a per-account list of local sessions.
+///
+/// Both have the same shape -- `<dir>/<account>/<organization>/` with one
+/// small JSON file per session -- and the sidebar draws from both:
+/// `claude-code-sessions` holds the Claude Code ones,
+/// `local-agent-mode-sessions` the agent-mode ones. Read out of the app's
+/// own build, which scans exactly these two; sharing only the first left
+/// half a sidebar behind, and a sign-out stranded the other half where
+/// nothing went looking for it.
+const SESSION_DIRS: [&str; 2] = ["claude-code-sessions", "local-agent-mode-sessions"];
+/// The Claude Code one, which is also where a carry from an older version
+/// put everything.
+const SESSIONS_DIR: &str = SESSION_DIRS[0];
 const DESKTOP_CONFIG: &str = "claude_desktop_config.json";
 const CARRY_DIR: &str = "carry";
 const CARRY_GROUPS: &str = "groups.json";
 const GROUP_SCOPES: &str = "dframe-group-scopes";
+
+/// What a session store is called inside a profile's carry.
+///
+/// The Claude Code one keeps the name it had when it was the only one, so a
+/// carry written by an earlier version is still found where it was left.
+fn carry_name(root: &str) -> &str {
+    if root == SESSIONS_DIR {
+        "sessions"
+    } else {
+        root
+    }
+}
 
 /// What was gathered or put back.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
@@ -801,7 +826,10 @@ impl<'a> DesktopRepo<'a> {
             return Carried::default();
         };
         Carried {
-            sessions: count_sessions(&dir.join("sessions")),
+            sessions: SESSION_DIRS
+                .iter()
+                .map(|root| count_sessions(&dir.join(carry_name(root))))
+                .sum(),
             groups: read_scopes(&dir.join(CARRY_GROUPS))
                 .values()
                 .map(|s| s.groups.len())
@@ -817,20 +845,24 @@ impl<'a> DesktopRepo<'a> {
         if uuid.is_empty() {
             return Ok(Carried::default());
         }
-        let list = from.join(SESSIONS_DIR).join(uuid);
+        let lists: Vec<(&str, PathBuf)> = SESSION_DIRS
+            .iter()
+            .map(|root| (*root, from.join(root).join(uuid)))
+            .filter(|(_, list)| list.is_dir())
+            .collect();
         let scopes = read_scopes(&from.join(DESKTOP_CONFIG));
         let mine: Scopes = scopes
             .into_iter()
             .filter(|(k, _)| k.starts_with(&format!("{uuid}/")))
             .collect();
-        if !list.is_dir() && mine.is_empty() {
+        if lists.is_empty() && mine.is_empty() {
             return Ok(Carried::default());
         }
         let carry = self.carry_dir(name)?;
         let mut out = Carried::default();
-        if list.is_dir() {
-            out.sessions = count_sessions(&list);
-            move_merge(&list, &carry.join("sessions").join(uuid))?;
+        for (root, list) in lists {
+            out.sessions += count_sessions(&list);
+            move_merge(&list, &carry.join(carry_name(root)).join(uuid))?;
         }
         if !mine.is_empty() {
             let path = carry.join(CARRY_GROUPS);
@@ -866,15 +898,18 @@ impl<'a> DesktopRepo<'a> {
             return Ok(CarriedIn::default());
         }
         let mut out = CarriedIn::default();
-        let list = carry.join("sessions").join(uuid);
-        if list.is_dir() {
+        for root in SESSION_DIRS {
+            let list = carry.join(carry_name(root)).join(uuid);
+            if !list.is_dir() {
+                continue;
+            }
             // Not a `?`, for the reason the groups below are not: the
             // directories have already moved. A carry on another file
             // system is the likeliest way this fails, since a rename cannot
             // cross one, and the chats are better left waiting than lost to
             // an error nobody can act on mid-switch.
-            match move_merge(&list, &live.join(SESSIONS_DIR).join(uuid)) {
-                Ok(moved) => out.carried.sessions = moved,
+            match move_merge(&list, &live.join(root).join(uuid)) {
+                Ok(moved) => out.carried.sessions += moved,
                 Err(e) => out.sessions_kept_back = Some(e.to_string()),
             }
         }
@@ -894,7 +929,9 @@ impl<'a> DesktopRepo<'a> {
         if out.groups_kept_back.is_some() || out.sessions_kept_back.is_some() {
             // Only what went in is cleared; the groups file is the thing
             // being kept, and dropping it would lose them for good.
-            let _ = std::fs::remove_dir_all(carry.join("sessions"));
+            for root in SESSION_DIRS {
+                let _ = std::fs::remove_dir_all(carry.join(carry_name(root)));
+            }
         } else {
             std::fs::remove_dir_all(&carry).map_err(|source| CcredError::Io {
                 path: carry,
@@ -928,7 +965,10 @@ impl<'a> DesktopRepo<'a> {
             .filter(|n| n != except)
             .filter_map(|n| {
                 let data = self.data_dir(&n).ok()?;
-                (data.join(SESSIONS_DIR).join(uuid).is_dir()).then_some((n, data))
+                SESSION_DIRS
+                    .iter()
+                    .any(|root| data.join(root).join(uuid).is_dir())
+                    .then_some((n, data))
             })
             .collect()
     }
@@ -1249,16 +1289,23 @@ impl SidebarStore {
         write_atomic(&path, &bytes, true)
     }
 
-    fn entries_dir(&self) -> PathBuf {
-        self.dir.join("sessions")
+    /// One directory per place the Desktop keeps a list, so an id that
+    /// appears in both does not overwrite itself. The Claude Code one keeps
+    /// the name it had when it was the only one.
+    fn entries_dir(&self, root: &str) -> PathBuf {
+        if root == SESSIONS_DIR {
+            self.dir.join("sessions")
+        } else {
+            self.dir.join(root)
+        }
     }
 
-    fn entry_path(&self, id: &str) -> PathBuf {
-        self.entries_dir().join(format!("{id}.json"))
+    fn entry_path(&self, root: &str, id: &str) -> PathBuf {
+        self.entries_dir(root).join(format!("{id}.json"))
     }
 
-    fn entries(&self) -> Vec<(String, serde_json::Map<String, serde_json::Value>)> {
-        let Ok(dir) = std::fs::read_dir(self.entries_dir()) else {
+    fn entries(&self, root: &str) -> Entries {
+        let Ok(dir) = std::fs::read_dir(self.entries_dir(root)) else {
             return Vec::new();
         };
         let mut out: Vec<_> = dir
@@ -1276,15 +1323,16 @@ impl SidebarStore {
 
     fn write_entry(
         &self,
+        root: &str,
         id: &str,
         entry: &serde_json::Map<String, serde_json::Value>,
     ) -> crate::Result<()> {
-        let dir = self.entries_dir();
+        let dir = self.entries_dir(root);
         std::fs::create_dir_all(&dir).map_err(|source| CcredError::Io {
             path: dir.clone(),
             source,
         })?;
-        let path = self.entry_path(id);
+        let path = self.entry_path(root, id);
         let bytes = serde_json::to_vec_pretty(entry).map_err(|source| CcredError::Json {
             path: path.clone(),
             source,
@@ -1319,17 +1367,21 @@ fn activity(entry: &serde_json::Map<String, serde_json::Value>) -> i64 {
 }
 
 /// The `<uuid>/<org>/` list directories of an account in a Desktop data
-/// directory. Usually one.
-fn list_dirs(data: &Path, uuid: &str) -> Vec<(String, PathBuf)> {
-    let Ok(orgs) = std::fs::read_dir(data.join(SESSIONS_DIR).join(uuid)) else {
-        return Vec::new();
-    };
-    let mut out: Vec<_> = orgs
-        .flatten()
-        .filter(|o| o.path().is_dir())
-        .map(|o| (o.file_name().to_string_lossy().into_owned(), o.path()))
-        .collect();
-    out.sort();
+/// directory, in both of the places it keeps them. Usually one each.
+fn list_dirs(data: &Path, uuid: &str) -> Vec<(&'static str, String, PathBuf)> {
+    let mut out = Vec::new();
+    for root in SESSION_DIRS {
+        let Ok(orgs) = std::fs::read_dir(data.join(root).join(uuid)) else {
+            continue;
+        };
+        let mut found: Vec<_> = orgs
+            .flatten()
+            .filter(|o| o.path().is_dir())
+            .map(|o| (root, o.file_name().to_string_lossy().into_owned(), o.path()))
+            .collect();
+        found.sort();
+        out.append(&mut found);
+    }
     out
 }
 
@@ -1369,7 +1421,7 @@ pub fn sidebar_collect(paths: &Paths, data: &Path, uuid: &str) -> crate::Result<
     let mut state = store.state();
     let mut out = Sidebar::default();
     let mut touched = false;
-    for (org, dir) in list_dirs(data, uuid) {
+    for (root, org, dir) in list_dirs(data, uuid) {
         let Ok(files) = std::fs::read_dir(&dir) else {
             continue;
         };
@@ -1380,7 +1432,7 @@ pub fn sidebar_collect(paths: &Paths, data: &Path, uuid: &str) -> crate::Result<
                 if state.deleted.insert(id.clone()) {
                     touched = true;
                 }
-                let _ = std::fs::remove_file(store.entry_path(&id));
+                let _ = std::fs::remove_file(store.entry_path(root, &id));
                 continue;
             }
             // Keyed by the name the Desktop gave the file, so it goes back
@@ -1396,10 +1448,10 @@ pub fn sidebar_collect(paths: &Paths, data: &Path, uuid: &str) -> crate::Result<
                 continue;
             };
             let mine = portable(&entry);
-            let newer = read_entry(&store.entry_path(id))
+            let newer = read_entry(&store.entry_path(root, id))
                 .is_none_or(|have| activity(&mine) >= activity(&have));
             if newer {
-                store.write_entry(id, &mine)?;
+                store.write_entry(root, id, &mine)?;
                 out.collected += 1;
             }
         }
@@ -1422,6 +1474,9 @@ pub fn sidebar_collect(paths: &Paths, data: &Path, uuid: &str) -> crate::Result<
     }
     Ok(out)
 }
+
+/// The entries of one session store, by the name the Desktop gave each.
+type Entries = Vec<(String, serde_json::Map<String, serde_json::Value>)>;
 
 /// What a spread did, and what it could not.
 #[derive(Debug, Clone, Default)]
@@ -1450,12 +1505,24 @@ pub fn sidebar_spread(paths: &Paths, data: &Path, uuid: &str) -> crate::Result<S
     }
     let store = SidebarStore::new(paths);
     let state = store.state();
-    let entries = store.entries();
-    let shared = entries.len();
+    // Each list is brought up to the shared one for its own kind: a Claude
+    // Code entry belongs in `claude-code-sessions`, an agent-mode one in
+    // `local-agent-mode-sessions`, and writing either into the other would
+    // put a session in a list the Desktop does not draw it from.
+    let by_root: Vec<(&str, Entries)> = SESSION_DIRS
+        .iter()
+        .map(|r| (*r, store.entries(r)))
+        .collect();
+    let shared: usize = by_root.iter().map(|(_, e)| e.len()).sum();
     let mut out = Sidebar::default();
     let mut scopes = Scopes::new();
-    for (org, dir) in list_dirs(data, uuid) {
-        for (id, want) in &entries {
+    for (root, org, dir) in list_dirs(data, uuid) {
+        let entries = by_root
+            .iter()
+            .find(|(r, _)| *r == root)
+            .map(|(_, e)| e.as_slice())
+            .unwrap_or_default();
+        for (id, want) in entries {
             let path = dir.join(format!("{id}.json"));
             match read_entry(&path) {
                 Some(have) if activity(&have) >= activity(want) => {}

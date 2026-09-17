@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.3.7
+
+- **Both of the Desktop's session lists are shared, not one.** The app
+  draws its sidebar from `claude-code-sessions/` and from
+  `local-agent-mode-sessions/`, both per account and both of the same
+  shape -- read out of the app's own build, which scans exactly those two.
+  Only the first was shared, so half a sidebar stayed behind on a switch,
+  and a sign-out inside the app stranded the other half where nothing went
+  looking for it. Each list is brought up to the shared one for its own
+  kind, so an agent-mode session is never written into the Claude Code
+  list.
+- A carry of sessions and no groups said "2 sessions and 0 sidebar
+  groups", which reads as a tally rather than as news. A count of zero is
+  left out.
+
 ## 0.3.6
 
 - **A switch that shares nothing says so.** The shared sidebar is a list
