@@ -177,8 +177,16 @@ pub fn switch(ctx: &Ctx, target: &ProfileName) -> crate::Result<DesktopReport> {
         Owner::Profile(from),
     ) = (&step, &owner)
         && let Some(f) = repo.meta(from)?.and_then(|m| m.account.account_uuid)
+        && let Err(e) = desktop::sidebar_collect(ctx.paths(), live, &f)
     {
-        desktop::sidebar_collect(ctx.paths(), live, &f)?;
+        // Not a `?` either, though nothing has moved yet: the shared sidebar
+        // is a convenience built out of lists the accounts keep themselves,
+        // and refusing to switch a login because one could not be written
+        // would trade the operation that matters for one that does not.
+        warnings.push(format!(
+            "the chats of the account being parked were not added to the shared sidebar ({e}); \
+             switching back to it adds them"
+        ));
     }
 
     let outcome = desktop::apply(ctx.paths(), target, step);
@@ -217,7 +225,18 @@ pub fn switch(ctx: &Ctx, target: &ProfileName) -> crate::Result<DesktopReport> {
         // then the union into it. Writing into the list needs the Desktop
         // closed, like every other write into its directory; reading does
         // not, so a running Desktop still feeds the union.
-        desktop::sidebar_collect(ctx.paths(), live, &uuid)?;
+        // Neither is a `?`, for the reason the carry above is not: the
+        // directories have already moved, so the switch has happened. A
+        // sidebar that could not be brought up to date is worth saying and
+        // is fixed by switching to this profile again; raised, it would send
+        // someone looking for a switch that did not take, and hide the one
+        // that did.
+        if let Err(e) = desktop::sidebar_collect(ctx.paths(), live, &uuid) {
+            warnings.push(format!(
+                "this account's chats were not added to the shared sidebar ({e}); \
+                 switching to it again does it"
+            ));
+        }
         if inspection.running {
             warnings.push(
                 "Claude Desktop is running, so its sidebar was not brought up to date; \
@@ -225,7 +244,13 @@ pub fn switch(ctx: &Ctx, target: &ProfileName) -> crate::Result<DesktopReport> {
                     .into(),
             );
         } else {
-            sidebar = desktop::sidebar_spread(ctx.paths(), live, &uuid)?;
+            match desktop::sidebar_spread(ctx.paths(), live, &uuid) {
+                Ok(done) => sidebar = done,
+                Err(e) => warnings.push(format!(
+                    "the shared sidebar was not written into this account's list ({e}); \
+                     switching to it again does it"
+                )),
+            }
         }
     }
     Ok(DesktopReport {

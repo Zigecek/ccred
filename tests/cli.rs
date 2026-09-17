@@ -3863,3 +3863,46 @@ fn a_profile_named_like_a_parking_place_is_not_reported_as_stray() {
         "{err}{out}"
     );
 }
+
+/// The shared sidebar is built out of lists the accounts keep themselves, so
+/// failing to write it is a warning. It used to be a `?` raised after the
+/// directories had already moved -- a switch that had happened, reported as
+/// a failure, with the login nowhere the message said to look.
+#[test]
+fn a_sidebar_that_cannot_be_written_does_not_fail_the_switch() {
+    let sb = Sandbox::new();
+    sb.desktop_login("uuid-a", "A");
+    sb.run(&["save", "work"]);
+    sb.login_b();
+    sb.run(&["save", "personal", "--only-code"]);
+    let (out, err, code) = sb.run(&["switch", "personal-desktop"]);
+    assert_eq!(code, 0, "{err}{out}");
+
+    // A chat waiting in the parked login, so the union has something to
+    // take, and a file where the union keeps its entries, so taking it
+    // cannot work.
+    let chats = sb
+        .parked_desktop("work")
+        .join("data")
+        .join("claude-code-sessions")
+        .join("uuid-a")
+        .join("org-a");
+    std::fs::create_dir_all(&chats).unwrap();
+    std::fs::write(
+        chats.join("local_1.json"),
+        br#"{"sessionId":"local_1","lastActivityAt":5}"#,
+    )
+    .unwrap();
+    let union = sb.path().join(".ccred").join("desktop").join(".sidebar");
+    std::fs::create_dir_all(&union).unwrap();
+    std::fs::write(union.join("sessions"), b"a file where a directory goes").unwrap();
+
+    let (out, err, code) = sb.run(&["switch", "work-desktop"]);
+    assert_eq!(code, 0, "the switch itself is fine: {err}{out}");
+    assert!(out.contains("shared sidebar"), "said so: {out}");
+    // And the login is where the output says it is.
+    assert_eq!(
+        std::fs::read_to_string(sb.desktop_dir().join("marker")).unwrap(),
+        "A"
+    );
+}
