@@ -1337,6 +1337,24 @@ pub fn uninstall_plan(theme: &Theme, p: &crate::ops::uninstall::Plan, dry_run: b
         )
     };
     f.add("Profiles", row);
+    // Its own row. The confirmation counted these and the JSON reported
+    // them, while the plan a person reads before answering did not -- and a
+    // parked Desktop login is the one thing here that no copy can replace:
+    // its token is encrypted, so nothing was ever kept aside.
+    if p.desktop_logins > 0 {
+        let logins = plural(p.desktop_logins, "login", "logins");
+        f.add(
+            "Desktop",
+            if p.deletes_data() {
+                paint(ERR, &format!("will be DELETED: {logins}, parked here"))
+            } else {
+                paint(
+                    OK,
+                    &format!("kept: {logins}, parked here -- --purge deletes them"),
+                )
+            },
+        );
+    }
     f.add(
         "Claude Code",
         paint(MUTED, "not touched -- the login in ~/.claude stays"),

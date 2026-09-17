@@ -1125,6 +1125,30 @@ fn a_packaged_desktop_on_windows_is_found_and_read() {
     assert!(out.contains("work-desktop"), "{out}");
 }
 
+/// The most destructive command in the program, read before answering it:
+/// a parked Desktop login is the one thing here no copy can replace, since
+/// its token is encrypted and nothing was ever kept aside. The confirmation
+/// counted it and the JSON reported it; the plan did not.
+#[test]
+fn the_uninstall_plan_says_a_parked_desktop_login_would_go() {
+    let sb = Sandbox::new();
+    sb.desktop_login("uuid-a", "A");
+    sb.run(&["save", "work"]);
+    let parked = sb.parked_desktop("work").join("data");
+    std::fs::create_dir_all(&parked).unwrap();
+    std::fs::write(parked.join("marker"), b"A").unwrap();
+
+    let (out, err, code) = sb.run(&["uninstall", "--dry-run"]);
+    assert_eq!(code, 0, "{err}{out}");
+    assert!(out.contains("Desktop"), "{out}");
+    assert!(out.contains("1 login"), "{out}");
+    assert!(out.contains("--purge deletes them"), "{out}");
+
+    let (out, _, code) = sb.run(&["uninstall", "--purge", "--dry-run"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("will be DELETED: 1 login"), "{out}");
+}
+
 /// `work` and `work-desktop` are one profile under two roofs, so a rename
 /// has to take both. Left behind, `job-desktop` would name nothing while
 /// `work-desktop` outlived the profile it belonged to, parked login and all.
