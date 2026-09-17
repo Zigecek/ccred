@@ -145,13 +145,25 @@ pub fn current(theme: &Theme, r: &CurrentReport) {
                 paint(MUTED, "(ccred list)")
             ),
         );
+        let mut desktop_advice = None;
         if let Some(d) = &r.desktop {
-            f.add(
-                "Desktop",
-                desktop_status_line(d, r.active_profile.as_deref()),
-            );
+            let (value, advice) = desktop_status_line(d, r.active_profile.as_deref());
+            f.add("Desktop", value);
+            // Its own row, rather than a comma list inside the value above.
+            if !d.parked.is_empty() {
+                f.add("Parked", paint(MUTED, &d.parked.join(", ")));
+            }
+            desktop_advice = advice;
         }
         println!("{}", f.render(PAD));
+        if let Some(advice) = desktop_advice {
+            callout(
+                WARN,
+                g.warn,
+                &advice,
+                &["`ccred switch <name>-desktop` moves the Desktop's login"],
+            );
+        }
     } else if let Some(why) = &r.live_error {
         callout(
             ERR,
@@ -223,35 +235,34 @@ fn token_meter(theme: &Theme, ms_left: i64, nominal_ms: i64) -> String {
 
 /// Which account the Desktop is on, and whether that is the one Claude Code
 /// is on. The name is the point; everything else is context.
-fn desktop_status_line(d: &DesktopStatus, active: Option<&str>) -> String {
+///
+/// One value, and the advice that goes with it kept separate. This used to
+/// be four segments joined into a single `Fields` value -- the account, an
+/// advisory, `(running)` and a comma list of parked names, ~130 columns in
+/// the worst case, in a row whose peers read `2 saved   (ccred list)`.
+fn desktop_status_line(d: &DesktopStatus, active: Option<&str>) -> (String, Option<String>) {
     let same_account =
         |p: &str| active.is_some_and(|a| p.strip_suffix(crate::desktop::SUFFIX) == Some(a));
-    let mut line = match (&d.profile, d.installed, d.logged_in) {
-        (Some(p), _, _) if d.signed_out_in_app => format!(
-            "{}   {}",
+    let (value, advice) = match (&d.profile, d.installed, d.logged_in) {
+        (Some(p), _, _) if d.signed_out_in_app => (
             paint(NAME, p),
-            paint(WARN, "signed out inside the app; switch with ccred instead")
+            Some("signed out inside the app".to_string()),
         ),
-        (Some(p), _, _) if same_account(p) => paint(NAME, p),
-        (Some(p), _, _) => format!(
-            "{}   {}",
+        (Some(p), _, _) if same_account(p) => (paint(NAME, p), None),
+        (Some(p), _, _) => (
             paint(NAME, p),
-            paint(WARN, "not the active profile's account")
+            Some("not the active profile's account".to_string()),
         ),
-        (None, true, true) => paint(MUTED, "an account that is not a saved profile"),
-        (None, true, false) => paint(MUTED, "not logged in"),
-        (None, false, _) => paint(MUTED, "no active login"),
+        (None, true, true) => (paint(MUTED, "an account that is not a saved profile"), None),
+        (None, true, false) => (paint(MUTED, "not logged in"), None),
+        (None, false, _) => (paint(MUTED, "no active login"), None),
     };
-    if d.running {
-        line.push_str(&format!("   {}", paint(MUTED, "(running)")));
-    }
-    if !d.parked.is_empty() {
-        line.push_str(&format!(
-            "   {}",
-            paint(MUTED, &format!("parked: {}", d.parked.join(", ")))
-        ));
-    }
-    line
+    let value = if d.running {
+        format!("{value}   {}", paint(MUTED, "(running)"))
+    } else {
+        value
+    };
+    (value, advice)
 }
 
 /// What a Desktop switch did: a headline, and the rest underneath it.
@@ -334,16 +345,27 @@ pub fn list(theme: &Theme, listing: &Listing, pointer: Option<&PointerNote>) {
         println!();
         return;
     }
+    // Two tables, each with a heading. Without them the second reads as a
+    // second header row of a broken first one -- and the pointer note, which
+    // is about the Claude Code half, came between them.
+    let both = !rows.is_empty() && !listing.desktop.is_empty();
     if rows.is_empty() {
         println!();
-        println!("{PAD}{}", paint(MUTED, "no Claude Code profiles"));
+        callout(MUTED, g.bullet, "no Claude Code profiles", &[]);
     } else {
+        if both {
+            println!();
+            println!("{}", heading(theme, PAD, "Claude Code"));
+        }
         profile_table(theme, rows);
     }
-    pointer_note(theme, pointer);
     if !listing.desktop.is_empty() {
+        if both {
+            println!("{}", heading(theme, PAD, "Claude Desktop"));
+        }
         desktop_table(theme, &listing.desktop);
     }
+    pointer_note(theme, pointer);
     println!();
 }
 
@@ -366,7 +388,8 @@ fn desktop_table(theme: &Theme, rows: &[DesktopRow]) {
             Cell::new(format!("{gutter} {}", r.name), NAME)
         };
         let state = match r.state {
-            DesktopState::LoggedIn if r.running => Cell::new("logged in, running", OK),
+            // Not "logged in, running": every other status in this program
+            // is one phrase, and `current` reports a running Desktop.
             DesktopState::LoggedIn => Cell::new("logged in", OK),
             DesktopState::SignedOut => Cell::new("signed out in the app", WARN),
             DesktopState::Parked => Cell::new("parked", VALUE),
