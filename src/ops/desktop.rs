@@ -201,7 +201,13 @@ pub fn switch(ctx: &Ctx, target: &ProfileName) -> crate::Result<DesktopReport> {
     let mut restored_to_sidebar = Carried::default();
     let mut sidebar = Sidebar::default();
     if live_is_targets {
-        restored_to_sidebar = repo.carry_in(target, &uuid, live)?;
+        let put_back = repo.carry_in(target, &uuid, live)?;
+        restored_to_sidebar = put_back.carried;
+        if let Some(why) = put_back.groups_kept_back {
+            warnings.push(format!(
+ "the sidebar groups stayed with the profile ({why}); the next switch to it puts them in"
+            ));
+        }
         // Its own list first, so nothing it knows is older than the union;
         // then the union into it. Writing into the list needs the Desktop
         // closed, like every other write into its directory; reading does

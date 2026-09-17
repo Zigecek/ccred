@@ -743,6 +743,15 @@ pub struct Carried {
     pub groups: usize,
 }
 
+/// What a carry put back, and what it could not.
+#[derive(Debug, Clone, Default)]
+pub struct CarriedIn {
+    pub carried: Carried,
+    /// Why the sidebar groups stayed in the carry. They are kept for the
+    /// next switch rather than dropped, and this says so.
+    pub groups_kept_back: Option<String>,
+}
+
 impl Carried {
     pub fn is_empty(&self) -> bool {
         self.sessions == 0 && self.groups == 0
@@ -818,25 +827,45 @@ impl<'a> DesktopRepo<'a> {
     /// Put the profile's carry into `live`, which must be that account's
     /// directory, and forget the carry. Files already there are never
     /// overwritten; a group scope already filled in is merged into.
-    pub fn carry_in(&self, name: &ProfileName, uuid: &str, live: &Path) -> crate::Result<Carried> {
+    pub fn carry_in(
+        &self,
+        name: &ProfileName,
+        uuid: &str,
+        live: &Path,
+    ) -> crate::Result<CarriedIn> {
         let carry = self.carry_dir(name)?;
         if !carry.is_dir() || uuid.is_empty() {
-            return Ok(Carried::default());
+            return Ok(CarriedIn::default());
         }
-        let mut out = Carried::default();
+        let mut out = CarriedIn::default();
         let list = carry.join("sessions").join(uuid);
         if list.is_dir() {
-            out.sessions = count_sessions(&list);
+            out.carried.sessions = count_sessions(&list);
             move_merge(&list, &live.join(SESSIONS_DIR).join(uuid))?;
         }
         let groups = carry.join(CARRY_GROUPS);
         if groups.is_file() {
-            out.groups = fill_in_scopes(&live.join(DESKTOP_CONFIG), read_scopes(&groups))?;
+            // Not a `?`. By the time this runs the directories have already
+            // moved, so raising here reported a switch that had happened as
+            // a failure -- and the Desktop's config is a file that can be
+            // absent (a fresh install), be mid-write, or have a shape this
+            // version does not know. The groups stay in the carry for the
+            // next switch, which is what the carry is for.
+            match fill_in_scopes(&live.join(DESKTOP_CONFIG), read_scopes(&groups)) {
+                Ok(added) => out.carried.groups = added,
+                Err(e) => out.groups_kept_back = Some(e.to_string()),
+            }
         }
-        std::fs::remove_dir_all(&carry).map_err(|source| CcredError::Io {
-            path: carry,
-            source,
-        })?;
+        if out.groups_kept_back.is_some() {
+            // Only what went in is cleared; the groups file is the thing
+            // being kept, and dropping it would lose them for good.
+            let _ = std::fs::remove_dir_all(carry.join("sessions"));
+        } else {
+            std::fs::remove_dir_all(&carry).map_err(|source| CcredError::Io {
+                path: carry,
+                source,
+            })?;
+        }
         Ok(out)
     }
 
@@ -903,7 +932,10 @@ fn read_scopes(path: &Path) -> Scopes {
     let Ok(raw) = std::fs::read(path) else {
         return Scopes::new();
     };
-    let Ok(doc) = serde_json::from_slice::<serde_json::Value>(&raw) else {
+    // Same treatment as every other JSON this program reads: a mark a
+    // Windows editor left on the front is not a malformation.
+    let Ok(doc) = serde_json::from_slice::<serde_json::Value>(&crate::store::without_bom(raw))
+    else {
         return Scopes::new();
     };
     let scopes = if path.file_name().is_some_and(|f| f == DESKTOP_CONFIG) {
@@ -924,6 +956,10 @@ fn fill_in_scopes(config: &Path, scopes: Scopes) -> crate::Result<usize> {
         path: config.to_path_buf(),
         source,
     })?;
+    let raw = crate::store::without_bom(raw);
+    if let Some(e) = crate::store::encoding_error(&raw, config) {
+        return Err(e);
+    }
     let mut doc: serde_json::Value =
         serde_json::from_slice(&raw).map_err(|source| CcredError::Json {
             path: config.to_path_buf(),

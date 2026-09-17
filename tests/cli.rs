@@ -1125,6 +1125,48 @@ fn a_packaged_desktop_on_windows_is_found_and_read() {
     assert!(out.contains("work-desktop"), "{out}");
 }
 
+/// A Desktop with no `claude_desktop_config.json` -- a fresh install that
+/// has never been configured -- meeting a carry with groups in it. The
+/// directories have already moved by then, so raising there reported a
+/// switch that had happened as a failure, and deleting the carry would have
+/// dropped the groups. They wait for the next switch instead.
+#[test]
+fn groups_that_cannot_be_put_back_are_kept_not_dropped() {
+    let sb = Sandbox::new();
+    sb.desktop_login("uuid-a", "A");
+    sb.run(&["save", "work"]);
+    sb.login_b();
+    sb.run(&["save", "personal", "--only-code"]);
+
+    // Groups waiting for `work-desktop`, and a Desktop config that is not
+    // there at all.
+    let carry = sb.parked_desktop("work").join("carry");
+    std::fs::create_dir_all(&carry).unwrap();
+    std::fs::write(
+        carry.join("groups.json"),
+        br#"{"uuid-a/org-a":{"groups":[{"id":"g1","name":"Work"}]}}"#,
+    )
+    .unwrap();
+    let config = sb.desktop_dir().join("claude_desktop_config.json");
+    assert!(!config.exists(), "the case is that it is missing");
+
+    // Park work's login and bring it back, which is when a carry goes in.
+    let (out, err, code) = sb.run(&["switch", "personal-desktop"]);
+    assert_eq!(code, 0, "{err}{out}");
+    sb.desktop_login("uuid-a", "A");
+    let (out, err, code) = sb.run(&["switch", "work-desktop"]);
+    assert_eq!(
+        code, 0,
+        "a switch that happened is not a failure: {err}{out}"
+    );
+
+    assert!(
+        carry.join("groups.json").is_file(),
+        "the groups are kept for the next switch: {out}"
+    );
+    assert!(out.contains("stayed with the profile"), "{out}");
+}
+
 /// The most destructive command in the program, read before answering it:
 /// a parked Desktop login is the one thing here no copy can replace, since
 /// its token is encrypted and nothing was ever kept aside. The confirmation
