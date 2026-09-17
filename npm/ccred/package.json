@@ -1,6 +1,6 @@
 {
   "name": "ccred",
-  "version": "0.2.39",
+  "version": "0.2.40",
   "description": "Save, list and switch between named sets of local Claude Code credentials. Unofficial; not affiliated with Anthropic PBC.",
   "license": "MIT OR Apache-2.0",
   "repository": {
@@ -31,12 +31,12 @@
     "node": ">=18"
   },
   "optionalDependencies": {
-    "@ccred/linux-x64": "0.2.39",
-    "@ccred/linux-x64-musl": "0.2.39",
-    "@ccred/linux-arm64": "0.2.39",
-    "@ccred/linux-arm64-musl": "0.2.39",
-    "@ccred/darwin-x64": "0.2.39",
-    "@ccred/darwin-arm64": "0.2.39",
-    "@ccred/win32-x64": "0.2.39"
+    "@ccred/linux-x64": "0.2.40",
+    "@ccred/linux-x64-musl": "0.2.40",
+    "@ccred/linux-arm64": "0.2.40",
+    "@ccred/linux-arm64-musl": "0.2.40",
+    "@ccred/darwin-x64": "0.2.40",
+    "@ccred/darwin-arm64": "0.2.40",
+    "@ccred/win32-x64": "0.2.40"
   }
 }

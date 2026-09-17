@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.40
+
+- **A rename that only changes case takes the pointer with it.** `rename work
+  WORK` is the one way to fix a spelling on a file system that ignores case,
+  and it left the pointer saying `work`: the check for "was this the active
+  profile" ran after the directory had moved, so the old name resolved to the
+  new one and compared unequal to itself. Invisible on Windows, a pointer to
+  nothing anywhere that tells the two apart.
+
 ## 0.2.39
 
 Both found by looking at a real machine's log and schedule the morning after.
