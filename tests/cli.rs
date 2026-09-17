@@ -3906,3 +3906,120 @@ fn a_sidebar_that_cannot_be_written_does_not_fail_the_switch() {
         "A"
     );
 }
+
+/// The Desktop's index of archived chats is patched like every other file
+/// of its own: it was read for one key and written back with that key
+/// alone, so anything else in it -- a schema version, whatever a later
+/// build adds -- was dropped the first time a switch archived something.
+#[test]
+fn the_archived_index_keeps_what_this_version_does_not_know_about() {
+    let sb = Sandbox::new();
+    sb.desktop_login("uuid-a", "A");
+    let alice = sb
+        .desktop_dir()
+        .join("claude-code-sessions")
+        .join("uuid-a")
+        .join("org-a");
+    std::fs::create_dir_all(&alice).unwrap();
+    std::fs::write(
+        alice.join("local_1.json"),
+        br#"{"sessionId":"local_1","title":"an old chat","lastActivityAt":5}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        alice.join("archived-sessions.idx"),
+        br#"{"v":1,"archived":["local_1"],"somethingElse":{"kept":true}}"#,
+    )
+    .unwrap();
+    sb.run(&["save", "work"]);
+    sb.login_b();
+    sb.run(&["save", "personal", "--only-code"]);
+
+    // Park alice's login, log the Desktop in as bob the way the README
+    // says to, and record that half.
+    let (out, err, code) = sb.run(&["switch", "personal-desktop"]);
+    assert_eq!(code, 0, "{err}{out}");
+    sb.desktop_login("uuid-b", "B");
+    let bob = sb
+        .desktop_dir()
+        .join("claude-code-sessions")
+        .join("uuid-b")
+        .join("org-b");
+    std::fs::create_dir_all(&bob).unwrap();
+    std::fs::write(
+        bob.join("archived-sessions.idx"),
+        br#"{"v":1,"archived":[],"somethingElse":{"kept":true}}"#,
+    )
+    .unwrap();
+    let (out, err, code) = sb.run(&["save", "personal"]);
+    assert_eq!(code, 0, "{err}{out}");
+
+    // Round trip: alice's chat reaches bob's list, and being archived under
+    // alice it is archived in bob's index too.
+    let (out, err, code) = sb.run(&["switch", "work-desktop"]);
+    assert_eq!(code, 0, "{err}{out}");
+    let (out, err, code) = sb.run(&["switch", "personal-desktop"]);
+    assert_eq!(code, 0, "{err}{out}");
+
+    assert!(bob.join("local_1.json").is_file(), "the chat came across");
+    let idx: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(bob.join("archived-sessions.idx")).unwrap()).unwrap();
+    assert_eq!(
+        idx["archived"],
+        serde_json::json!(["local_1"]),
+        "archived under the account that had it: {idx}"
+    );
+    assert_eq!(
+        idx["somethingElse"],
+        serde_json::json!({"kept": true}),
+        "and nothing else in the file was dropped: {idx}"
+    );
+}
+
+/// An index in a shape this version cannot read is left alone. Writing over
+/// what could not be read is worse than not archiving.
+#[test]
+fn an_archived_index_that_cannot_be_read_is_not_overwritten() {
+    let sb = Sandbox::new();
+    sb.desktop_login("uuid-a", "A");
+    let alice = sb
+        .desktop_dir()
+        .join("claude-code-sessions")
+        .join("uuid-a")
+        .join("org-a");
+    std::fs::create_dir_all(&alice).unwrap();
+    std::fs::write(
+        alice.join("local_1.json"),
+        br#"{"sessionId":"local_1","lastActivityAt":5}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        alice.join("archived-sessions.idx"),
+        br#"{"v":1,"archived":["local_1"]}"#,
+    )
+    .unwrap();
+    sb.run(&["save", "work"]);
+    sb.login_b();
+    sb.run(&["save", "personal", "--only-code"]);
+    sb.run(&["switch", "personal-desktop"]);
+    sb.desktop_login("uuid-b", "B");
+    let bob = sb
+        .desktop_dir()
+        .join("claude-code-sessions")
+        .join("uuid-b")
+        .join("org-b");
+    std::fs::create_dir_all(&bob).unwrap();
+    let mangled: &[u8] = b"{ this is not json";
+    std::fs::write(bob.join("archived-sessions.idx"), mangled).unwrap();
+    sb.run(&["save", "personal"]);
+    sb.run(&["switch", "work-desktop"]);
+
+    let (out, err, code) = sb.run(&["switch", "personal-desktop"]);
+    assert_eq!(code, 0, "{err}{out}");
+    assert!(bob.join("local_1.json").is_file(), "the chat still comes");
+    assert_eq!(
+        std::fs::read(bob.join("archived-sessions.idx")).unwrap(),
+        mangled,
+        "byte for byte as it was found"
+    );
+}

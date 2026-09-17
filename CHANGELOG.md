@@ -18,6 +18,12 @@ directory.
   belonging to no profile -- advice that ends in "delete when sure", naming
   somebody's parked login. A profile is its metadata file, and that is what
   the check reads now.
+- **The Desktop's index of archived chats is patched, not rewritten.**
+  It was read for the one key this tool cares about and written back
+  with that key alone, so a `v` field, or anything a later build of the
+  Desktop puts in there, was dropped the first time a switch archived
+  something. An index that cannot be read at all is now left exactly as
+  it was found.
 - **A sidebar that cannot be written no longer fails the switch.** Both
   passes raised: one before the move, which refused to switch a login
   because an index could not be written, and one after it, which reported a

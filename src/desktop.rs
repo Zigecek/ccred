@@ -1287,16 +1287,29 @@ fn list_dirs(data: &Path, uuid: &str) -> Vec<(String, PathBuf)> {
     out
 }
 
+/// The archived index as it is on disk, if it is there and is an object.
+/// `None` covers both an absent file and one in a shape this version does
+/// not know, which the caller tells apart because only the first is ours to
+/// create.
+fn read_archived_doc(dir: &Path) -> Option<serde_json::Map<String, serde_json::Value>> {
+    read_entry(&dir.join(ARCHIVED_IDX))
+}
+
+fn archived_ids(doc: &serde_json::Map<String, serde_json::Value>) -> Vec<String> {
+    doc.get("archived")
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 fn read_archived(dir: &Path) -> Vec<String> {
-    #[derive(Deserialize)]
-    struct Idx {
-        #[serde(default)]
-        archived: Vec<String>,
-    }
-    std::fs::read(dir.join(ARCHIVED_IDX))
-        .ok()
-        .and_then(|raw| serde_json::from_slice::<Idx>(&raw).ok())
-        .map(|i| i.archived)
+    read_archived_doc(dir)
+        .as_ref()
+        .map(archived_ids)
         .unwrap_or_default()
 }
 
@@ -1411,23 +1424,38 @@ pub fn sidebar_spread(paths: &Paths, data: &Path, uuid: &str) -> crate::Result<S
                 out.removed += 1;
             }
         }
-        let mut archived: Vec<String> = read_archived(&dir);
-        let mut grew = false;
-        for id in &state.archived {
-            if !archived.contains(id) && dir.join(format!("{id}.json")).exists() {
-                archived.push(id.clone());
-                grew = true;
+        // Patched, never regenerated, like every other file of Claude
+        // Desktop's: the index is read for one key, and a file that has more
+        // than this version knows about must come back with them. A file
+        // that is there but is not an object is left alone -- writing over
+        // what we could not read is the one thing worse than not archiving.
+        let idx_path = dir.join(ARCHIVED_IDX);
+        let present = read_archived_doc(&dir);
+        if present.is_some() || !idx_path.exists() {
+            let mut doc = present.unwrap_or_else(|| {
+                let mut fresh = serde_json::Map::new();
+                fresh.insert("v".into(), serde_json::Value::from(1));
+                fresh
+            });
+            let mut archived = archived_ids(&doc);
+            let mut grew = false;
+            for id in &state.archived {
+                if !archived.contains(id) && dir.join(format!("{id}.json")).exists() {
+                    archived.push(id.clone());
+                    grew = true;
+                }
             }
-        }
-        if grew {
-            // Strings in, JSON out: this cannot fail, and saying so in a
-            // panic would still end an unattended run with nothing to read.
-            let bytes = serde_json::to_vec(&serde_json::json!({"v": 1, "archived": archived}))
-                .map_err(|source| CcredError::Json {
-                    path: dir.join(ARCHIVED_IDX),
+            if grew {
+                doc.insert("archived".into(), serde_json::Value::from(archived));
+                // Strings in, JSON out: this cannot fail, and saying so in a
+                // panic would still end an unattended run with nothing to
+                // read.
+                let bytes = serde_json::to_vec(&doc).map_err(|source| CcredError::Json {
+                    path: idx_path.clone(),
                     source,
                 })?;
-            write_atomic(&dir.join(ARCHIVED_IDX), &bytes, true)?;
+                write_atomic(&idx_path, &bytes, true)?;
+            }
         }
         if !state.groups.groups.is_empty() {
             scopes.insert(format!("{uuid}/{org}"), state.groups.clone());
