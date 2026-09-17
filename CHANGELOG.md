@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.2.39
+
+Both found by looking at a real machine's log and schedule the morning after.
+
+- **A run that decided to do nothing is written down.** The log exists
+  because a scheduled run is invisible otherwise -- Task Scheduler discards
+  everything a job prints -- but a firing that met the rate limit returned
+  before anything was written. So the log could not tell "the timer fired and
+  there was nothing to do" from "the timer never fired", which is the
+  question it is there to answer. The skip is a line now, marked as the
+  scheduler's, and still not recorded as the last *run*: that measures from
+  the last one that did something.
+- **"Nineteen hours ago" is no longer "today".** `doctor` counted whole days,
+  so a run at nine in the evening read as today when the machine was asked at
+  eight the next morning.
+
 ## 0.2.38
 
 - **`ccred rename <old> <new>`.** There was no way to rename a profile: `rm`
