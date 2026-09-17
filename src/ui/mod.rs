@@ -309,16 +309,57 @@ impl Table {
                     out.push(trim_line(indent, &line.join("  ")));
                 }
                 Row::Note(text) => {
-                    out.push(format!(
-                        "{indent}{} {}",
-                        paint(MUTED, theme.glyphs.corner),
-                        paint(MUTED, text)
-                    ));
+                    for (i, line) in wrapped(text, TEXT_WIDTH).into_iter().enumerate() {
+                        if i == 0 {
+                            out.push(format!(
+                                "{indent}{} {}",
+                                paint(MUTED, theme.glyphs.corner),
+                                paint(MUTED, &line)
+                            ));
+                        } else {
+                            out.push(format!("{indent}  {}", paint(MUTED, &line)));
+                        }
+                    }
                 }
             }
         }
         out.join("\n")
     }
+}
+
+/// How wide a line of prose gets before it is broken.
+///
+/// Fixed, not the terminal's: the tables here are laid out to about this,
+/// and prose that rewrapped with the window would agree with them only by
+/// luck. It is also what makes a message the same in a log as on a screen.
+pub(crate) const TEXT_WIDTH: usize = 76;
+
+/// Break text at word boundaries, so a sentence that does not fit reads as
+/// one paragraph instead of running off the edge.
+///
+/// A word longer than the width -- a Windows path, which is most of what is
+/// long in these messages -- is left whole. A path broken in half is worse
+/// than a line that scrolls: it cannot be copied, and half of one looks
+/// like a different file.
+pub(crate) fn wrapped(text: &str, width: usize) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut line = String::new();
+    for word in text.split(' ') {
+        let len = line.chars().count();
+        if line.is_empty() {
+            line.push_str(word);
+        } else if len + 1 + word.chars().count() <= width {
+            line.push(' ');
+            line.push_str(word);
+        } else {
+            out.push(std::mem::take(&mut line));
+            line.push_str(word);
+        }
+    }
+    if !line.is_empty() || out.is_empty() {
+        out.push(line);
+    }
+    out
 }
 
 /// Join an indent to a line and drop trailing blanks, which the padding of a

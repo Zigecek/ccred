@@ -7,8 +7,8 @@
 use anstream::{eprintln, println};
 
 use super::{
-    ACCENT, Align, Cell, ERR, Fields, HEAD, LABEL, MUTED, NAME, NOMINAL_WINDOW_DAYS, OK, Table,
-    Theme, VALUE, WARN, ago, days_style, heading, left, meter, paint,
+    ACCENT, Align, Cell, ERR, Fields, HEAD, LABEL, MUTED, NAME, NOMINAL_WINDOW_DAYS, OK,
+    TEXT_WIDTH, Table, Theme, VALUE, WARN, ago, days_style, heading, left, meter, paint, wrapped,
 };
 use crate::desktop::DesktopSwitch;
 use crate::ops::desktop::{DesktopRow, DesktopSave, DesktopState, DesktopStatus};
@@ -48,41 +48,6 @@ fn callout(style: anstyle::Style, glyph: &str, head: &str, body: &[&str]) {
             println!("{PAD}  {}", paint(MUTED, &piece));
         }
     }
-}
-
-/// How wide a line of prose gets before it is broken.
-///
-/// Fixed, not the terminal's: the tables here are laid out to about this,
-/// and prose that rewrapped with the window would agree with them only by
-/// luck. It is also what makes a message the same in a log as on a screen.
-const TEXT_WIDTH: usize = 76;
-
-/// Break text at word boundaries, so a sentence that does not fit reads as
-/// one paragraph instead of running off the edge.
-///
-/// A word longer than the width -- a Windows path, which is most of what is
-/// long in these messages -- is left whole. A path broken in half is worse
-/// than a line that scrolls: it cannot be copied, and half of one looks
-/// like a different file.
-fn wrapped(text: &str, width: usize) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut line = String::new();
-    for word in text.split(' ') {
-        let len = line.chars().count();
-        if line.is_empty() {
-            line.push_str(word);
-        } else if len + 1 + word.chars().count() <= width {
-            line.push(' ');
-            line.push_str(word);
-        } else {
-            out.push(std::mem::take(&mut line));
-            line.push_str(word);
-        }
-    }
-    if !line.is_empty() || out.is_empty() {
-        out.push(line);
-    }
-    out
 }
 
 /// A warning as a callout: what happened on the first line, what to do
@@ -619,6 +584,34 @@ fn pointer_note(theme: &Theme, note: Option<&PointerNote>) {
 
 // --- save, switch, rm -----------------------------------------------------
 
+/// One row for a half that was not saved, with the reason in the last
+/// column when it fits and hung under the row when it does not.
+///
+/// A cell cannot wrap -- a column has one width -- and the longest of these
+/// reasons is a sentence naming another profile, which made the row 129
+/// columns wide. `Table::note` is the shape for it.
+fn not_saved(t: &mut Table, glyph: &str, style: anstyle::Style, name: &str, reason: &str) {
+    const IN_CELL: usize = 44;
+    let short = reason.chars().count() <= IN_CELL;
+    let name_style = if style == WARN { NAME } else { MUTED };
+    t.row(vec![
+        Cell::new(glyph, style),
+        Cell::new(name, name_style),
+        Cell::new("-", MUTED),
+        Cell::new(
+            if short {
+                format!("not saved: {reason}")
+            } else {
+                "not saved".to_string()
+            },
+            style,
+        ),
+    ]);
+    if !short {
+        t.note(reason.to_string());
+    }
+}
+
 pub fn save(theme: &Theme, r: &SaveReport) {
     let g = theme.glyphs;
     println!();
@@ -641,14 +634,7 @@ pub fn save(theme: &Theme, r: &SaveReport) {
                 Cell::new(&c.outcome, MUTED),
             ]);
         }
-        (None, Some(why)) => {
-            t.row(vec![
-                Cell::new(g.bullet, MUTED),
-                Cell::new(&r.name, MUTED),
-                Cell::new("-", MUTED),
-                Cell::new(format!("not saved: {why}"), MUTED),
-            ]);
-        }
+        (None, Some(why)) => not_saved(&mut t, g.bullet, MUTED, &r.name, why),
         (None, None) => {}
     }
     let desktop_name = format!("{}{}", r.name, crate::desktop::SUFFIX);
@@ -670,20 +656,10 @@ pub fn save(theme: &Theme, r: &SaveReport) {
             ]);
         }
         Some(DesktopSave::Nothing { reason }) => {
-            t.row(vec![
-                Cell::new(g.bullet, MUTED),
-                Cell::new(&desktop_name, MUTED),
-                Cell::new("-", MUTED),
-                Cell::new(format!("not saved: {reason}"), MUTED),
-            ]);
+            not_saved(&mut t, g.bullet, MUTED, &desktop_name, reason)
         }
         Some(DesktopSave::Refused { reason }) => {
-            t.row(vec![
-                Cell::new(g.warn, WARN),
-                Cell::new(&desktop_name, NAME),
-                Cell::new("-", MUTED),
-                Cell::new(format!("not saved: {reason}"), WARN),
-            ]);
+            not_saved(&mut t, g.warn, WARN, &desktop_name, reason)
         }
         None => {}
     }
@@ -805,7 +781,7 @@ pub fn renamed(theme: &Theme, r: &crate::ops::simple::RenameReport) {
         );
     }
     for w in &r.warnings {
-        println!("{PAD}  {} {}", paint(WARN, g.warn), paint(WARN, w));
+        warning(theme, w);
     }
     println!();
 }
@@ -1678,7 +1654,9 @@ pub fn error(theme: &Theme, e: &crate::CcredError) {
     // "I/O error at <path>" alone is rarely enough to act on.
     let mut source = std::error::Error::source(e);
     while let Some(cause) = source {
-        eprintln!("{PAD}  {}", paint(MUTED, &format!("caused by: {cause}")));
+        for line in wrapped(&format!("caused by: {cause}"), TEXT_WIDTH) {
+            eprintln!("{PAD}  {}", paint(MUTED, &line));
+        }
         source = cause.source();
     }
     if let Some(hint) = hint_for(e) {

@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.6
+
+- **The last four lines that ran off the page.** A note under a table row
+  -- what `list` prints about a profile it cannot read -- was the one line
+  in a table that could be wrapped and was not. `rename` printed its
+  warnings without the wrap every other warning goes through. An error's
+  `caused by:` line names a file and was left whole. And `save` put the
+  reason a half was not saved in a table cell, where a 97-character
+  sentence made the row 129 columns wide; a reason that does not fit the
+  column hangs under the row instead.
+
 ## 0.3.5
 
 - **Sidebar groups that have nowhere to go no longer hide the chats that

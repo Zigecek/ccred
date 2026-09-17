@@ -2636,7 +2636,8 @@ fn save_records_the_desktop_login_beside_the_profile_and_says_so() {
     assert_eq!(code, 0, "{out}{err}");
     assert!(out.contains("personal") && out.contains("created"), "{out}");
     assert!(
-        flat(&out).contains("not saved: that account is already saved as 'work-desktop'"),
+        flat(&out).contains("not saved")
+            && flat(&out).contains("that account is already saved as 'work-desktop'"),
         "{out}"
     );
     assert!(!sb.parked_desktop("personal").exists(), "{out}");
@@ -2668,7 +2669,8 @@ fn save_records_the_desktop_login_beside_the_profile_and_says_so() {
     );
     assert!(
         out.contains("personal-desktop")
-            && flat(&out).contains("not saved: 'personal-desktop' belongs to bob@example.com"),
+            && flat(&out).contains("not saved")
+            && flat(&out).contains("'personal-desktop' belongs to bob@example.com"),
         "{out}"
     );
 }
