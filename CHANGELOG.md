@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.2.41
+
+**No panic is left in the code that runs unattended.** A panic in a scheduled
+refresh is a slot that reports nothing and a profile that quietly goes stale,
+with no message anywhere a person looks -- the exact failure this program
+exists to prevent.
+
+Two were left. The `claude` handle was unwrapped with "discovered just
+above": true today, one rearrangement away from not being, and now a
+contained per-profile failure like everything else that can go wrong in that
+loop. And a profile name's first character was unwrapped two checks after
+emptiness was refused, which is a proof a later edit can quietly break.
+
+`scripts/no-panics.sh` keeps the count at zero and CI runs it. Tests stay
+exempt: one that cannot unwrap says less when it fails.
+
 ## 0.2.40
 
 - **A rename that only changes case takes the pointer with it.** `rename work
