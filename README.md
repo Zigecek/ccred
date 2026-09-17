@@ -279,8 +279,16 @@ account is brought in: with your current login saved (`ccred save work`),
 quit the Desktop and run `ccred switch personal-desktop`. It parks
 `work-desktop`, prepares a fresh state for `personal-desktop`, and you
 simply open the Desktop and log in -- that login belongs to
-`personal-desktop` from then on. Never sign out inside the app: signing
-out deletes the session from disk, whereas `ccred switch` parks it intact.
+`personal-desktop` from then on.
+
+Switch rather than signing out inside the app. Signing out throws the login
+away -- the token is gone, and only a fresh login brings that account back --
+while leaving its chat list behind in the directory, where the next account
+to log in inherits it. Nothing is deleted, but the chats stop appearing in
+the sidebar, which looks exactly like deletion. `ccred switch` parks the
+whole directory intact instead; and when a sign-out has already happened,
+`ccred switch <name>-desktop` takes that list out and hands it back to the
+profile it belongs to.
 
 Three things follow from moving a directory rather than writing a file:
 
