@@ -199,8 +199,14 @@ pub fn validate_profile_name(name: &str) -> Result<ProfileName> {
     if name.len() > 64 {
         return Err(bad("longer than 64 characters"));
     }
-    let first = name.chars().next().unwrap();
-    if !first.is_ascii_alphanumeric() {
+    // Asked of the Option rather than unwrapped: emptiness is refused above,
+    // so the unwrap could not fire, and a proof that lives two checks away is
+    // one a later edit can quietly break.
+    if !name
+        .chars()
+        .next()
+        .is_some_and(|first| first.is_ascii_alphanumeric())
+    {
         return Err(bad("must start with a letter or digit"));
     }
     if !name

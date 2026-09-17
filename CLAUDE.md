@@ -124,6 +124,19 @@ is not a terminal -- which is what keeps systemd, launchd and Task Scheduler
 logs clean -- and it honours `NO_COLOR` and `CLICOLOR_FORCE`. Never branch on
 colour support by hand.
 
+## No panic in the code that runs unattended
+
+A panic in a scheduled refresh is a slot that reports nothing and a profile
+that quietly goes stale -- with no message anywhere a person looks, which is
+the failure this program exists to prevent. `scripts/no-panics.sh` refuses
+`unwrap`, `expect`, `panic!`, `unreachable!` and `todo!` anywhere before
+`#[cfg(test)]`, and CI runs it. Handle the case and say what happened
+instead; a proof that lives two checks away is one a later edit can quietly
+break.
+
+Tests are exempt, and should be: a test that cannot unwrap says less when it
+fails.
+
 ## Before committing
 
 ```sh

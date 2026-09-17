@@ -672,7 +672,20 @@ pub fn refresh(ctx: &Ctx, opts: &RefreshOptions) -> crate::Result<RefreshReport>
                         }
                     }
                 }
-                let cli = cli.as_ref().expect("discovered just above");
+                // The branch above either set this or moved on, so the
+                // else is unreachable -- written as a contained failure
+                // rather than a panic because this runs unattended, where a
+                // panic is a scheduler slot that reports nothing.
+                let Some(cli) = cli.as_ref() else {
+                    results.push(ProfileResult {
+                        name: name.as_str().to_string(),
+                        decision: Decision::Broken,
+                        detail: Some("no `claude` was resolved for this run".into()),
+                        window_days_before: window_before.map(|ms| ms / DAY_MS),
+                        window_days_after: None,
+                    });
+                    continue;
+                };
                 // Contained to this profile. A store that will not load, a
                 // spawn that will not start, a metadata write that fails --
                 // any of them used to end the whole run, taking the other

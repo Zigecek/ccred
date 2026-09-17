@@ -129,3 +129,8 @@ jobs:
             echo "::error::Secret must not implement Display -- that turns a compile error into a runtime leak"
             exit 1
           fi
+
+      # A panic in a scheduled run is a slot that reports nothing and a
+      # profile that quietly goes stale. The script says what it found.
+      - name: no panic site outside tests
+        run: sh scripts/no-panics.sh
