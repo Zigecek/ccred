@@ -1125,6 +1125,42 @@ fn a_packaged_desktop_on_windows_is_found_and_read() {
     assert!(out.contains("work-desktop"), "{out}");
 }
 
+/// `work` and `work-desktop` are one profile under two roofs, so a rename
+/// has to take both. Left behind, `job-desktop` would name nothing while
+/// `work-desktop` outlived the profile it belonged to, parked login and all.
+#[test]
+fn renaming_a_profile_takes_its_desktop_login_with_it() {
+    let sb = Sandbox::new();
+    sb.desktop_login("uuid-a", "A");
+    sb.run(&["save", "work"]);
+    assert!(sb.parked_desktop("work").join("meta.json").is_file());
+
+    // A parked login, as a switch away would leave.
+    let parked = sb.parked_desktop("work").join("data");
+    std::fs::create_dir_all(&parked).unwrap();
+    std::fs::write(parked.join("marker"), b"A").unwrap();
+
+    let (out, err, code) = sb.run(&["rename", "work", "job"]);
+    assert_eq!(code, 0, "{err}{out}");
+    assert!(!sb.parked_desktop("work").exists(), "{out}");
+    assert_eq!(
+        std::fs::read_to_string(sb.parked_desktop("job").join("data").join("marker")).unwrap(),
+        "A",
+        "the parked login moved with it"
+    );
+
+    // And the record inside says the name it now has.
+    let meta: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(sb.parked_desktop("job").join("meta.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(meta["name"], serde_json::json!("job"), "{meta}");
+
+    let (out, _, _) = sb.run(&["list"]);
+    assert!(out.contains("job-desktop"), "{out}");
+    assert!(!out.contains("work-desktop"), "{out}");
+}
+
 /// A profile saved as `foo-desktop` before that suffix meant a Desktop
 /// login. Dropping it from the listing made it invisible to every command --
 /// and `uninstall --purge` still deleted it, which is somebody's credentials

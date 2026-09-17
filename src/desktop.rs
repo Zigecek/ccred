@@ -391,6 +391,25 @@ impl<'a> DesktopRepo<'a> {
         Ok(meta)
     }
 
+    /// Say the profile's own record under the name it now has.
+    ///
+    /// For a rename, which moves the directory: the name inside it is what a
+    /// person reads, so leaving the old one there is a record that contradicts
+    /// its own location. Nothing decides anything by this field -- the
+    /// directory name is what every command uses -- so a failure is a warning.
+    pub fn set_name(&self, name: &ProfileName) -> crate::Result<()> {
+        let Some(mut meta) = self.meta(name)? else {
+            return Ok(());
+        };
+        meta.name = name.as_str().to_string();
+        let path = self.meta_path(name)?;
+        let bytes = serde_json::to_vec_pretty(&meta).map_err(|source| CcredError::Json {
+            path: path.clone(),
+            source,
+        })?;
+        write_atomic(&path, &bytes, true)
+    }
+
     /// Delete the profile, parked login included. `false` when there was
     /// none. Never touches the Desktop's live directory.
     pub fn remove(&self, name: &ProfileName) -> crate::Result<bool> {

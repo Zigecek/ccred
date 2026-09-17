@@ -720,6 +720,36 @@ pub fn rename(ctx: &Ctx, from: &ProfileName, to: &ProfileName) -> crate::Result<
         warnings.push(format!("the profile's own record still says '{from}': {e}"));
     }
 
+    // The Desktop half is the same profile under another roof: `work` and
+    // `work-desktop` are one name. Left behind, the rename would break the
+    // pair -- `job-desktop` naming nothing while `work-desktop` outlived
+    // the profile it belonged to, parked login and all.
+    let old_desktop = ctx.paths().desktop_profile_dir(from)?;
+    let new_desktop = ctx.paths().desktop_profile_dir(to)?;
+    if old_desktop.is_dir() && !new_desktop.exists() {
+        match std::fs::rename(&old_desktop, &new_desktop) {
+            Ok(()) => {
+                // The record inside names itself, and a person reads that.
+                let repo = crate::desktop::DesktopRepo::new(ctx.paths());
+                if let Err(e) = repo.set_name(to) {
+                    warnings.push(format!(
+                        "the Desktop profile's own record still says '{from}': {e}"
+                    ));
+                }
+            }
+            Err(e) => warnings.push(format!(
+                "the Desktop login stayed at {}: {e}",
+                old_desktop.display()
+            )),
+        }
+    } else if old_desktop.is_dir() {
+        warnings.push(format!(
+            "the Desktop login stayed at {}, because {} already exists",
+            old_desktop.display(),
+            new_desktop.display()
+        ));
+    }
+
     // The copies belong to the profile, so they move with it. Merging into
     // an existing directory is not attempted: that would only arise from a
     // half-finished rename, and silently mixing two accounts' copies is
