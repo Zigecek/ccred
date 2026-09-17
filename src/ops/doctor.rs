@@ -604,12 +604,28 @@ fn last_run_finding(
     }
     Some(Finding::ok(format!(
         "last refresh {}, nothing needed attention",
-        if days >= 1 {
-            format!("{days} days ago")
-        } else {
-            "today".to_string()
-        }
+        how_long_ago(now - last.finished_at_ms)
     )))
+}
+
+/// "19 hours ago", not "today".
+///
+/// A run at nine in the evening is not "today" at eight the next morning,
+/// and day counts said it was: the two are nineteen hours and a date apart.
+/// Below a day this counts hours, which is the unit a person checking on a
+/// twice-weekly job is thinking in.
+fn how_long_ago(elapsed_ms: i64) -> String {
+    const HOUR_MS: i64 = 3_600_000;
+    let hours = elapsed_ms.div_euclid(HOUR_MS);
+    match hours {
+        ..=0 => "less than an hour ago".to_string(),
+        1 => "1 hour ago".to_string(),
+        2..=23 => format!("{hours} hours ago"),
+        _ => match elapsed_ms.div_euclid(86_400_000) {
+            1 => "1 day ago".to_string(),
+            days => format!("{days} days ago"),
+        },
+    }
 }
 
 fn schedule_finding(
@@ -872,7 +888,16 @@ mod tests {
 
         let f = last_run_finding(Some(ran(0, false)), true, 2, now).unwrap();
         assert_eq!(f.severity, Severity::Ok, "{f:?}");
-        assert!(f.title.contains("today"), "{f:?}");
+        assert!(f.title.contains("less than an hour"), "{f:?}");
+
+        // Nineteen hours ago is yesterday evening, which day counts called
+        // "today" -- the machine this was found on had run at nine and was
+        // asked at eight the next morning.
+        assert_eq!(how_long_ago(19 * 3_600_000), "19 hours ago");
+        assert_eq!(how_long_ago(3_600_000), "1 hour ago");
+        assert_eq!(how_long_ago(25 * 3_600_000), "1 day ago");
+        assert_eq!(how_long_ago(50 * 3_600_000), "2 days ago");
+        assert_eq!(how_long_ago(-5), "less than an hour ago");
 
         // A run that finished after now is a clock, not a schedule. Left
         // unsaid, every interval computed from it is quietly wrong -- the
