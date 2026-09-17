@@ -406,6 +406,17 @@ fn desktop_table(theme: &Theme, rows: &[DesktopRow]) {
             ),
             state,
         ]);
+        // The words for a count live here, once. The listing built its own
+        // sentence out of them, 128 columns of it, while `desktop_switch`
+        // had the same phrase a few lines further down.
+        if !r.waiting.is_empty() {
+            t.note(&format!(
+                "{} and {} from a sign-out are waiting; `ccred switch {}` puts them back",
+                plural(r.waiting.sessions, "session", "sessions"),
+                plural(r.waiting.groups, "sidebar group", "sidebar groups"),
+                r.name
+            ));
+        }
         if let Some(note) = &r.note {
             t.note(note);
         }

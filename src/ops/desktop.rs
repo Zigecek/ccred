@@ -470,6 +470,10 @@ pub struct DesktopRow {
     /// Set on the active row when the Desktop is running.
     pub running: bool,
     pub last_synced_at_ms: Option<i64>,
+    /// Sessions and groups gathered for this profile that are not in its
+    /// directory yet, because the Desktop has to be logged in as it first.
+    #[serde(skip_serializing_if = "Carried::is_empty")]
+    pub waiting: Carried,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
 }
@@ -510,15 +514,11 @@ pub fn rows(ctx: &Ctx) -> Vec<DesktopRow> {
                         },
                         running: is_live && inspection.running,
                         last_synced_at_ms: meta.last_synced_at_ms,
-                        note: (!waiting.is_empty()).then(|| {
-                            format!(
-                                "{} and {} from a sign-out are waiting; quit Claude Desktop and \
-                                 `ccred switch {}` puts them back",
-                                plural(waiting.sessions, "session"),
-                                plural(waiting.groups, "sidebar group"),
-                                display_name(&name)
-                            )
-                        }),
+                        // Counts, not a sentence: the words live in
+                        // `render`, which had its own copy of them
+                        // while this built a 128-column version.
+                        waiting,
+                        note: None,
                     }
                 }
                 // A profile `list` named and whose metadata then read as
@@ -534,6 +534,7 @@ pub fn rows(ctx: &Ctx) -> Vec<DesktopRow> {
                     state: DesktopState::NoLogin,
                     running: false,
                     last_synced_at_ms: None,
+                    waiting: Carried::default(),
                     note: Some("its record is gone".into()),
                 },
                 Err(e) => DesktopRow {
@@ -543,6 +544,7 @@ pub fn rows(ctx: &Ctx) -> Vec<DesktopRow> {
                     state: DesktopState::NoLogin,
                     running: false,
                     last_synced_at_ms: None,
+                    waiting: Carried::default(),
                     note: Some(e.to_string()),
                 },
             }
