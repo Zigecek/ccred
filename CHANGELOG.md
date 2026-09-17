@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.2.42
+
+- **`ccred restore <name>` puts a removed profile back.** `rm` prints where
+  it put a copy of the credentials, because deleting the only stored copy of
+  an account should not be the one mistake here that cannot be undone --
+  and nothing could use that copy: reading the file back into place by hand
+  was the entire recovery. The copy is parsed, validated and checked against
+  the tokens other profiles hold before anything is created. What comes back
+  is the credentials alone, and it says so: the account blob a switch
+  restores is not in the copy, so the profile reads as an unknown account
+  until the next save fills it in.
+- The commands in `ccred --help` are listed in the order they are used.
+  `rename` and `restore` were both numbered six, so where `rename` appeared
+  was decided by declaration order rather than intent.
+
 ## 0.2.41
 
 **No panic is left in the code that runs unattended.** A panic in a scheduled
