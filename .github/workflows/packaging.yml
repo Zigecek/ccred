@@ -49,7 +49,17 @@ jobs:
     # accounts are unconfigured -- and a release whose artifacts all built and
     # published is worth packaging regardless. What matters is whether the
     # release actually exists, which the next job checks directly.
-    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion != 'cancelled' }}
+    #
+    # It IS gated on the Release run having come from a tag. The release
+    # workflow also runs on pull requests, to check that its own plan still
+    # builds, and packaging then started on a branch name with no release
+    # behind it and failed -- a red run on every pull request, which the
+    # first one this repository ever had duly produced.
+    if: >-
+      ${{ github.event_name != 'workflow_run'
+          || (github.event.workflow_run.conclusion != 'cancelled'
+              && github.event.workflow_run.event == 'push'
+              && startsWith(github.event.workflow_run.head_branch, 'v')) }}
     outputs:
       tag: ${{ steps.pick.outputs.tag }}
     steps:
