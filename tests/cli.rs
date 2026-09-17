@@ -1083,6 +1083,49 @@ fn a_removed_profile_can_be_put_back_from_the_copy_rm_kept() {
     assert_eq!(code, 3, "{err}");
 }
 
+/// A profile saved as `foo-desktop` before that suffix meant a Desktop
+/// login. Dropping it from the listing made it invisible to every command --
+/// and `uninstall --purge` still deleted it, which is somebody's credentials
+/// going quietly.
+#[test]
+fn a_profile_named_before_the_desktop_suffix_is_still_reachable() {
+    let sb = Sandbox::new();
+    sb.run(&["save", "work"]);
+
+    // Saved the way an older ccred would have.
+    let legacy = sb
+        .path()
+        .join(".ccred")
+        .join("profiles")
+        .join("old-desktop");
+    std::fs::create_dir_all(&legacy).unwrap();
+    std::fs::copy(
+        sb.path().join(".ccred/profiles/work/.credentials.json"),
+        legacy.join(".credentials.json"),
+    )
+    .unwrap();
+    std::fs::write(
+        legacy.join("ccred.json"),
+        r#"{"schema":1,"name":"old-desktop","created_at_ms":1780000000000}"#,
+    )
+    .unwrap();
+
+    let (out, err, code) = sb.run(&["list"]);
+    assert_eq!(code, 0, "{err}{out}");
+    assert!(out.contains("old-desktop"), "it is listed: {out}");
+
+    // And it can be moved somewhere a new name is allowed.
+    let (out, err, code) = sb.run(&["rename", "old-desktop", "older"]);
+    assert_eq!(code, 0, "{err}{out}");
+    assert!(sb.path().join(".ccred/profiles/older").is_dir(), "{out}");
+    assert!(!legacy.exists());
+
+    // Saving a new one under that name is still refused.
+    let (_, err, code) = sb.run(&["save", "nope-desktop"]);
+    assert_eq!(code, 3, "{err}");
+    assert!(err.contains("-desktop"), "{err}");
+}
+
 /// Renaming was impossible: `rm` and `save` again only works for the account
 /// that happens to be logged in, so a profile named in haste was named that
 /// for good -- short of moving directories by hand.
@@ -2611,7 +2654,15 @@ fn rm_of_a_desktop_name_removes_the_desktop_profile_only() {
     let parked = sb.parked_desktop("work").join("data");
     std::fs::create_dir_all(&parked).unwrap();
 
-    let (out, err, code) = sb.run(&["rm", "work-desktop"]);
+    // A parked directory is the login itself: the token in it is encrypted,
+    // so nothing can be copied aside first and nothing can put it back. The
+    // Claude Code half keeps a copy and says where; this half asks instead.
+    let (_, err, code) = sb.run(&["rm", "work-desktop"]);
+    assert_eq!(code, 7, "the only copy is not deleted unasked: {err}");
+    assert!(err.contains("only copy"), "{err}");
+    assert!(sb.parked_desktop("work").exists(), "still there: {err}");
+
+    let (out, err, code) = sb.run(&["rm", "work-desktop", "--purge"]);
     assert_eq!(code, 0, "{out}{err}");
     assert!(out.contains("removed work-desktop"), "{out}");
     assert!(out.contains("parked login was deleted"), "{out}");

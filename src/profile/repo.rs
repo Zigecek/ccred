@@ -30,7 +30,9 @@ use crate::model::{AccountIdentity, AccountSnapshot, CredentialsFile};
 use crate::paths::Paths;
 use crate::store::file::FileStore;
 use crate::store::{CredentialStore, now_ms};
-use crate::validate::{ProfileName, validate_credentials, validate_profile_name};
+use crate::validate::{
+    ProfileName, validate_credentials, validate_existing_profile_name, validate_profile_name,
+};
 
 /// How many timestamped backups to keep per profile.
 const BACKUPS_KEPT: usize = 10;
@@ -126,7 +128,14 @@ impl ProfileRepo {
             let raw = entry.file_name().to_string_lossy().to_string();
             // A directory whose name we would not accept cannot have been
             // created by us; skip it rather than failing the whole listing.
-            let Ok(name) = validate_profile_name(&raw) else {
+            //
+            // Except a `-desktop` ending, which was a legal name until that
+            // suffix came to mean a Desktop login. Those directories are
+            // somebody's credentials: dropping them here made them invisible
+            // to `list`, unreachable by every command, and still deleted by
+            // `uninstall --purge`. They are listed, and `rename` takes them
+            // somewhere addressable.
+            let Ok(name) = validate_existing_profile_name(&raw) else {
                 continue;
             };
             if self.meta_path(&name)?.exists() {

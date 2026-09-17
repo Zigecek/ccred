@@ -398,7 +398,7 @@ pub struct DesktopRemoveReport {
 }
 
 /// Delete a Desktop profile and its parked login, and nothing else.
-pub fn remove(ctx: &Ctx, name: &ProfileName) -> crate::Result<DesktopRemoveReport> {
+pub fn remove(ctx: &Ctx, name: &ProfileName, purge: bool) -> crate::Result<DesktopRemoveReport> {
     let name = &ctx.repo().canonical_name(name);
     let _profiles = ctx.lock_profiles(LOCK_TIMEOUT)?;
     let repo = DesktopRepo::new(ctx.paths());
@@ -408,6 +408,19 @@ pub fn remove(ctx: &Ctx, name: &ProfileName) -> crate::Result<DesktopRemoveRepor
     let inspection = desktop::inspect(ctx.paths().desktop_dir());
     let still_logged_in = repo.owner(&inspection, &[name]) == Owner::Profile(name.clone());
     let parked_login_removed = repo.has_data(name);
+    // A parked directory IS the login: the token inside is encrypted, so
+    // there is no copy to take first and nothing to put back afterwards.
+    // `rm` on the Claude Code half keeps a copy and says where; this half
+    // cannot, so it asks instead. Forgetting a profile whose login is
+    // elsewhere stays a plain `rm`.
+    if parked_login_removed && !purge {
+        return Err(CcredError::UnsafeWrite(format!(
+            "'{}' has a parked login, and it is the only copy: its token is encrypted, so nothing can be kept aside and nothing can put it back. `ccred rm {} --purge` deletes it, or `ccred switch {}` makes it the live one first",
+            display_name(name),
+            display_name(name),
+            display_name(name)
+        )));
+    }
     repo.remove(name)?;
     Ok(DesktopRemoveReport {
         name: display_name(name),

@@ -113,7 +113,10 @@ fn run(cli: &Cli, theme: &Theme) -> ccred::Result<ExitCode> {
         },
 
         Some(Command::Rename { from, to }) => {
-            let from = validate_profile_name(from)?;
+            // The source may be a name saved before `-desktop` meant a
+            // Desktop login; the destination may not, since that is a new
+            // name being chosen now.
+            let from = ccred::validate::validate_existing_profile_name(from)?;
             let to = validate_profile_name(to)?;
             let report = simple::rename(&ctx, &from, &to)?;
             if cli.json {
@@ -135,7 +138,7 @@ fn run(cli: &Cli, theme: &Theme) -> ccred::Result<ExitCode> {
                 Ok(ExitCode::Ok)
             }
             Handle::Desktop(name) => {
-                let report = desktop_ops::remove(&ctx, &name)?;
+                let report = desktop_ops::remove(&ctx, &name, *purge)?;
                 if cli.json {
                     print_json(&report);
                 } else {

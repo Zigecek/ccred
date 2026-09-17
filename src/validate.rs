@@ -188,6 +188,20 @@ impl std::fmt::Display for ProfileName {
 /// Validate a profile name. This is a security control, not cosmetics --
 /// `ccred switch ../../.ssh/id_rsa` must fail.
 pub fn validate_profile_name(name: &str) -> Result<ProfileName> {
+    check_profile_name(name, false)
+}
+
+/// The same rules, except that a `-desktop` ending is allowed.
+///
+/// For profiles saved before that suffix meant anything. Every safety rule
+/// still applies -- this is not a way around path traversal -- but a name
+/// that was legal when it was written stays addressable: `list` shows it,
+/// and `rename` can take it somewhere reachable. Nothing creates one.
+pub fn validate_existing_profile_name(name: &str) -> Result<ProfileName> {
+    check_profile_name(name, true)
+}
+
+fn check_profile_name(name: &str, allow_desktop_suffix: bool) -> Result<ProfileName> {
     let bad = |reason: &'static str| CcredError::InvalidProfileName {
         name: name.to_string(),
         reason,
@@ -228,7 +242,7 @@ pub fn validate_profile_name(name: &str) -> Result<ProfileName> {
     // `work-desktop` is how `work`'s Claude Desktop login is addressed. A
     // Claude Code profile of that name would be unreachable: every command
     // would read the suffix and go to the Desktop one.
-    if name.to_ascii_lowercase().ends_with(crate::desktop::SUFFIX) {
+    if !allow_desktop_suffix && name.to_ascii_lowercase().ends_with(crate::desktop::SUFFIX) {
         return Err(bad(
             "ends with -desktop, which names a profile's Claude Desktop login; save the \
              name without it and the Desktop login is recorded alongside",
