@@ -134,7 +134,7 @@ dependencies = [
 
 [[package]]
 name = "ccred"
-version = "0.3.9"
+version = "0.3.10"
 dependencies = [
  "anstream 0.6.21",
  "anstyle",
