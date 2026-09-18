@@ -64,6 +64,9 @@ The packages themselves are already known to work: the eight were generated
 from the real 0.3.3 artifacts, packed with `npm pack`, installed from the
 tarballs into an empty project, and run. The wrapper resolved the platform
 binary and passed its exit codes through -- `switch <missing>` came back as 3.
+Repeated against 0.3.9's artifacts: seven platform packages and the root
+wrapper again, and `node bin/ccred.js list` ran the real binary and printed
+the profiles.
 To repeat it for a later release:
 
 ```sh
@@ -165,8 +168,8 @@ was checked this way and reported `ccred 0.1.0` correctly.
 
 ```sh
 # bump the version in Cargo.toml and CHANGELOG.md, commit, push, let CI go
-# green -- and then:
-scripts/tag-release.sh v0.3.3
+# green -- and then, with the version that is now in Cargo.toml:
+scripts/tag-release.sh vX.Y.Z
 ```
 
 The script refuses to tag unless HEAD is `origin/main`, the tree is clean, and
