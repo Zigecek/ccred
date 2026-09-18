@@ -11,6 +11,9 @@
   on a machine that plainly has one. The identity before the hash is what
   is matched now, and the `Claude-3p` build's directories are candidates
   too.
+- The archived index is written sorted, which is how the app writes it:
+  the point of patching that file rather than regenerating it is to leave
+  it looking the way it was found.
 
 ## 0.3.7
 

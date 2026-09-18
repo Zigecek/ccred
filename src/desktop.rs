@@ -1577,6 +1577,10 @@ pub fn sidebar_spread(paths: &Paths, data: &Path, uuid: &str) -> crate::Result<S
                 }
             }
             if grew {
+                // Sorted, which is how the app writes it: the point of
+                // patching this file rather than regenerating it is to
+                // leave it looking the way it was found.
+                archived.sort();
                 doc.insert("archived".into(), serde_json::Value::from(archived));
                 // Strings in, JSON out: this cannot fail, and saying so in a
                 // panic would still end an unattended run with nothing to
