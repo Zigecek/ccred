@@ -93,6 +93,13 @@ and the constants are in plain text inside it.
 - **The login is the directory, and the token in it is encrypted.** There is
   nothing to copy aside and nothing to put back, so a switch moves the whole
   data directory and `rm --purge` is the only way to delete one.
+- **Why the whole directory.** The token is `oauth:tokenCache` in
+  `config.json`, encrypted with Electron's `safeStorage`; the key it is
+  encrypted with is `os_crypt.encrypted_key` in `Local State`, in the same
+  directory, wrapped by DPAPI for the Windows user. Move the pair and the
+  login works; copy `config.json` alone and it is a blob nothing can read.
+  That is the reason the unit is a directory and not a file, and it is not
+  an optimisation waiting to happen.
 - **Two places hold local sessions**, both `<dir>/<account>/<organization>/`
   with one small JSON file per session: `claude-code-sessions` and
   `local-agent-mode-sessions`. The sidebar is drawn from both -- in the
