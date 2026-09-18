@@ -76,6 +76,16 @@ We read and write files that belong to Claude Code, so:
   looking the way they found them.
 - **Take the same lock Claude Code takes** (`<storageDir>/.storage-write`,
   `proper-lockfile` semantics, 15s stale) so the two mutually exclude.
+  Read straight out of 2.1.274, which locks with `realpath: false`,
+  `stale: 15000` and ten retries between 100ms and 1s -- the same numbers
+  this uses.
+- **The store is still a file on Windows, for now.** The same binary
+  contains a `Bun.secrets` path that would put credentials in the Windows
+  Credential Manager, chunked for its size limit, but the check that
+  selects it resolves to a memoised `false`, and a live 2.1.274 keeps
+  `.credentials.json` where it always was. If that flips, Windows needs
+  what macOS has -- an out-of-process read through the platform's own tool
+  -- and not a file copy.
 - **Never set `CLAUDE_CODE_OAUTH_TOKEN`** in the environment of a spawned
   `claude`. It triggers a plaintext write which deletes the macOS Keychain
   item.
