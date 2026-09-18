@@ -50,12 +50,22 @@ const SESSIONS_DIR: &str = "sessions";
 // on its own, this is the place to add it -- and the switch report already
 // tells people to restart Claude Code afterwards.
 
-/// The `entrypoint` Claude Code records when Claude Desktop started it.
+/// The `entrypoint` values Claude Code records when Claude Desktop started
+/// it.
 ///
-/// Read out of `sessions/<pid>.json` written by Claude Code 2.1.266 under
-/// Claude Desktop 1.52386.3. The other values seen in the binary -- `cli`,
-/// `claude-vscode`, `sdk-cli` and so on -- log in through the store.
-const DESKTOP_ENTRYPOINT: &str = "claude-desktop";
+/// `claude-desktop` was read out of `sessions/<pid>.json` written by Claude
+/// Code 2.1.266 under Claude Desktop 1.52386.3. `local-agent` is the one
+/// the Desktop composes for an agent-mode session -- in its bundle,
+/// `CLAUDE_CODE_ENTRYPOINT:"local-agent"` sits in the same environment as
+/// `oauthToken`, which is the Desktop's own -- and `local_agent` is the
+/// spelling beside it in the app's list of known entrypoints. Treating
+/// those as store-backed made a Cowork session running in the Desktop
+/// demand `--force` for a Claude Code switch that has nothing to do with
+/// it.
+///
+/// The other values seen in the binary -- `cli`, `claude-vscode`,
+/// `sdk-cli` and so on -- log in through the store.
+const DESKTOP_ENTRYPOINTS: [&str; 3] = ["claude-desktop", "local-agent", "local_agent"];
 
 /// The sessions that look alive, split by what a switch means to them.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -166,7 +176,7 @@ fn is_desktop_session(session_file: &Path) -> bool {
         .ok()
         .and_then(|raw| serde_json::from_slice::<SessionFile>(&raw).ok())
         .and_then(|s| s.entrypoint)
-        .is_some_and(|e| e == DESKTOP_ENTRYPOINT)
+        .is_some_and(|e| DESKTOP_ENTRYPOINTS.contains(&e.as_str()))
 }
 
 /// What is known about one PID.
@@ -429,10 +439,10 @@ mod tests {
         assert!(running_sessions(dir.path()).is_empty());
     }
 
-    /// Only the Desktop's own entrypoint clears a session. Every other
-    /// answer -- another entrypoint, none, a file that is not JSON, no file
-    /// -- is "store-backed", because that is the reading that refuses a
-    /// switch instead of risking one.
+    /// Only an entrypoint the Desktop composes clears a session. Every
+    /// other answer -- another entrypoint, none, a file that is not JSON,
+    /// no file -- is "store-backed", because that is the reading that
+    /// refuses a switch instead of risking one.
     #[test]
     fn only_a_desktop_entrypoint_marks_a_session_as_the_desktops() {
         let dir = tempdir().unwrap();
@@ -445,10 +455,21 @@ mod tests {
             "desktop.json",
             br#"{"pid":1,"entrypoint":"claude-desktop","kind":"interactive"}"#
         )));
+        // An agent-mode session: the Desktop's own token in its
+        // environment, and nothing of the store's.
+        assert!(is_desktop_session(&file(
+            "agent.json",
+            br#"{"pid":2,"entrypoint":"local-agent","kind":"bg"}"#
+        )));
+        assert!(is_desktop_session(&file(
+            "agent_underscore.json",
+            br#"{"pid":3,"entrypoint":"local_agent"}"#
+        )));
         for (name, body) in [
             ("cli.json", &br#"{"pid":1,"entrypoint":"cli"}"#[..]),
             ("vscode.json", br#"{"entrypoint":"claude-vscode"}"#),
             ("prefix.json", br#"{"entrypoint":"claude-desktop-3p"}"#),
+            ("agentish.json", br#"{"entrypoint":"local-agentic"}"#),
             ("bare.json", b"{}"),
             ("broken.json", b"{\"entrypoint\":"),
             ("empty.json", b""),

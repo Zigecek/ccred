@@ -79,6 +79,15 @@ We read and write files that belong to Claude Code, so:
 - **Never set `CLAUDE_CODE_OAUTH_TOKEN`** in the environment of a spawned
   `claude`. It triggers a plaintext write which deletes the macOS Keychain
   item.
+
+  Measured again on Windows with 2.1.274: `claude auth status` under that
+  variable reports `authMethod: "oauth_token"` and writes no
+  `.credentials.json` at all, only a fresh `.claude.json` of machine and
+  migration state. So the damage is the Keychain's and the rule stands for
+  macOS, where it cannot be checked from here. Claude Desktop does set the
+  variable for the sessions it starts, against the user's own
+  `CLAUDE_CONFIG_DIR` -- which is why `proc` treats those sessions as the
+  Desktop's rather than the store's.
 - **On macOS, shell out to `/usr/bin/security`**, never a native Keychain API.
   The item's ACL trusts `security`; a native read from a scheduled job returns
   `errSecInteractionNotAllowed` and fails silently forever.

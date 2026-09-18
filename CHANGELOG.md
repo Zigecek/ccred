@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.9
+
+- **A Cowork session running in Claude Desktop no longer demands
+  `--force` for a Claude Code switch.** Claude Code records who started
+  it, and a switch is refused while a session that logs in through the
+  store is alive. The Desktop's agent-mode sessions record `local-agent`,
+  not `claude-desktop`, and were being counted as the store's -- in the
+  app's own bundle that entrypoint sits in the same environment as the
+  Desktop's token, so those sessions never read the store at all.
+
 ## 0.3.8
 
 - **A Claude Desktop from the Microsoft Store is found at all.** The
