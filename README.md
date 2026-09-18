@@ -345,9 +345,9 @@ works -- and `scheduled-tasks.json`, which lives in the same directory, is
 not one. The list is read whenever a profile is saved or
 parked, so a running Desktop still feeds it; writing into it needs the
 Desktop closed, and a switch says so when it could not. A switch that finds
-nothing to share says that too: someone who has never started a Claude Code
-session from inside the Desktop has an empty list, which otherwise looks
-exactly like a feature that did not run.
+nothing to share says that too: someone who has never started a session from
+inside the Desktop has an empty list, which otherwise looks exactly like a
+feature that did not run.
 
 What this does *not* do is keep the accounts apart on the server. The
 Desktop registers a session with Anthropic under the account it is logged
@@ -359,9 +359,9 @@ yours alone, that is the cost of running under its tokens, with or without
 a shared sidebar.
 
 **Do not sign out inside the Desktop to change accounts; switch with
-`ccred` instead.** The Desktop keeps the sidebar's list of Code sessions
-per account inside its directory, and the sidebar groups in its config, and
-signing out leaves both where they are. Log in as someone else and the
+`ccred` instead.** The Desktop keeps its lists of local sessions per account
+inside its directory, and the sidebar groups in its config, and signing out
+leaves both where they are. Log in as someone else and the
 directory is theirs -- the first account's chats are still in it, the
 transcripts are still in `~/.claude/projects/`, but the sidebar of the
 first account shows nothing once it is parked under the second one's name.

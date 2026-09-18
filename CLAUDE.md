@@ -83,6 +83,49 @@ We read and write files that belong to Claude Code, so:
   The item's ACL trusts `security`; a native read from a scheduled job returns
   `errSecInteractionNotAllowed` and fails silently forever.
 
+## Interoperating with Claude Desktop
+
+Everything here was read off a live install and out of the shipped app, not
+guessed. When it needs checking again, the app's own bundle is at
+`C:\Program Files\WindowsApps\Claude_<version>_x64__<publisher>\app\resources\app.asar`
+and the constants are in plain text inside it.
+
+- **The login is the directory, and the token in it is encrypted.** There is
+  nothing to copy aside and nothing to put back, so a switch moves the whole
+  data directory and `rm --purge` is the only way to delete one.
+- **Two places hold local sessions**, both `<dir>/<account>/<organization>/`
+  with one small JSON file per session: `claude-code-sessions` and
+  `local-agent-mode-sessions`. The sidebar is drawn from both -- in the
+  bundle they are scanned side by side -- so anything that shares one has to
+  share the other, and the same for the rescue after a sign-out.
+- **A session entry is a file with a `sessionId` in it.** The build calls
+  them `local_<id>.json`, and `SidebarStore` keys them by the name the app
+  gave so they go back under it, but the name is not what makes one an
+  entry. The same directory holds `scheduled-tasks.json` and
+  `archived-sessions.idx`, which are the app's own.
+- **Chats with Claude are not local.** They belong to the account on
+  Anthropic's side and the app reads them from there (its cache is an
+  IndexedDB under `IndexedDB/https_claude.ai_0.indexeddb.leveldb`). No
+  amount of moving files shares a conversation between two accounts, and
+  the README says so in the first sentence of that section, because the
+  first person to try it expected otherwise.
+- **The sidebar groups are one key**, `dframe-group-scopes` under
+  `preferences.epitaxyPrefs` in `claude_desktop_config.json`, whose entries
+  are keyed `<account>/<organization>`. Only keys of that shape are read,
+  and only that shape is ever written, so a build that keys them some other
+  way makes this do nothing rather than write junk.
+- **Windows has two layouts**: the classic `%APPDATA%\Claude` and the
+  MSIX one, redirected to
+  `%LOCALAPPDATA%\Packages\Claude_<publisher>\LocalCache\Roaming\Claude`.
+  Store and sideloaded installs are both MSIX; `SignatureKind` tells them
+  apart and neither is the classic one. `paths` picks whichever has the more
+  recently written `config.json`, and `doctor` names the one it picked.
+- **Anything that cannot be done is said, not raised.** A sidebar that could
+  not be written, groups with no config to go into, a carry that cannot
+  cross a file system: by then the directories have moved, so the switch has
+  happened, and an error would send someone looking for a login that is
+  where it should be. Every one of those is a warning with the reason in it.
+
 ## Saving credentials outranks everything it triggers
 
 `save` registers the refresh schedule on the save that creates a second
