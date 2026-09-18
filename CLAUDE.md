@@ -124,7 +124,9 @@ and the constants are in plain text inside it.
   install; what is matched is the identity before the hash, `Claude` or
   something ending in `.Claude`. The `-3p` build uses `Claude-3p` for the
   same directories. `paths` picks whichever candidate has the more recently
-  written `config.json`, and `doctor` names the one it picked.
+  written `config.json`, and `doctor` names the one it picked. One more
+  place: Chromium cannot keep a profile on a UNC path, so a `%APPDATA%` on a
+  file share sends the data to `%LOCALAPPDATA%\Claude-Data`.
 - **Anything that cannot be done is said, not raised.** A sidebar that could
   not be written, groups with no config to go into, a carry that cannot
   cross a file system: by then the directories have moved, so the switch has

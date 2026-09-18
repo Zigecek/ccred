@@ -138,7 +138,16 @@ impl Paths {
                 also.push(parent.join(THIRD_PARTY_DIR_NAME));
             }
             if let Some(local) = env_path("LOCALAPPDATA") {
-                also.push(absolute(local).join(THIRD_PARTY_DIR_NAME));
+                let local = absolute(local);
+                also.push(local.join(THIRD_PARTY_DIR_NAME));
+                // Chromium cannot keep a profile on a network path, so when
+                // `%APPDATA%` is one -- a roaming profile on a file share,
+                // which is how a managed Windows account is often set up --
+                // the app moves its data to `%LOCALAPPDATA%\<name>-Data`.
+                // The suffix is in its build beside the other two names.
+                for name in [DESKTOP_DIR_NAME, THIRD_PARTY_DIR_NAME] {
+                    also.push(local.join(format!("{name}{RELOCATED_SUFFIX}")));
+                }
             }
             paths.desktop_dir = windows_desktop_dir(&paths.desktop_dir, also, |dir| {
                 std::fs::metadata(dir.join(DESKTOP_CONFIG_FILE))
@@ -302,6 +311,8 @@ const DESKTOP_DIR_NAME: &str = "Claude";
 /// And of the `-3p` build's, which is the same app under another name. Both
 /// are in the shipped bundle, which looks for its data under either.
 const THIRD_PARTY_DIR_NAME: &str = "Claude-3p";
+/// What the app appends when it has to move its data off a network path.
+const RELOCATED_SUFFIX: &str = "-Data";
 
 use crate::desktop::CONFIG_FILE as DESKTOP_CONFIG_FILE;
 

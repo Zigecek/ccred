@@ -11,6 +11,12 @@
   on a machine that plainly has one. The identity before the hash is what
   is matched now, and the `Claude-3p` build's directories are candidates
   too.
+- **A Desktop whose data was moved off a network path is found too.**
+  Chromium cannot keep a profile on a UNC path, so when `%APPDATA%` is one
+  -- a roaming profile on a file share, which is how a managed Windows
+  account is often set up -- the app puts its data in
+  `%LOCALAPPDATA%\Claude-Data` instead. That is now one of the places
+  ccred looks.
 - The archived index is written sorted, which is how the app writes it:
   the point of patching that file rather than regenerating it is to leave
   it looking the way it was found.

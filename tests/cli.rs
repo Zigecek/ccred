@@ -4602,3 +4602,27 @@ fn the_three_p_build_is_a_desktop_too() {
     assert_eq!(v["desktop"]["installed"], serde_json::json!(true), "{out}");
     assert_eq!(v["desktop"]["logged_in"], serde_json::json!(true), "{out}");
 }
+
+/// Chromium cannot keep a profile on a network path, so when `%APPDATA%` is
+/// one -- a roaming profile on a file share -- the Desktop moves its data
+/// to `%LOCALAPPDATA%\Claude-Data`. That is a third place to look, and the
+/// suffix is in the app's build beside the other names.
+#[cfg(windows)]
+#[test]
+fn a_desktop_moved_off_a_network_path_is_found() {
+    let sb = Sandbox::new();
+    let moved = sb.path().join("AppData").join("Local").join("Claude-Data");
+    std::fs::create_dir_all(&moved).unwrap();
+    std::fs::write(
+        moved.join("config.json"),
+        br#"{"lastKnownAccountUuid":"uuid-a","oauth:tokenCache":"opaque"}"#,
+    )
+    .unwrap();
+    assert!(!sb.desktop_dir().exists(), "nothing at the classic path");
+
+    let (out, err, code) = sb.run(&["current", "--json"]);
+    assert_eq!(code, 0, "{err}{out}");
+    let v: serde_json::Value = serde_json::from_str(&out).expect(&out);
+    assert_eq!(v["desktop"]["installed"], serde_json::json!(true), "{out}");
+    assert_eq!(v["desktop"]["logged_in"], serde_json::json!(true), "{out}");
+}
