@@ -149,6 +149,23 @@ fn run(cli: &Cli, theme: &Theme) -> ccred::Result<ExitCode> {
         },
 
         Some(Command::Restore { name }) => {
+            // A Desktop login reaches the generic "that name is taken by a
+            // Desktop login" refusal otherwise, whose advice is about
+            // `save`. Here the name is not the problem: the thing it names
+            // is a directory holding an encrypted token, which is never
+            // copied aside, so there has never been anything to restore.
+            if let Ok(Handle::Desktop(profile)) = Handle::parse(name) {
+                return Err(ccred::error::CcredError::UnsafeWrite(format!(
+                    concat!(
+                        "'{name}' is a Claude Desktop login, and one is never copied ",
+                        "aside: its token is encrypted, so there is nothing to restore ",
+                        "it from. `ccred switch {name}` brings a parked one back, and ",
+                        "`ccred save {profile} --only-desktop` records the live one again"
+                    ),
+                    name = name,
+                    profile = profile
+                )));
+            }
             let name = validate_profile_name(name)?;
             let report = simple::restore(&ctx, &name)?;
             if cli.json {

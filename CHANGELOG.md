@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.3.11
+
+- **`ccred restore <name>-desktop` says what is actually wrong.** It came
+  back as an invalid name whose advice was about `save`. The name is not
+  the problem: a Desktop login is never copied aside, because its token is
+  encrypted, so no copy of one has ever existed to restore. It says that,
+  and points at the switch that brings a parked one back.
+- **A `-desktop` name is refused for one reason, not two.** The refusal
+  reaches `save`, `rename` and anything else that takes a new name, so it
+  says what the suffix means rather than what to do about it on one of
+  them -- and the hint under it no longer recites the allowed characters,
+  which read as a second, wrong reason.
+
 ## 0.3.10
 
 - **Credentials a host process hands over are noticed and kept out of a

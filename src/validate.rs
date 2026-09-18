@@ -242,10 +242,15 @@ fn check_profile_name(name: &str, allow_desktop_suffix: bool) -> Result<ProfileN
     // `work-desktop` is how `work`'s Claude Desktop login is addressed. A
     // Claude Code profile of that name would be unreachable: every command
     // would read the suffix and go to the Desktop one.
+    //
+    // The wording says what the suffix means rather than what to do
+    // instead: this refusal reaches `save`, `rename` and every other
+    // command that takes a new name, and advice written for one of them
+    // read as a non sequitur in the others.
     if !allow_desktop_suffix && name.to_ascii_lowercase().ends_with(crate::desktop::SUFFIX) {
         return Err(bad(
-            "ends with -desktop, which names a profile's Claude Desktop login; save the \
-             name without it and the Desktop login is recorded alongside",
+            "ends with -desktop, which is not a name to give: it always means the \
+             Claude Desktop login of the profile named without it",
         ));
     }
     Ok(ProfileName(name.to_string()))

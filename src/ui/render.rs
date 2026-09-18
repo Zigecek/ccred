@@ -1644,6 +1644,12 @@ fn hint_for(e: &crate::CcredError) -> Option<&'static str> {
         E::AccountUnverifiable { .. } => {
             Some("`ccred doctor` reports what is known about the live account")
         }
+        // The characters are the hint for a name that has the wrong ones in
+        // it. A name refused for meaning something else already said so, and
+        // repeating the alphabet under it reads as a second, wrong reason.
+        E::InvalidProfileName { reason, .. } if reason.starts_with("ends with -desktop") => {
+            Some("`ccred list` shows both halves; the Desktop one follows its profile")
+        }
         E::InvalidProfileName { .. } | E::PathEscape { .. } => {
             Some("names may hold letters, digits, dot, underscore and hyphen")
         }

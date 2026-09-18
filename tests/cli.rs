@@ -4688,3 +4688,47 @@ fn the_credential_file_follows_the_variable_that_relocates_it() {
         "{text}"
     );
 }
+
+/// The name refusals say what is wrong and advise something that follows
+/// from it. `-desktop` is not a name anyone may give, on any command, and
+/// the hint under that refusal used to recite the allowed characters --
+/// which reads as a second, wrong reason. Restoring one is refused for what
+/// it is rather than for its name: a Desktop login is never copied aside,
+/// so no copy of one has ever existed.
+#[test]
+fn a_desktop_name_is_refused_for_the_right_reason_everywhere() {
+    let sb = Sandbox::new();
+    sb.run(&["save", "work"]);
+
+    for args in [
+        &["save", "nope-desktop"][..],
+        &["rename", "work", "nope-desktop"][..],
+    ] {
+        let (_, err, code) = sb.run(args);
+        assert_eq!(code, 3, "`ccred {}`: {err}", args.join(" "));
+        let flat = flat(&err);
+        assert!(
+            flat.contains("not a name to give"),
+            "`ccred {}`: {err}",
+            args.join(" ")
+        );
+        assert!(
+            flat.contains("`ccred list` shows both halves"),
+            "and the hint follows from it: {err}"
+        );
+        assert!(
+            !flat.contains("names may hold letters"),
+            "not the alphabet: {err}"
+        );
+    }
+
+    let (_, err, code) = sb.run(&["restore", "work-desktop"]);
+    assert_eq!(code, 7, "{err}");
+    let flat = flat(&err);
+    assert!(flat.contains("never copied aside"), "{err}");
+    assert!(flat.contains("ccred switch work-desktop"), "{err}");
+    assert!(
+        !flat.contains("invalid profile name"),
+        "the name is not the problem: {err}"
+    );
+}
