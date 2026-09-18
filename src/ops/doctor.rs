@@ -464,6 +464,10 @@ const ENV_AUTH: &[&str] = &[
     "ANTHROPIC_AUTH_TOKEN",
     "CLAUDE_CODE_USE_BEDROCK",
     "CLAUDE_CODE_USE_VERTEX",
+    // Credentials a host process hands over, which Claude Code reads in
+    // preference to its own store.
+    "CLAUDE_CODE_HOST_CREDS_FILE",
+    "CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST",
 ];
 
 /// Is Claude Code likely logged in through something other than the file?
@@ -1036,7 +1040,30 @@ mod tests {
         assert_eq!(f.severity, Severity::Warn, "{f:?}");
         assert!(f.title.contains("CLAUDE_CODE_OAUTH_TOKEN"), "{f:?}");
 
+        // A file of credentials handed over by a host process is the same
+        // situation: Claude Code reads it and leaves the file this manages
+        // to age out.
+        let host = env_auth_finding_from(|k| k == "CLAUDE_CODE_HOST_CREDS_FILE");
+        assert_eq!(host.severity, Severity::Warn, "{host:?}");
+        assert!(
+            host.title.contains("CLAUDE_CODE_HOST_CREDS_FILE"),
+            "{host:?}"
+        );
+
         let clean = env_auth_finding_from(|_| false);
         assert_eq!(clean.severity, Severity::Ok);
+    }
+
+    /// Every variable that makes Claude Code authenticate as something else
+    /// is also kept out of a spawned probe: a probe that inherited one would
+    /// rotate nothing of the profile's, and report success for it.
+    #[test]
+    fn what_doctor_warns_about_is_what_a_probe_is_not_given() {
+        for key in ENV_AUTH {
+            assert!(
+                crate::store::resolve::SCRUBBED_ENV.contains(key),
+                "{key} is reported but not scrubbed"
+            );
+        }
     }
 }

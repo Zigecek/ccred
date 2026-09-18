@@ -2,6 +2,14 @@
 
 ## 0.3.10
 
+- **Credentials a host process hands over are noticed and kept out of a
+  probe.** `CLAUDE_CODE_HOST_CREDS_FILE` and the two variables beside it
+  make Claude Code authenticate from what a host gave it rather than from
+  its own store. `doctor` says so, the way it already does for
+  `CLAUDE_CODE_OAUTH_TOKEN`, and a spawned probe no longer inherits them
+  -- it would have authenticated as whatever the host handed over and
+  rotated nothing of the profile's. A test now keeps the two lists in
+  step.
 - **The credential file follows `CLAUDE_SECURESTORAGE_CONFIG_DIR`.** Claude
   Code keeps it wherever that variable says, independently of
   `CLAUDE_CONFIG_DIR` -- and ccred read the config directory instead. In a

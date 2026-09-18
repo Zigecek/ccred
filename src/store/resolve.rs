@@ -138,7 +138,22 @@ pub const SCRUBBED_ENV: &[&str] = &[
     "CLAUDE_CODE_USE_BEDROCK",
     "CLAUDE_CODE_USE_VERTEX",
     "CLAUDE_SECURESTORAGE_CONFIG_DIR",
+    // A file of credentials the host provides, and the two that say a host
+    // manages the provider and which variable carries its bearer. Claude
+    // Code reads them in preference to its own store -- it even logs
+    // "CLAUDE_CODE_HOST_CREDS_FILE is set but no usable host credentials
+    // were read" -- so a probe that inherited them would authenticate as
+    // whatever the host handed over and rotate nothing of the profile's.
+    "CLAUDE_CODE_HOST_CREDS_FILE",
+    "CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST",
+    "CLAUDE_CODE_HOST_AUTH_ENV_VAR",
 ];
+
+// Deliberately not scrubbed: `USE_LOCAL_OAUTH` and `USE_STAGING_OAUTH`.
+// They point Claude Code at another OAuth server rather than at another
+// identity, and a profile holding staging tokens can only be refreshed
+// against staging -- removing them would break the one setup that sets
+// them.
 
 /// Pick the backend for a config directory.
 ///
