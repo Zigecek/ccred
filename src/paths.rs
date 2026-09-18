@@ -17,6 +17,7 @@ pub struct Paths {
     home: PathBuf,
     ccred_home: PathBuf,
     claude_config_dir: PathBuf,
+    credentials_dir: PathBuf,
     claude_config_file: PathBuf,
     desktop_dir: PathBuf,
     overrides: Locations,
@@ -125,6 +126,23 @@ impl Paths {
         } else {
             env_path("XDG_CONFIG_HOME")
         };
+        // Claude Code keeps its credential file wherever
+        // `CLAUDE_SECURESTORAGE_CONFIG_DIR` says, independently of
+        // `CLAUDE_CONFIG_DIR` -- read straight out of 2.1.274, where the
+        // store directory is that variable when it is set at all, and
+        // `~/.claude` when it is set to nothing. The lock goes with the
+        // file. Without this, a shell with that variable set had ccred
+        // reading and writing a file no `claude` would ever look at, and
+        // reporting an account as logged out while it was in use.
+        //
+        // ccred sets the same variable itself, for a probe against one
+        // profile's own store; that is `env_pairs_for`, and it is why the
+        // variable is also scrubbed from every spawned `claude`.
+        match std::env::var_os(SECURE_STORAGE_DIR_VAR) {
+            Some(v) if !v.is_empty() => paths.credentials_dir = absolute(PathBuf::from(v)),
+            Some(_) => paths.credentials_dir = paths.home.join(DEFAULT_CONFIG_DIR_NAME),
+            None => {}
+        }
         if let Some(base) = base {
             paths.desktop_dir = absolute(base).join(DESKTOP_DIR_NAME);
         }
@@ -180,7 +198,10 @@ impl Paths {
                 let file = dir.join(".claude.json");
                 (dir, file)
             }
-            None => (home.join(".claude"), home.join(".claude.json")),
+            None => (
+                home.join(DEFAULT_CONFIG_DIR_NAME),
+                home.join(".claude.json"),
+            ),
         };
 
         let desktop_dir = default_desktop_dir(&home);
@@ -188,6 +209,7 @@ impl Paths {
         Paths {
             home,
             ccred_home,
+            credentials_dir: claude_config_dir.clone(),
             claude_config_dir,
             claude_config_file,
             desktop_dir,
@@ -218,8 +240,14 @@ impl Paths {
         &self.claude_config_file
     }
 
+    /// Where the credential file itself is, which is the config directory
+    /// unless `CLAUDE_SECURESTORAGE_CONFIG_DIR` moved it.
+    pub fn credentials_dir(&self) -> &Path {
+        &self.credentials_dir
+    }
+
     pub fn live_credentials(&self) -> PathBuf {
-        credentials_in(&self.claude_config_dir)
+        credentials_in(&self.credentials_dir)
     }
 
     pub fn profiles_dir(&self) -> PathBuf {
@@ -305,6 +333,11 @@ impl Paths {
         confine(&self.desktop_store_dir(), name)
     }
 }
+
+/// What Claude Code calls the variable that relocates the credential file.
+pub const SECURE_STORAGE_DIR_VAR: &str = "CLAUDE_SECURESTORAGE_CONFIG_DIR";
+/// The config directory's name under the home directory.
+const DEFAULT_CONFIG_DIR_NAME: &str = ".claude";
 
 /// The last path component of the Desktop's data directory on every platform.
 const DESKTOP_DIR_NAME: &str = "Claude";

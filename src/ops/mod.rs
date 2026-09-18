@@ -51,7 +51,7 @@ impl Ctx {
 
     /// The store a plain `claude` reads from.
     pub fn live_store(&self) -> FileStore {
-        FileStore::new(self.paths().claude_config_dir().to_path_buf())
+        FileStore::new(self.paths().credentials_dir().to_path_buf())
     }
 
     /// Exclusive use of the profiles, between `ccred` processes.

@@ -79,6 +79,13 @@ We read and write files that belong to Claude Code, so:
   Read straight out of 2.1.274, which locks with `realpath: false`,
   `stale: 15000` and ten retries between 100ms and 1s -- the same numbers
   this uses.
+- **`CLAUDE_SECURESTORAGE_CONFIG_DIR` moves the credential file**, and
+  nothing else: `.claude.json` stays with `CLAUDE_CONFIG_DIR`, and the
+  `.storage-write` lock goes with the file. Set to nothing at all it means
+  `~/.claude`, ignoring `CLAUDE_CONFIG_DIR`. ccred reads it for the live
+  store, sets it for a probe against one profile's own store
+  (`env_pairs_for`), and scrubs it from every spawned `claude` so that a
+  profile refresh cannot be redirected by the shell it was started from.
 - **The store is still a file on Windows, for now.** The same binary
   contains a `Bun.secrets` path that would put credentials in the Windows
   Credential Manager, chunked for its size limit, but the check that

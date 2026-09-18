@@ -100,7 +100,6 @@ impl Sandbox {
         Command::cargo_bin("ccred")
             .unwrap()
             .args(args)
-            .envs(env.iter().copied())
             .env("HOME", self.path())
             .env("USERPROFILE", self.path())
             // Where the release installer keeps its receipt, and systemd its
@@ -113,6 +112,10 @@ impl Sandbox {
             .env("XDG_CONFIG_HOME", self.path().join(".config"))
             .env_remove("CCRED_HOME")
             .env_remove("CLAUDE_CONFIG_DIR")
+            // Claude Code keeps its credential file wherever this says, so a
+            // developer who has it set would otherwise watch the suite read
+            // their own store.
+            .env_remove("CLAUDE_SECURESTORAGE_CONFIG_DIR")
             // Pin the presentation: assertions below are about wording, and
             // must not depend on whether the machine running the suite has a
             // UTF-8 terminal or a colour-capable one.
@@ -122,6 +125,10 @@ impl Sandbox {
             // schedule. That writes to the real platform scheduler, which a
             // test must never do on the machine running it.
             .env("CCRED_NO_AUTO_SCHEDULE", "1")
+            // Last, so a test that names a variable wins over the defaults
+            // above -- including the two removals, which exist to keep the
+            // developer's own environment out and not to overrule the test.
+            .envs(env.iter().copied())
             .output()
             .unwrap()
     }
@@ -4625,4 +4632,59 @@ fn a_desktop_moved_off_a_network_path_is_found() {
     let v: serde_json::Value = serde_json::from_str(&out).expect(&out);
     assert_eq!(v["desktop"]["installed"], serde_json::json!(true), "{out}");
     assert_eq!(v["desktop"]["logged_in"], serde_json::json!(true), "{out}");
+}
+
+/// Claude Code keeps its credential file wherever
+/// `CLAUDE_SECURESTORAGE_CONFIG_DIR` says, independently of
+/// `CLAUDE_CONFIG_DIR`. A shell with that set had ccred reading and writing
+/// a file no `claude` would look at -- reporting an account as logged out
+/// while it was in use, and saving a profile from nothing.
+#[test]
+fn the_credential_file_follows_the_variable_that_relocates_it() {
+    let sb = Sandbox::new();
+    let elsewhere = sb.path().join("secure-store");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    // The live login is over there, and the usual place is empty.
+    std::fs::rename(
+        sb.path().join(".claude").join(".credentials.json"),
+        elsewhere.join(".credentials.json"),
+    )
+    .unwrap();
+
+    let var = (
+        "CLAUDE_SECURESTORAGE_CONFIG_DIR",
+        elsewhere.to_str().unwrap(),
+    );
+    let out = sb.cmd_env(&["save", "work"], &[var]);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        sb.path()
+            .join(".ccred")
+            .join("profiles")
+            .join("work")
+            .join(".credentials.json")
+            .is_file(),
+        "the profile was saved from the file the variable names"
+    );
+
+    // And without the variable the usual place is empty, which is what the
+    // old behaviour made of a shell that had it set.
+    let (_, err, code) = sb.run(&["save", "other"]);
+    assert_eq!(code, 7, "{err}");
+    assert!(flat(&err).contains("Claude Code is not logged in"), "{err}");
+
+    // `doctor` names the relocated file rather than leaving someone to
+    // wonder which one it read.
+    let out = sb.cmd_env(&["doctor"], &[var]);
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
+    assert!(
+        flat(&text).contains("the credential file is where CLAUDE_SECURESTORAGE_CONFIG_DIR says"),
+        "{text}"
+    );
 }

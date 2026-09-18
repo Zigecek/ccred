@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.10
+
+- **The credential file follows `CLAUDE_SECURESTORAGE_CONFIG_DIR`.** Claude
+  Code keeps it wherever that variable says, independently of
+  `CLAUDE_CONFIG_DIR` -- and ccred read the config directory instead. In a
+  shell with the variable set, every command was reading and writing a
+  file no `claude` would look at: an account in active use reported as
+  logged out, a `save` with nothing to save, a `switch` written where
+  nothing reads. The `.storage-write` lock goes with the file, as it does
+  in Claude Code, and `doctor` names the file when it is not in the usual
+  place.
+
 ## 0.3.9
 
 - **A Cowork session running in Claude Desktop no longer demands

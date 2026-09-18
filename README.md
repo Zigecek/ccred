@@ -150,7 +150,10 @@ Add `--json` to any of them for machine-readable output.
 
 Profiles live in `~/.ccred` and Claude Code's configuration in `~/.claude`.
 `--ccred-home` and `--claude-config-dir` (or `CCRED_HOME` and
-`CLAUDE_CONFIG_DIR`) move them. A schedule installed with either is
+`CLAUDE_CONFIG_DIR`) move them. Claude Code also keeps its credential file
+wherever `CLAUDE_SECURESTORAGE_CONFIG_DIR` says, independently of the config
+directory; ccred follows that variable for the file and its lock, and
+`doctor` names the file when it is not in the usual place. A schedule installed with either is
 registered with the flags themselves: a systemd user service or a Windows task
 does not inherit the shell that set a variable, and without them the job would
 refresh the default directories -- empty -- and report success.

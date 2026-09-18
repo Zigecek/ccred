@@ -5,7 +5,7 @@ use serde::Serialize;
 use super::{Ctx, days_until};
 use crate::journal::SwitchJournal;
 use crate::lockfile::lock_path_for;
-use crate::paths::storage_write_lock_target;
+use crate::paths::{SECURE_STORAGE_DIR_VAR, storage_write_lock_target};
 use crate::proc::running_sessions;
 use crate::schedule::{Health, State, Warning, detect};
 use crate::store::now_ms;
@@ -78,6 +78,16 @@ pub fn doctor(ctx: &Ctx) -> crate::Result<Vec<Finding>> {
         "profiles: {}",
         ctx.paths().profiles_dir().display()
     )));
+    // Only when it is not where the config directory is, which is the
+    // answer for everyone who has not set the variable. Said because the
+    // two can be moved apart, and a file nobody expects there is worth
+    // naming before anything else surprises them.
+    if ctx.paths().credentials_dir() != ctx.paths().claude_config_dir() {
+        findings.push(Finding::ok_with(
+            format!("the credential file is where {SECURE_STORAGE_DIR_VAR} says"),
+            ctx.paths().live_credentials().display().to_string(),
+        ));
+    }
 
     // --- an interrupted switch -------------------------------------------
     match SwitchJournal::load(&ctx.paths().switch_journal()) {
@@ -111,7 +121,7 @@ pub fn doctor(ctx: &Ctx) -> crate::Result<Vec<Finding>> {
     }
 
     // --- a lock nobody is holding ----------------------------------------
-    let lock = lock_path_for(&storage_write_lock_target(ctx.paths().claude_config_dir()));
+    let lock = lock_path_for(&storage_write_lock_target(ctx.paths().credentials_dir()));
     if lock.exists() {
         findings.push(Finding::warn(
             "the credential store is locked",
