@@ -12,6 +12,12 @@
   says what the suffix means rather than what to do about it on one of
   them -- and the hint under it no longer recites the allowed characters,
   which read as a second, wrong reason.
+- **The README's install commands pointed at v0.3.3**, eight releases back,
+  so anyone following them installed a build whose bugs were fixed the same
+  week. The installer scripts and the Windows archive have fixed names and
+  point at `releases/latest` now, which cannot go stale; the `.deb` carries
+  its version in the file name, so a test refuses any version in the README
+  that is not this crate's.
 - `ccred restore --help` described half of what the command does: it puts a
   profile's last-known-good credentials back, and it also brings back a
   profile `rm` deleted, which is what `rm`'s own copy is for.

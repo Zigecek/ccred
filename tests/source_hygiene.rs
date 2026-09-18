@@ -98,3 +98,56 @@ fn the_gap_detector_finds_what_it_is_for_and_nothing_else() {
     assert!(!has_word_gap("trailing is fine      "));
     assert!(!has_word_gap("two  spaces between words"));
 }
+
+/// Every version the README pins is this crate's.
+///
+/// The install commands are what a first-time reader runs, and they sat on
+/// v0.3.3 for eight releases -- so anyone following the README installed a
+/// build with bugs that were fixed the same week. The installer scripts and
+/// the Windows archive have fixed names and point at `releases/latest`
+/// instead, which cannot go stale; the `.deb` carries its version in the
+/// file name and has to be pinned, so this is what keeps it honest.
+///
+/// Only spellings that are unmistakably this crate's version are matched --
+/// `download/v<version>/`, `ccred_<version>_`, and the `$v = "<version>"`
+/// of the PowerShell block. Other programs' version numbers appear in these
+/// documents and are none of this test's business.
+#[test]
+fn the_readme_pins_this_version_and_no_other() {
+    let version = env!("CARGO_PKG_VERSION");
+    let readme =
+        std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md")).unwrap();
+
+    let mut wrong = Vec::new();
+    for (n, line) in readme.lines().enumerate() {
+        for (prefix, suffix) in [
+            ("releases/download/v", "/"),
+            ("ccred_", "_amd64"),
+            ("ccred_", "_arm64"),
+            ("$v = \"", "\""),
+        ] {
+            let mut rest = line;
+            while let Some(at) = rest.find(prefix) {
+                rest = &rest[at + prefix.len()..];
+                let Some(end) = rest.find(suffix) else {
+                    continue;
+                };
+                let found = &rest[..end];
+                // `$v` in a URL is the shell variable, not a version.
+                if found.starts_with('$') || found.is_empty() {
+                    continue;
+                }
+                if found != version {
+                    wrong.push(format!("README.md:{}: {found} (crate is {version})", n + 1));
+                }
+            }
+        }
+    }
+
+    assert!(
+        wrong.is_empty(),
+        "the README pins a version this crate is not:\n{}\n\nBump them with the release, \
+         or point at releases/latest where the file name allows it.",
+        wrong.join("\n")
+    );
+}
