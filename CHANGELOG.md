@@ -12,6 +12,15 @@
   says what the suffix means rather than what to do about it on one of
   them -- and the hint under it no longer recites the allowed characters,
   which read as a second, wrong reason.
+- `ccred restore --help` described half of what the command does: it puts a
+  profile's last-known-good credentials back, and it also brings back a
+  profile `rm` deleted, which is what `rm`'s own copy is for.
+- The sample output in the README is a run's, not a transcription: one
+  block was a leftover empty fence, the Desktop listing was drawn in the
+  ASCII glyphs beside a Unicode one, the rows were in an order the tool
+  does not sort them in, and `current` had gained a line the sample did
+  not have.
+
 
 ## 0.3.10
 

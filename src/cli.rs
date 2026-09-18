@@ -162,15 +162,19 @@ pub enum Command {
         purge: bool,
     },
 
-    /// Put a profile's last-known-good credentials back.
+    /// Put a profile's credentials back, or a removed profile itself.
     ///
     /// Every accepted save also writes a copy beside the profile. This puts
     /// that copy back, for when the current credentials have been damaged --
     /// a spawned Claude Code signing itself out is the case this exists for.
     /// `ccred doctor` says when a profile has a copy worth restoring.
+    ///
+    /// A profile that `rm` deleted comes back the same way: `rm` copies it
+    /// aside first and says where, and this is what reads that copy. Only
+    /// `rm --purge` leaves nothing to come back from.
     #[command(display_order = 7)]
     Restore {
-        /// The profile whose last-known-good copy goes back.
+        /// The profile to put back: its credentials, or the profile itself.
         name: String,
     },
 

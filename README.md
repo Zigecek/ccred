@@ -448,36 +448,40 @@ the next run. Code 5 is reserved.
 
 ### What it looks like
 
+Taken from a run, not typed out: two profiles, one of them a few days from
+the end of its refresh window.
+
 ```
 $ ccred list
 
   PROFILE  ACCOUNT            PLAN     REFRESH WINDOW  LEFT      SYNCED  STATE
-  ● work   ada@example.com    Max 20x  ███████████░░░   23d     3 h ago  ok
-    home   grace@example.com  Max 5x   ██░░░░░░░░░░░░    4d  9 days ago  expiring
+    home   grace@example.com  Max 5x   █░░░░░░░░░░░░░    3d  9 days ago  expiring
+  ● work   ada@example.com    Max 20x  ██████████░░░░   22d     3 h ago  ok
 
   2 profiles, 1 needs attention
 ```
 
-```
+With a Claude Desktop login saved as well, the two halves are listed apart
+-- they are switched apart:
 
 ```
-$ ccred list   # with a Claude Desktop login saved too
+$ ccred list
 
   Claude Code
-  -----------
+  ───────────
 
   PROFILE  ACCOUNT            PLAN     REFRESH WINDOW  LEFT      SYNCED  STATE
-  * work   ada@example.com    Max 20x  ###########...   23d     3 h ago  ok
-    home   grace@example.com  Max 5x   ##............    4d  9 days ago  expiring
+    home   grace@example.com  Max 5x   █░░░░░░░░░░░░░    3d  9 days ago  expiring
+  ● work   ada@example.com    Max 20x  ██████████░░░░   22d     3 h ago  ok
 
   2 profiles, 1 needs attention
 
   Claude Desktop
-  --------------
+  ──────────────
 
-  DESKTOP         ACCOUNT            SYNCED  STATE
-  * work-desktop  ada@example.com   3 h ago  logged in
-    home-desktop  grace@example.com       -  parked
+  DESKTOP         ACCOUNT                SYNCED  STATE
+    home-desktop  grace@example.com  9 days ago  no login
+  ● work-desktop  ada@example.com       3 h ago  logged in
 
   2 Desktop logins
 ```
@@ -487,10 +491,11 @@ $ ccred current
 
   ● work   ada@example.com   · Max 20x
 
-  Access     █████████░░░░░  5 hours
-  Refresh    ███████████░░░  23 days
+  Access     █████████░░░░░  4 hours
+  Refresh    ███████████░░░  22 days
   Synced     3 h ago
   Profiles   2 saved   (ccred list)
+  Desktop    work-desktop
 ```
 
 Colour follows `NO_COLOR` and `CLICOLOR_FORCE`, and is dropped whenever output
