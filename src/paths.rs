@@ -129,12 +129,22 @@ impl Paths {
             paths.desktop_dir = absolute(base).join(DESKTOP_DIR_NAME);
         }
         if cfg!(target_os = "windows") {
-            paths.desktop_dir =
-                windows_desktop_dir(&paths.desktop_dir, packaged_desktop_dirs(), |dir| {
-                    std::fs::metadata(dir.join(DESKTOP_CONFIG_FILE))
-                        .and_then(|m| m.modified())
-                        .ok()
-                });
+            let mut also = packaged_desktop_dirs();
+            // The `-3p` build keeps its data under a name of its own, beside
+            // the main one and -- unpackaged -- under `%LOCALAPPDATA%`
+            // rather than `%APPDATA%`. Candidates cost nothing: one without
+            // a `config.json` in it is not a Claude Desktop and is dropped.
+            if let Some(parent) = paths.desktop_dir.parent() {
+                also.push(parent.join(THIRD_PARTY_DIR_NAME));
+            }
+            if let Some(local) = env_path("LOCALAPPDATA") {
+                also.push(absolute(local).join(THIRD_PARTY_DIR_NAME));
+            }
+            paths.desktop_dir = windows_desktop_dir(&paths.desktop_dir, also, |dir| {
+                std::fs::metadata(dir.join(DESKTOP_CONFIG_FILE))
+                    .and_then(|m| m.modified())
+                    .ok()
+            });
         }
         Ok(paths)
     }
@@ -289,6 +299,9 @@ impl Paths {
 
 /// The last path component of the Desktop's data directory on every platform.
 const DESKTOP_DIR_NAME: &str = "Claude";
+/// And of the `-3p` build's, which is the same app under another name. Both
+/// are in the shipped bundle, which looks for its data under either.
+const THIRD_PARTY_DIR_NAME: &str = "Claude-3p";
 
 use crate::desktop::CONFIG_FILE as DESKTOP_CONFIG_FILE;
 
@@ -331,11 +344,6 @@ fn windows_desktop_dir(
 }
 
 /// Every packaged Claude the local account has installed.
-///
-/// The directory under `Packages` is a package family name: the app's name,
-/// an underscore, and a hash of the publisher. The hash is stable for
-/// Anthropic but is not something to hard-code, so the family is matched by
-/// its `Claude_` prefix.
 fn packaged_desktop_dirs() -> Vec<PathBuf> {
     let Some(local) = env_path("LOCALAPPDATA") else {
         return Vec::new();
@@ -345,20 +353,35 @@ fn packaged_desktop_dirs() -> Vec<PathBuf> {
     };
     let mut found: Vec<PathBuf> = entries
         .flatten()
-        .filter(|e| {
-            e.file_name()
-                .to_string_lossy()
-                .starts_with(concat!("Claude", "_"))
-        })
-        .map(|e| {
-            e.path()
-                .join("LocalCache")
-                .join("Roaming")
-                .join(DESKTOP_DIR_NAME)
+        .filter(|e| is_claude_package_family(&e.file_name().to_string_lossy()))
+        .flat_map(|e| {
+            [DESKTOP_DIR_NAME, THIRD_PARTY_DIR_NAME]
+                .map(|name| e.path().join("LocalCache").join("Roaming").join(name))
         })
         .collect();
     found.sort();
     found
+}
+
+/// Is this directory under `Packages` a Claude Desktop package family?
+///
+/// The name is a package family name: the app identity, an underscore and a
+/// hash of the publisher. Both of the families Anthropic ships are named in
+/// the app's own build -- `Claude_<hash>` for the MSIX a downloaded
+/// installer sideloads, and `AnthropicPBC.Claude_<hash>` for the Store's --
+/// so matching a `Claude_` prefix found the first and missed the second
+/// entirely, which is every Store install. The identity is what is matched:
+/// `Claude`, or a publisher-qualified name ending in `.Claude`. The hash is
+/// stable but is not ours to hard-code.
+fn is_claude_package_family(name: &str) -> bool {
+    let Some((identity, hash)) = name.rsplit_once('_') else {
+        return false;
+    };
+    if hash.is_empty() {
+        return false;
+    }
+    let identity = identity.to_ascii_lowercase();
+    identity == "claude" || identity.ends_with(".claude")
 }
 
 /// The Desktop's directory when no environment variable relocates it.

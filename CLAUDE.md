@@ -114,12 +114,17 @@ and the constants are in plain text inside it.
   are keyed `<account>/<organization>`. Only keys of that shape are read,
   and only that shape is ever written, so a build that keys them some other
   way makes this do nothing rather than write junk.
-- **Windows has two layouts**: the classic `%APPDATA%\Claude` and the
-  MSIX one, redirected to
-  `%LOCALAPPDATA%\Packages\Claude_<publisher>\LocalCache\Roaming\Claude`.
-  Store and sideloaded installs are both MSIX; `SignatureKind` tells them
-  apart and neither is the classic one. `paths` picks whichever has the more
-  recently written `config.json`, and `doctor` names the one it picked.
+- **Windows has two layouts and two package families.** The classic
+  `%APPDATA%\Claude`, and the MSIX one redirected to
+  `%LOCALAPPDATA%\Packages\<family>\LocalCache\Roaming\Claude`. Store and
+  sideloaded installs are both MSIX -- `SignatureKind` tells them apart --
+  and their families are named differently: `Claude_<hash>` for the
+  sideloaded one, `AnthropicPBC.Claude_<hash>` for the Store's, both in the
+  app's bundle. Matching a `Claude_` prefix therefore missed every Store
+  install; what is matched is the identity before the hash, `Claude` or
+  something ending in `.Claude`. The `-3p` build uses `Claude-3p` for the
+  same directories. `paths` picks whichever candidate has the more recently
+  written `config.json`, and `doctor` names the one it picked.
 - **Anything that cannot be done is said, not raised.** A sidebar that could
   not be written, groups with no config to go into, a carry that cannot
   cross a file system: by then the directories have moved, so the switch has

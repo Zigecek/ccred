@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.8
+
+- **A Claude Desktop from the Microsoft Store is found at all.** The
+  packaged data directory sits under a package family name, and the two
+  Anthropic ships are not spelled alike: `Claude_<hash>` for the MSIX a
+  downloaded installer sideloads, `AnthropicPBC.Claude_<hash>` for the
+  Store's. Both are named in the app's own build; ccred matched a
+  `Claude_` prefix, so a Store install read as "no Claude Desktop here"
+  on a machine that plainly has one. The identity before the hash is what
+  is matched now, and the `Claude-3p` build's directories are candidates
+  too.
+
 ## 0.3.7
 
 - **Both of the Desktop's session lists are shared, not one.** The app

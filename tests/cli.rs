@@ -4505,3 +4505,98 @@ fn a_sign_out_strands_both_lists_and_a_switch_returns_both() {
         );
     }
 }
+
+/// The Store's package family is not named `Claude_<hash>`: it is
+/// `AnthropicPBC.Claude_<hash>`, which both names are in the app's own
+/// build. Matching a `Claude_` prefix found the sideloaded MSIX and missed
+/// every Store install, which then read as "no Claude Desktop here" on a
+/// machine that plainly has one.
+#[test]
+fn the_store_package_family_is_found_too() {
+    for family in [
+        "AnthropicPBC.Claude_fnn82j28hfe8t",
+        "Claude_pzs8sxrjxfjjc",
+        "anthropicpbc.claude_ABC123",
+    ] {
+        let sb = Sandbox::new();
+        let packaged = sb
+            .path()
+            .join("AppData")
+            .join("Local")
+            .join("Packages")
+            .join(family)
+            .join("LocalCache")
+            .join("Roaming")
+            .join("Claude");
+        std::fs::create_dir_all(&packaged).unwrap();
+        std::fs::write(
+            packaged.join("config.json"),
+            br#"{"lastKnownAccountUuid":"uuid-a","oauth:tokenCache":"opaque"}"#,
+        )
+        .unwrap();
+        assert!(!sb.desktop_dir().exists(), "nothing at the classic path");
+
+        let (out, err, code) = sb.run(&["current", "--json"]);
+        assert_eq!(code, 0, "{err}{out}");
+        let v: serde_json::Value = serde_json::from_str(&out).expect(&out);
+        assert_eq!(
+            v["desktop"]["installed"],
+            serde_json::json!(true),
+            "{family} was not found: {out}"
+        );
+    }
+
+    // And a package that is not Claude's is not read as one.
+    let sb = Sandbox::new();
+    let other = sb
+        .path()
+        .join("AppData")
+        .join("Local")
+        .join("Packages")
+        .join("SomeoneElse.ClaudeLike_abc")
+        .join("LocalCache")
+        .join("Roaming")
+        .join("Claude");
+    std::fs::create_dir_all(&other).unwrap();
+    std::fs::write(
+        other.join("config.json"),
+        br#"{"lastKnownAccountUuid":"x"}"#,
+    )
+    .unwrap();
+    let (out, _, code) = sb.run(&["current", "--json"]);
+    assert_eq!(code, 0, "{out}");
+    let v: serde_json::Value = serde_json::from_str(&out).expect(&out);
+    assert!(
+        v["desktop"].is_null() || v["desktop"]["installed"] == serde_json::json!(false),
+        "{out}"
+    );
+}
+
+/// The `-3p` build of the Desktop keeps its data under `Claude-3p`, beside
+/// the main one or inside the same package. It is the same app, and its
+/// login moves the same way.
+#[test]
+fn the_three_p_build_is_a_desktop_too() {
+    let sb = Sandbox::new();
+    let three_p = sb
+        .path()
+        .join("AppData")
+        .join("Local")
+        .join("Packages")
+        .join("Claude_pzs8sxrjxfjjc")
+        .join("LocalCache")
+        .join("Roaming")
+        .join("Claude-3p");
+    std::fs::create_dir_all(&three_p).unwrap();
+    std::fs::write(
+        three_p.join("config.json"),
+        br#"{"lastKnownAccountUuid":"uuid-a","oauth:tokenCache":"opaque"}"#,
+    )
+    .unwrap();
+
+    let (out, err, code) = sb.run(&["current", "--json"]);
+    assert_eq!(code, 0, "{err}{out}");
+    let v: serde_json::Value = serde_json::from_str(&out).expect(&out);
+    assert_eq!(v["desktop"]["installed"], serde_json::json!(true), "{out}");
+    assert_eq!(v["desktop"]["logged_in"], serde_json::json!(true), "{out}");
+}
